@@ -19,54 +19,38 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Set up uv & Python 3.12
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
+          version: "latest"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
 
-      - name: Install Backend Dependencies
+      - name: Install Backend Dependencies via uv
         run: |
-          python -m pip install --upgrade pip
-          if [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
-          elif [ -f backend/pyproject.toml ]; then
-            pip install .[dev]
-          else
-            pip install pytest pytest-cov ruff mypy pydantic fastapi uvicorn
-          fi
+          cd backend
+          uv sync --all-groups
 
       - name: Run Ruff Linter
         run: |
-          if [ -d "backend" ]; then
-            ruff check backend/
-          else
-            echo "Backend directory not yet created. Skipping."
-          fi
+          cd backend
+          uv run ruff check .
 
       - name: Run Ruff Format Check
         run: |
-          if [ -d "backend" ]; then
-            ruff format --check backend/
-          else
-            echo "Backend directory not yet created. Skipping."
-          fi
+          cd backend
+          uv run ruff format --check .
 
       - name: Run Mypy Type Checker
         run: |
-          if [ -d "backend" ]; then
-            mypy backend/
-          else
-            echo "Backend directory not yet created. Skipping."
-          fi
+          cd backend
+          uv run mypy src tests
 
       - name: Run Pytest Test Suite
         run: |
-          if [ -d "backend/tests" ]; then
-            pytest backend/tests/ -v --cov=backend/app --cov-report=xml --cov-report=term
-          else
-            echo "Backend tests not yet created. Skipping."
-          fi
+          cd backend
+          uv run pytest -v --cov=cloud_recommender --cov-report=xml --cov-report=term
 
   frontend-quality:
     name: Frontend Lint, Type Check & Build
@@ -126,3 +110,4 @@ jobs:
           test -f docs/IMPLEMENTATION_ROADMAP.md || (echo "Missing docs/IMPLEMENTATION_ROADMAP.md" && exit 1)
           test -d docs/ADR || (echo "Missing docs/ADR directory" && exit 1)
           echo "All foundational governance and architectural documents are verified."
+

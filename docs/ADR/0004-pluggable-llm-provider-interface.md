@@ -10,40 +10,41 @@
 
 ## Context & Problem Statement
 
-LLM APIs are dynamic: models are continuously deprecated, rate limits can throttle requests, pricing structures change, and developer environments may lack active commercial API keys (e.g., in CI/CD pipelines, offline local development, or restricted enterprise networks).
+The platform requires foundation LLM capabilities for unstructured requirements extraction, code quality analysis, and conversational clarifying questions. However:
+- Cloud environments and customer deployments vary in LLM availability (e.g. enterprise Azure OpenAI vs direct OpenAI API vs Google Gemini).
+- CI/CD pipelines, local development environments, and air-gapped test runners lack active commercial API keys and should not incur external API costs.
+- Foundation model SDKs frequently change method signatures and deprecate models.
 
-Directly coupling the application to a single vendor SDK (e.g. only OpenAI or only Google Gemini) creates architectural fragility and prevents offline testing.
+Directly coupling LangGraph agent nodes to a single proprietary SDK introduces severe vendor lock-in and prevents offline testing.
 
 ---
 
 ## Decision
 
-We will implement an **Abstract Adapter Pattern** for all LLM interactions:
+We implement a **Pluggable LLM Provider Abstraction**:
 
-1. **`LLMProvider` Abstract Base Class (`backend/app/providers/base.py`):**
-   - Defines standard methods:
-     - `synthesize_recommendation(profile: WorkloadProfile, candidates: dict) -> RecommendationResponse`
-     - `parse_natural_language_prompt(prompt: str) -> WorkloadProfile`
-2. **Mandatory `MockProvider`:**
-   - A fully functional, deterministic mock provider bundled in `backend/app/providers/mock_provider.py`.
-   - Uses pre-programmed heuristic matrices and deterministic fit scoring to generate valid, realistic recommendations and trade-offs.
-   - Requires zero network calls and zero API keys.
-   - Configured via `LLM_PROVIDER=mock`.
-3. **Hyperscaler Adapters:**
-   - `GeminiProvider` (Google Gemini 2.5 / Flash via `google-genai` / REST)
-   - `OpenAIProvider` (GPT-4o via `openai` SDK)
-   - `ClaudeProvider` (Claude 3.7 Sonnet via `anthropic` SDK)
-4. **Automatic Fallback:**
-   - If an external provider encounters an unrecoverable failure (e.g., quota exceeded, network timeout), the engine falls back gracefully to deterministic heuristics and logs a warning.
+1. **`LLMProvider` Abstract Base Interface (`backend/app/providers/base.py`):**
+   - Standardizes methods for chat completion, structured output extraction via Pydantic, and token tracking.
+2. **First-Class `MockProvider`:**
+   - Bundles a deterministic, zero-cost mock provider in `backend/app/providers/mock_provider.py`.
+   - Returns realistic, schema-valid Pydantic outputs for requirements extraction, clarifying questions, and code review without network calls.
+   - Default configuration: `LLM_PROVIDER=mock`.
+3. **Pluggable Hyperscaler Adapters:**
+   - `AzureOpenAIProvider`: Recommended for enterprise Azure deployments.
+   - `OpenAIProvider`: Direct OpenAI API.
+   - `GeminiProvider`: Google GenAI adapter.
+   - `ClaudeProvider`: Anthropic Claude adapter.
+4. **LangGraph Integration:**
+   - LangGraph nodes interact exclusively through the provider interface, making the orchestration graphs completely model-agnostic.
 
 ---
 
 ## Consequences
 
 ### Positive
-- Zero friction for new developers and CI pipelines: running `pytest` never requires API keys or costs money.
-- Freedom to switch between foundation model providers based on price/performance without refactoring business logic.
-- Robust fault tolerance in production environments.
+- Zero external API costs during automated testing and CI runs.
+- Flexible deployment matching customer enterprise LLM agreements.
+- Resilience against vendor deprecations and rate limits.
 
 ### Negative / Trade-offs
-- Adapters must normalize different LLM output structures and error types into common Pydantic response models.
+- Adapters must normalize differing provider output formats into common Pydantic schemas.

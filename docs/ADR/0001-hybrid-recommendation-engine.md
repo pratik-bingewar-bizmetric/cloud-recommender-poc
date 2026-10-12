@@ -1,4 +1,4 @@
-# ADR 0001: Hybrid Deterministic-Generative Architecture
+# ADR 0001: Hybrid Architecture with LangGraph Stateful Agent Orchestration
 
 | Status | Accepted |
 | :--- | :--- |
@@ -10,36 +10,37 @@
 
 ## Context & Problem Statement
 
-Cloud architecture recommendation requires balancing two distinct needs:
-1. **Absolute correctness on hard constraints:** Regulatory compliance (e.g., HIPAA, FedRAMP), geographic region availability, and minimum hardware limits cannot tolerate hallucinations or probabilistic guesswork. If a cloud service is not HIPAA-certified, recommending it for a healthcare workload represents a catastrophic failure.
-2. **Contextual reasoning and narrative synthesis:** Evaluating subtle architectural trade-offs (e.g., developer ergonomics of Google Cloud Run vs flexibility of AWS ECS Fargate, or vendor lock-in risks) requires qualitative synthesis and explanation that static rule engines cannot generate.
+Cloud architecture recommendation and optimization across hyperscalers (Azure, AWS, GCP) involves two opposing challenges:
+1. **Unstructured Reasoning & Conversational Clarification:** Understanding requirements from free-form text, PDF/Word documents, and source-code repositories requires conversational intelligence. When critical requirements (such as throughput, SLA, or compliance) are missing, the system must not guess; it must pause and ask clarifying questions.
+2. **Deterministic Pricing & Zero-Hallucination Constraints:** LLMs frequently hallucinate cloud SKU pricing, region availability, and compliance ratings. Recommending a non-compliant service or an inaccurate price can result in catastrophic architectural failures.
 
-A purely generative (LLM-only) solution suffers from hallucinated SKUs, out-of-date pricing, and probabilistic constraint violation. A purely deterministic rule engine produces rigid, uninspiring recommendations with no contextual narrative.
+Simple single-shot LLM prompts or rigid linear pipelines cannot manage interactive clarification dialogs, cyclic state transitions, or deterministic pricing integration.
 
 ---
 
 ## Decision
 
-We will implement a **Two-Stage Hybrid Architecture**:
+We will implement a **Two-Stage Hybrid Architecture** orchestrated by **LangGraph**:
 
-1. **Stage 1 (Deterministic Filter):**
-   - The workload profile is evaluated against an in-memory catalog via pure Python rule engines.
-   - Any service that fails hard constraints (compliance, memory/CPU thresholds, region limits) is pruned.
-   - Incompatible architectures are rejected deterministically before any LLM prompt is constructed.
+1. **Stateful Graph Orchestration (LangGraph):**
+   - **Phase A Graph:** Coordinates document parsing, requirements extraction, validation, conditional branching to a human-in-the-loop clarification node when specs are incomplete, and architectural synthesis.
+   - **Phase B Graph:** Coordinates static source-code analysis, read-only Azure telemetry ingestion, Microsoft Fabric Lakehouse writes, and waste detection.
+   - Graph state is persisted using a PostgreSQL checkpointer, ensuring session continuity across asynchronous user clarification responses.
 
-2. **Stage 2 (Generative Synthesis):**
-   - Only pre-validated, compliant candidate services are passed into the LLM context.
-   - The LLM is constrained via structured prompt engineering and Pydantic schemas to reason about trade-offs, fit scores (0–100), and narrative justification between the validated candidates.
+2. **Deterministic Constraint & Pricing Isolation:**
+   - LLMs are strictly forbidden from generating or guessing pricing numbers.
+   - Pricing is retrieved deterministically from official provider APIs (Azure Retail Prices API, AWS Price List API, GCP Catalog API) and local cached datasets.
+   - Hard constraint filters (e.g. HIPAA compliance, geographic region limits) filter candidate services before final blueprint synthesis.
 
 ---
 
 ## Consequences
 
 ### Positive
-- **Zero Hallucination of Critical Constraints:** The LLM cannot recommend a non-compliant service because non-compliant services are never provided in its prompt context.
-- **Predictable Cost & Latency:** In scenarios where hard constraints result in a single obvious fit or where external LLMs are unavailable, the deterministic stage can complete without waiting for an LLM response.
-- **High-Quality Explanation:** Users receive rich, human-readable trade-off rationales tailored to their exact workload description.
+- **Guaranteed Pricing & Compliance Accuracy:** Official provider pricing and verified compliance records eliminate hallucinated costs and illegal architectures.
+- **Stateful Human-in-the-Loop Clarification:** LangGraph state machine naturally pauses execution to solicit missing requirements from users and seamlessly resumes.
+- **Auditability:** Every node transition in the LangGraph graph is logged and traceable.
 
 ### Negative / Trade-offs
-- Requires maintaining a curated catalog of services and their compliance/capability attributes.
-- Slightly higher pipeline complexity than a single monolithic LLM prompt.
+- Increased architectural complexity compared to simple stateless REST endpoints.
+- Requires PostgreSQL state persistence to manage graph checkpoints.

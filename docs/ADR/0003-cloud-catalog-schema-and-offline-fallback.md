@@ -1,44 +1,45 @@
-# ADR 0003: Cloud Catalog Schema and Offline-First Dataset
+# ADR 0003: Analytics Layer Architecture (Microsoft Fabric Lakehouse & OneLake)
 
 | Status | Accepted |
 | :--- | :--- |
 | **Date** | 2026-10-12 |
 | **Authors** | Architecture Working Group |
-| **Deciders** | Lead Cloud Architect, FinOps Lead |
+| **Deciders** | Lead Cloud Architect, Data Engineering Lead |
 
 ---
 
 ## Context & Problem Statement
 
-Real-time cloud pricing APIs (such as AWS Price List API, Azure Retail Prices API, and GCP Cloud Billing Catalog) are notoriously complex:
-- AWS Price List API involves multi-gigabyte JSON/CSV indexes.
-- Rate limits and transient network failures make live API queries slow and fragile during user interaction.
-- Calling external pricing APIs requires live network connections and in some cases authenticated cloud credentials.
-- Test suites in CI environments cannot depend on external cloud billing availability.
+Phase B (Existing Application Optimization) requires analyzing large volumes of semi-structured cloud telemetry:
+- Detailed Azure Resource Graph inventory dumps.
+- Historical Azure Monitor time-series metrics (CPU, memory, IOPS over 30–90 days).
+- Granular daily Azure Cost Management billing logs.
+
+Storing millions of high-frequency metric records in an operational relational database (PostgreSQL) leads to database bloat, performance degradation, and cumbersome analytics querying. The project requires an enterprise-grade analytics storage and transformation layer, specifically aligned with the enterprise Microsoft data ecosystem.
 
 ---
 
 ## Decision
 
-We will implement an **Offline-First, Versioned JSON Catalog** bundled directly within the repository under `backend/app/catalog/data/`:
-- `aws_services.json`
-- `azure_services.json`
-- `gcp_services.json`
+We designate **Microsoft Fabric** as the planned analytics storage and transformation layer:
 
-### Key Architectural Guidelines:
-1. **Curated Heuristic Baseline:** Each catalog entry contains baseline hourly rates, storage rates per GB/month, network egress costs per GB, and standard SLA percentages based on official hyperscaler documentation.
-2. **In-Memory Query Engine:** On application startup, the JSON files are validated against the `CloudServiceItem` Pydantic model and indexed in memory for sub-millisecond filtering.
-3. **Pluggable Updates:** Updating service capabilities or adding new cloud regions is done by modifying or appending JSON data files without touching Python business logic.
-4. **Estimated Cost Labeling:** All cost figures are explicitly presented with the `ESTIMATED_BASELINE` label, applying a default +15% safety buffer for operational realism.
+1. **OneLake & Lakehouse Tables:**
+   - Raw Azure inventory, billing data, and performance metrics will be stored in a **Microsoft Fabric Lakehouse** using the open **Delta Parquet** format.
+   - Separate tables are provisioned: `raw_azure_inventory`, `raw_azure_metrics`, `raw_azure_billing`, and aggregated analytical views.
+2. **Fabric Data Transformations:**
+   - Transformation and aggregation routines (e.g. computing 30-day P95 CPU utilization, identifying idle disks) execute via Fabric Notebooks / Spark jobs or scheduled Dataflows Gen2.
+3. **Local / Offline Fallback Mode:**
+   - To adhere to our core principle that the POC must be runnable offline without paid cloud subscriptions, the backend implements a local Lakehouse abstraction using DuckDB and local Parquet files when `FABRIC_ENABLED=false`.
 
 ---
 
 ## Consequences
 
 ### Positive
-- The application runs 100% offline with zero dependencies on external cloud provider networks.
-- Deterministic, repeatable test runs in CI.
-- Millisecond query latency.
+- Enterprise-grade scalability for large telemetry and FinOps datasets.
+- Native alignment with customer Microsoft enterprise environments.
+- Zero impact on the operational PostgreSQL database.
+- Complete offline testability via the local DuckDB/Parquet fallback.
 
 ### Negative / Trade-offs
-- Pricing does not automatically reflect intraday changes or complex volume discount tiers (e.g. Enterprise Agreements, AWS Savings Plans) without periodic manual or automated catalog sync scripts.
+- Connecting to live Fabric environments requires active Fabric capacity (F-SKU or Trial) and Azure AD App Registration permissions for OneLake.

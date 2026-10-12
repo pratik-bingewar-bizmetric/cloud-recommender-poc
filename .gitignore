@@ -107,11 +107,28 @@ temp/
 *.log
 logs/
 
+# User Uploaded Artifacts & Ephemeral Ingestion Files
+uploads/
+*.zip
+*.tar
+*.tar.gz
+*.pdf
+*.docx
+*.doc
+
 # Database & Storage
 *.sqlite3
 *.db
 data/cache/
 data/exports/
+*.sql
+*.dump
+
+# Microsoft Fabric & Local Analytics Data
+.fabric/
+fabric_artifacts/
+*.parquet
+*.delta/
 
 # Terraform / Infrastructure (Generated Outputs)
 **/.terraform/*
@@ -127,3 +144,5 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+
