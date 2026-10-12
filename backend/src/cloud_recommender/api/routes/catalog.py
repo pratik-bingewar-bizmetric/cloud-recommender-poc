@@ -34,7 +34,7 @@ async def get_catalog_service_manager(
     async with session_factory() as session:
         try:
             yield CatalogServiceManager(session=session, offline_mode=False)
-        except Exception:
+        except BaseException:
             await session.rollback()
             raise
         finally:

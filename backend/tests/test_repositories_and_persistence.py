@@ -1,7 +1,7 @@
 """Unit tests for ORM models, constraints, and repository methods."""
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -295,5 +295,93 @@ async def test_catalog_manager_dependency_lifecycle() -> None:
         with pytest.raises(RuntimeError):
             await gen.athrow(RuntimeError("Endpoint failed"))
 
+        assert mock_session.rollback.called
+        assert mock_session.close.called
+
+    # Test rollback and cleanup on HTTPException
+    from fastapi import HTTPException
+
+    with patch(
+        "cloud_recommender.api.routes.catalog.get_session_factory", return_value=mock_factory
+    ):
+        mock_session.reset_mock()
+        gen = get_catalog_service_manager(settings=settings_db)
+        manager = await anext(gen)
+
+        with pytest.raises(HTTPException):
+            await gen.athrow(HTTPException(status_code=404, detail="Not Found"))
+
+        assert mock_session.rollback.called
+        assert mock_session.close.called
+
+    # Test rollback and cleanup on CancelledError
+    import asyncio
+
+    with patch(
+        "cloud_recommender.api.routes.catalog.get_session_factory", return_value=mock_factory
+    ):
+        mock_session.reset_mock()
+        gen = get_catalog_service_manager(settings=settings_db)
+        manager = await anext(gen)
+
+        with pytest.raises(asyncio.CancelledError):
+            await gen.athrow(asyncio.CancelledError())
+
+        assert mock_session.rollback.called
+        assert mock_session.close.called
+
+
+@pytest.mark.asyncio
+async def test_get_db_session_dependency_lifecycle() -> None:
+    """Verify that get_db_session closes and rolls back across all exit paths."""
+    from cloud_recommender.db.session import get_db_session
+
+    mock_session = AsyncMock()
+    mock_factory = MagicMock()
+    mock_factory.return_value.__aenter__.return_value = mock_session
+    mock_factory.return_value.__aexit__.return_value = None
+
+    # Normal cleanup
+    with patch("cloud_recommender.db.session.get_session_factory", return_value=mock_factory):
+        gen = get_db_session()
+        session = await anext(gen)
+        assert session is mock_session
+        try:
+            await anext(gen)
+        except StopAsyncIteration:
+            pass
+        assert mock_session.close.called
+
+    # Rollback on RuntimeError
+    with patch("cloud_recommender.db.session.get_session_factory", return_value=mock_factory):
+        mock_session.reset_mock()
+        gen = get_db_session()
+        session = await anext(gen)
+        with pytest.raises(RuntimeError):
+            await gen.athrow(RuntimeError("Db query failed"))
+        assert mock_session.rollback.called
+        assert mock_session.close.called
+
+    # Rollback on HTTPException
+    from fastapi import HTTPException
+
+    with patch("cloud_recommender.db.session.get_session_factory", return_value=mock_factory):
+        mock_session.reset_mock()
+        gen = get_db_session()
+        session = await anext(gen)
+        with pytest.raises(HTTPException):
+            await gen.athrow(HTTPException(status_code=500, detail="Internal Error"))
+        assert mock_session.rollback.called
+        assert mock_session.close.called
+
+    # Rollback on CancelledError
+    import asyncio
+
+    with patch("cloud_recommender.db.session.get_session_factory", return_value=mock_factory):
+        mock_session.reset_mock()
+        gen = get_db_session()
+        session = await anext(gen)
+        with pytest.raises(asyncio.CancelledError):
+            await gen.athrow(asyncio.CancelledError())
         assert mock_session.rollback.called
         assert mock_session.close.called

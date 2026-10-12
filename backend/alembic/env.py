@@ -27,7 +27,8 @@ if config.config_file_name is not None:
 settings = get_settings()
 existing_url = config.get_main_option("sqlalchemy.url")
 if not existing_url or "driver://user:pass@localhost/dbname" in existing_url:
-    config.set_main_option("sqlalchemy.url", settings.database_url)
+    config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
+
 
 # Target metadata for autogenerate support
 target_metadata = Base.metadata

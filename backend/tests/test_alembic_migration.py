@@ -51,3 +51,33 @@ def test_alembic_env_preserves_explicit_config_url() -> None:
 
     # Verify that get_main_option retains the custom URL
     assert cfg.get_main_option("sqlalchemy.url") == custom_url
+
+
+def test_alembic_url_escaping_percent_characters() -> None:
+    """Verify that database URLs with percent-encoded passwords do not trigger
+    interpolation errors.
+    """
+    from alembic.config import Config
+
+    encoded_url = "postgresql+asyncpg://user:p%40ss%23word@db-host:5432/test_db"
+    cfg = Config(ALEMBIC_DIR / ".." / "alembic.ini")
+
+    # Safe escaping with % -> %% prevents configparser InterpolationSyntaxError
+    cfg.set_main_option("sqlalchemy.url", encoded_url.replace("%", "%%"))
+    resolved = cfg.get_main_option("sqlalchemy.url")
+    assert resolved == encoded_url
+
+
+def test_alembic_x_argument_does_not_override_sqlalchemy_url() -> None:
+    """Verify that arbitrary -x custom arguments do not inadvertently overwrite sqlalchemy.url."""
+    from alembic.config import Config
+
+    cfg = Config(ALEMBIC_DIR / ".." / "alembic.ini")
+    custom_url = "postgresql+asyncpg://user:pass@localhost:5432/test_target_db"
+    cfg.set_main_option("sqlalchemy.url", custom_url)
+
+    # Simulating arbitrary -x arguments passed via command options
+    cfg.file_config.set("alembic", "some_custom_x_arg", "arbitrary_value")
+
+    assert cfg.get_main_option("sqlalchemy.url") == custom_url
+    assert cfg.file_config.get("alembic", "some_custom_x_arg") == "arbitrary_value"
