@@ -1,0 +1,128 @@
+name: Continuous Integration (CI)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-quality:
+    name: Backend Lint, Type Check & Test
+    runs-on: ubuntu-latest
+    env:
+      LLM_PROVIDER: mock
+      APP_ENV: testing
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f backend/requirements.txt ]; then
+            pip install -r backend/requirements.txt
+          elif [ -f backend/pyproject.toml ]; then
+            pip install .[dev]
+          else
+            pip install pytest pytest-cov ruff mypy pydantic fastapi uvicorn
+          fi
+
+      - name: Run Ruff Linter
+        run: |
+          if [ -d "backend" ]; then
+            ruff check backend/
+          else
+            echo "Backend directory not yet created. Skipping."
+          fi
+
+      - name: Run Ruff Format Check
+        run: |
+          if [ -d "backend" ]; then
+            ruff format --check backend/
+          else
+            echo "Backend directory not yet created. Skipping."
+          fi
+
+      - name: Run Mypy Type Checker
+        run: |
+          if [ -d "backend" ]; then
+            mypy backend/
+          else
+            echo "Backend directory not yet created. Skipping."
+          fi
+
+      - name: Run Pytest Test Suite
+        run: |
+          if [ -d "backend/tests" ]; then
+            pytest backend/tests/ -v --cov=backend/app --cov-report=xml --cov-report=term
+          else
+            echo "Backend tests not yet created. Skipping."
+          fi
+
+  frontend-quality:
+    name: Frontend Lint, Type Check & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache-dependency-path: "frontend/package-lock.json"
+
+      - name: Install Frontend Dependencies
+        run: |
+          if [ -f "frontend/package.json" ]; then
+            cd frontend && npm ci
+          else
+            echo "Frontend directory not yet initialized. Skipping."
+          fi
+
+      - name: Run Frontend Lint & Type Check
+        run: |
+          if [ -f "frontend/package.json" ]; then
+            cd frontend
+            npm run lint --if-present
+            npm run typecheck --if-present
+          else
+            echo "Frontend directory not yet initialized. Skipping."
+          fi
+
+      - name: Build Frontend Application
+        run: |
+          if [ -f "frontend/package.json" ]; then
+            cd frontend && npm run build
+          else
+            echo "Frontend directory not yet initialized. Skipping."
+          fi
+
+  documentation-integrity:
+    name: Docs & ADR Integrity Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Verify Required Foundational Documents Exist
+        run: |
+          test -f README.md || (echo "Missing README.md" && exit 1)
+          test -f AGENTS.md || (echo "Missing AGENTS.md" && exit 1)
+          test -f .env.example || (echo "Missing .env.example" && exit 1)
+          test -f docs/PRODUCT_REQUIREMENTS.md || (echo "Missing docs/PRODUCT_REQUIREMENTS.md" && exit 1)
+          test -f docs/ARCHITECTURE.md || (echo "Missing docs/ARCHITECTURE.md" && exit 1)
+          test -f docs/IMPLEMENTATION_ROADMAP.md || (echo "Missing docs/IMPLEMENTATION_ROADMAP.md" && exit 1)
+          test -d docs/ADR || (echo "Missing docs/ADR directory" && exit 1)
+          echo "All foundational governance and architectural documents are verified."
