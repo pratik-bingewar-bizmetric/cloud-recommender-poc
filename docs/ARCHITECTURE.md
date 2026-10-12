@@ -1,329 +1,369 @@
-# Architecture Specification Document
+# Architecture Specification Document — Cloud Recommender POC
 
 | Document Metadata | Value |
 | :--- | :--- |
-| **Project** | Cloud Recommender POC |
-| **Version** | 1.0.0 |
-| **Status** | Approved & Binding |
-| **Target Runtime** | Python 3.11+ (Backend) / Node 20+ (Frontend) |
+| **Project Name** | Cloud Recommender POC |
+| **Architectural Style** | Hybrid Deterministic-Generative with Stateful Agent Orchestration |
+| **Status** | Approved & Enforced |
+| **Target Runtime** | Python 3.11+ (API & Engine) / Node.js 20+ (Next.js Frontend) |
 
 ---
 
-## 1. System Overview & Architecture Philosophy
+## 1. Architectural Philosophy & Principles
 
-The Cloud Recommender POC implements a **Hybrid Deterministic-Generative Architecture**. 
+The Cloud Recommender POC is engineered to resolve a fundamental tension in AI-assisted systems:
+- **LLMs excel at narrative reasoning, code comprehension, and unstructured document extraction.**
+- **LLMs fail at deterministic pricing math, strict constraint filtering, and reliable billing calculation.**
 
-Pure LLM systems often hallucinate cloud SKUs, invent non-existent pricing, or miss strict regulatory boundaries. Pure rule engines lack nuance, conversational flexibility, and the ability to synthesize compelling trade-off narratives. 
-
-By separating the pipeline into **Deterministic Constraint Verification** (first pass) and **Generative Architectural Synthesis** (second pass), the system ensures 100% technical validity while providing deep, context-aware architectural recommendations.
+To solve this, the platform decouples tasks into a **Two-Stage Hybrid Architecture** orchestrated by **LangGraph**:
+1. **Generative Stage:** Document parsing, requirements extraction, interactive clarification generation, code quality analysis, and trade-off synthesis.
+2. **Deterministic Stage:** Official provider pricing retrieval, cost estimation, compliance checking, Azure Resource Graph querying, and Microsoft Fabric lakehouse aggregations.
+3. **Strict Zero-Execution Guardrail:** Customer cloud environments are strictly read-only; no infrastructure modifications are executed automatically.
 
 ---
 
-## 2. System Architecture Diagram
+## 2. End-to-End System Topology
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer ["Client Layer (Web Application)"]
-        UI["React 18 + Vite SPA"]
-        FormInput["Workload Form Wizard"]
-        PromptInput["Natural Language Query"]
-        ResultsView["Interactive Comparison & Diagram Viewer"]
+    subgraph ClientTier ["Frontend Tier (Next.js 14 App Router / TypeScript)"]
+        UI["Web Portal UI"]
+        PhaseAView["Phase A: Architecture Studio\n(Doc Upload, Clarification Chat, Multi-Cloud Matrix, Mermaid)"]
+        PhaseBView["Phase B: Optimization Hub\n(ZIP Upload, Azure Connect, Waste Dashboard, Savings Plan)"]
     end
 
-    subgraph APILayer ["FastAPI Gateway (:8000)"]
-        Router["FastAPI REST Endpoints"]
-        Middleware["CORS & Request Validation Middleware"]
+    subgraph APITier ["FastAPI Application Gateway (:8000)"]
+        Router["FastAPI REST Endpoints\n(/api/v1/new-apps, /api/v1/optimize, /api/v1/pricing)"]
+        AuthMiddleware["Security & Input Sanitization Middleware"]
+        UploadHandler["Ephemeral Document & ZIP Ingestion Manager"]
     end
 
-    subgraph CoreEngine ["Recommendation Engine Pipeline"]
-        Normalizer["Workload Normalizer & Parser\n(Converts text/form to Pydantic WorkloadProfile)"]
-        RuleEngine["Deterministic Constraint Engine\n(Compliance, SLA, Region, Hard Budgets)"]
-        Catalog["Cloud Service Catalog\n(AWS / Azure / GCP Service Registry & SKUs)"]
-        Synthesizer["AI Architecture Synthesizer\n(Trade-off reasoning, Fit Scoring 0-100)"]
-        CostCalc["Cost Estimator & BOM Calculator\n(Compute, Storage, Egress Heuristics)"]
-        IaCGen["Diagram & IaC Generator\n(Mermaid.js Flowchart & Terraform HCL)"]
+    subgraph AgentTier ["LangGraph Stateful Agent Orchestration"]
+        GraphA["Phase A Graph:\nExtract -> Validate -> Clarify -> Synthesize -> Price"]
+        GraphB["Phase B Graph:\nAnalyze Code -> Ingest Telemetry -> Detect Waste -> Modernize"]
+        StateCheckpoint["PostgreSQL LangGraph Checkpointer\n(Maintains conversational state & clarification loops)"]
     end
 
-    subgraph LLMProviders ["Pluggable LLM Providers"]
-        direction TB
-        BaseProvider["LLMProvider (Abstract Base Class)"]
-        MockProvider["MockProvider (Deterministic, Zero Cost, CI/Test)"]
-        GeminiProvider["GeminiProvider (Google Gemini 2.5/Flash)"]
-        OpenAIProvider["OpenAIProvider (GPT-4o)"]
-        ClaudeProvider["AnthropicProvider (Claude 3.7 Sonnet)"]
+    subgraph DataTier ["Persistence & Analytics Storage"]
+        Postgres[("PostgreSQL 15+\n(Workload Profiles, Chat History, Reports, Audit Logs)")]
+        Fabric[("Microsoft Fabric Lakehouse (OneLake)\n(Delta Parquet: Azure Inventory, Metrics, Billing, Waste Models)")]
     end
 
-    %% Flow Connections
-    FormInput --> Router
-    PromptInput --> Router
-    Router --> Middleware --> Normalizer
-    Normalizer --> RuleEngine
-    RuleEngine <--> Catalog
-    RuleEngine --> Synthesizer
-    Synthesizer <--> BaseProvider
-    BaseProvider --- MockProvider
-    BaseProvider --- GeminiProvider
-    BaseProvider --- OpenAIProvider
-    BaseProvider --- ClaudeProvider
-    Synthesizer --> CostCalc
-    CostCalc <--> Catalog
-    CostCalc --> IaCGen
-    IaCGen --> Router
-    Router --> ResultsView
+    subgraph EngineTier ["Deterministic Engine Modules"]
+        PricingEngine["Deterministic Pricing Engine\n(Azure Retail, AWS Price List, GCP Catalog)"]
+        RuleFilter["Hard Constraint & Compliance Filter"]
+        PricingCache[("Local Pricing Cache\n(JSON / SQLite, 24h TTL)")]
+    end
+
+    subgraph ExternalServices ["External Cloud Services & APIs"]
+        AzureReadOnly["Azure Subscriptions\n(Reader / Cost Mgmt Reader via Service Principal)"]
+        OfficialAPIs["Official Cloud Pricing APIs\n(Azure Retail Prices, AWS Pricing, GCP Billing)"]
+        FoundationLLMs["Foundation LLM Adapters\n(Azure OpenAI, OpenAI, Gemini, Claude, Mock)"]
+    end
+
+    %% Wiring
+    UI --> Router
+    Router --> AuthMiddleware --> UploadHandler
+    UploadHandler --> GraphA
+    UploadHandler --> GraphB
+    GraphA <--> StateCheckpoint
+    GraphB <--> StateCheckpoint
+    StateCheckpoint <--> Postgres
+    GraphA --> RuleFilter
+    GraphA --> PricingEngine
+    PricingEngine <--> PricingCache
+    PricingEngine <--> OfficialAPIs
+    GraphA <--> FoundationLLMs
+    GraphB <--> FoundationLLMs
+    GraphB --> AzureReadOnly
+    GraphB --> Fabric
+    Router --> Postgres
 ```
 
 ---
 
-## 3. Technology Stack & Rationale
+## 3. Technology Stack & Component Justifications
 
-| Component | Technology | Rationale |
+| Component | Selected Technology | Architectural Justification |
 | :--- | :--- | :--- |
-| **Backend Framework** | **FastAPI (Python 3.11+)** | High performance async endpoints, native OpenAPI schema generation, and first-class Pydantic v2 integration. |
-| **Data Validation & Schemas** | **Pydantic v2** | Strict runtime type validation, fast Rust-based serialization, and seamless integration with LLM structured output parsing. |
-| **LLM Provider Layer** | **Custom Pluggable Adapter Pattern** | Zero lock-in to any single AI provider; allows running in mock mode during CI/offline, and swapping between Gemini, OpenAI, and Anthropic. |
-| **Catalog Storage** | **Local JSON Dataset + In-Memory Index** | Fast, deterministic, zero external database setup required for the POC. Service records are easily audited and version-controlled. |
-| **Frontend Framework** | **React 18 + Vite + TypeScript** | Instant HMR, type safety, low bundle size, and fast component composition. |
-| **Styling & UI Components** | **Tailwind CSS + Lucide React** | Utility-first, responsive design with clear visual hierarchy for complex comparison matrices. |
-| **Diagram Engine** | **Mermaid.js** | Text-to-diagram rendering directly in the browser; exports clean SVG/PNG diagrams. |
-| **Testing & Quality** | **Pytest + Mypy + Ruff** | High-velocity test suite, strict static type enforcement, and standard PEP 8 formatting. |
+| **Frontend Framework** | **Next.js 14+ (React 18, TypeScript)** | Server-side rendering, streaming API support, modern component ecosystem, and strict type safety. |
+| **API Framework** | **Python 3.11+ / FastAPI** | Native async concurrency, automated OpenAPI generation, fast Pydantic v2 data validation, and direct integration with Python AI/data libraries. |
+| **Agent Orchestration** | **LangGraph (LangChain ecosystem)** | Provides cyclic, stateful multi-agent graphs required for human-in-the-loop clarification loops and multi-step code/cloud analysis. |
+| **Relational Database** | **PostgreSQL 15+ (asyncpg / SQLAlchemy 2.0)** | ACID persistence for user projects, workload profiles, clarification chat logs, and generation histories. |
+| **Analytics Storage & Transformation** | **Microsoft Fabric Lakehouse (OneLake)** | Enterprise lakehouse utilizing Delta Parquet for storing Azure inventory, utilization metrics, and billing datasets, with local DuckDB/Parquet fallback for offline dev. |
+| **Cloud Integrations** | **Azure SDK for Python (`azure-mgmt-*`)** | Native SDKs for Azure Resource Graph, Azure Monitor, and Azure Cost Management with strictly enforced read-only scopes. |
+| **Document Parsers** | **`pypdf` & `python-docx`** | Robust, open-source text and metadata extraction from uploaded PDF and Word documents without external SaaS dependencies. |
+| **Pricing Engine** | **Custom Deterministic Pricing Service** | Directly queries Azure Retail Prices API, AWS Price List API, and GCP Billing Catalog; stores cached schemas in JSON/SQLite. |
+| **Diagram Generation** | **Mermaid.js** | Browser-renderable text-based diagrams that easily export to SVG and PNG. |
 
 ---
 
-## 4. Pipeline Execution Lifecycle
+## 4. LangGraph Agent Workflows
+
+### 4.1 Phase A: New Application Architecture Graph
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Cloud Architect
-    participant UI as React Frontend
-    participant API as FastAPI Router
-    participant Norm as Workload Normalizer
-    participant Rule as Constraint Engine
-    participant LLM as LLM Provider
-    participant Cost as Cost Estimator
-    participant Gen as Diagram/IaC Gen
+stateDiagram-v2
+    [*] --> IngestPayload: User submits Text / PDF / Word
+    IngestPayload --> ParseDocument: Extract raw text & tables
+    ParseDocument --> ExtractRequirements: LLM extracts candidate WorkloadProfile
+    ExtractRequirements --> ValidateConstraints: Deterministic validation of specs
 
-    User->>UI: Submits workload requirements (Form / Prompt)
-    UI->>API: POST /api/v1/recommendations
-    API->>Norm: Parse raw payload into WorkloadProfile
-    Norm-->>API: Validated WorkloadProfile
-    API->>Rule: Filter catalog services by constraints (e.g., HIPAA, Region)
-    Rule-->>API: Qualified Candidate Services (AWS, Azure, GCP)
-    API->>LLM: Synthesize architecture, score trade-offs, rank providers
-    LLM-->>API: Structured Recommendation (Rationale, Fit Scores)
-    API->>Cost: Calculate Bill of Materials (BOM) per cloud
-    Cost-->>API: Monthly Itemized Cost Estimates
-    API->>Gen: Generate Mermaid topology & Terraform HCL
-    Gen-->>API: Complete RecommendationPayload
-    API-->>UI: 200 OK (Full Report JSON)
-    UI-->>User: Renders Side-by-Side Comparison, Diagram, & IaC
+    ValidateConstraints --> CheckCompleteness: Are critical specs missing?
+    
+    CheckCompleteness --> ClarificationRequired: Yes (Missing throughput, SLA, or compliance)
+    ClarificationRequired --> AwaitUserInput: Generate clarifying questions & wait
+    AwaitUserInput --> ExtractRequirements: User provides clarification response
+
+    CheckCompleteness --> GenerateArchitectures: No (All critical requirements valid)
+    GenerateArchitectures --> QueryDeterministicPricing: Query Azure, AWS, GCP official pricing
+    QueryDeterministicPricing --> SynthesizeReport: Compute monthly/annual BOM & trade-offs
+    SynthesizeReport --> GenerateMermaidDiagram: Build topology diagrams
+    GenerateMermaidDiagram --> [*]: Output completed recommendation
+```
+
+### 4.2 Phase B: Existing Application Optimization Graph
+
+```mermaid
+stateDiagram-v2
+    [*] --> IngestCodeAndCredentials: Upload Source ZIP & Azure Read-Only SP
+    IngestCodeAndCredentials --> UnpackAndSanitize: Unpack ZIP & scrub secrets/PII
+    
+    state fork_state <<fork>>
+    UnpackAndSanitize --> fork_state
+    fork_state --> StaticCodeAnalysis: Analyze AST, dependencies, CVEs, architecture
+    fork_state --> IngestAzureTelemetry: Query Resource Graph, Cost Mgmt, Monitor
+    
+    state join_state <<join>>
+    StaticCodeAnalysis --> join_state
+    IngestAzureTelemetry --> join_state
+    
+    join_state --> WriteToFabricLakehouse: Stage raw metrics in Fabric Delta tables
+    WriteToFabricLakehouse --> ExecuteFabricTransforms: Aggregate utilization & cost curves
+    ExecuteFabricTransforms --> DetectWasteAndModernization: Identify idle VMs, unattached disks, PaaS opportunities
+    DetectWasteAndModernization --> FormulateOptimizationPlan: Calculate projected savings & implementation effort
+    FormulateOptimizationPlan --> HumanApprovalGate: Present advisory report (Zero-Execution)
+    HumanApprovalGate --> [*]
 ```
 
 ---
 
-## 5. Domain Data Models & Core Schemas
+## 5. Data Architecture & Schemas
 
-### 5.1 `WorkloadProfile`
-The canonical input representation normalized across form fields and NLP prompts:
-```python
-class WorkloadType(str, Enum):
-    WEB_APP = "web_app"
-    MICROSERVICES = "microservices"
-    BATCH_PROCESSING = "batch_processing"
-    DATA_PIPELINE = "data_pipeline"
-    AI_INFERENCE = "ai_inference"
-    EVENT_DRIVEN = "event_driven"
+### 5.1 Operational Relational Layer (PostgreSQL)
 
-class ComplianceStandard(str, Enum):
-    HIPAA = "HIPAA"
-    GDPR = "GDPR"
-    PCI_DSS = "PCI_DSS"
-    SOC2 = "SOC2"
-    FEDRAMP = "FEDRAMP"
+```sql
+-- Workload Profiles (Phase A)
+CREATE TABLE workload_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_name VARCHAR(255) NOT NULL,
+    workload_type VARCHAR(50) NOT NULL,
+    target_traffic_rps INT DEFAULT 100,
+    monthly_active_users INT DEFAULT 10000,
+    cpu_cores_required INT DEFAULT 4,
+    memory_gb_required INT DEFAULT 16,
+    gpu_required BOOLEAN DEFAULT FALSE,
+    storage_gb INT DEFAULT 100,
+    database_type VARCHAR(50) DEFAULT 'relational',
+    high_availability BOOLEAN DEFAULT TRUE,
+    multi_region BOOLEAN DEFAULT FALSE,
+    compliance_frameworks JSONB DEFAULT '[]'::jsonb,
+    max_monthly_budget_usd NUMERIC(12, 2),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
-class WorkloadProfile(BaseModel):
-    name: str = Field(..., description="Project or workload identifier")
-    workload_type: WorkloadType
-    target_traffic_rps: int = Field(default=100, ge=1)
-    monthly_active_users: int = Field(default=10_000, ge=0)
-    cpu_cores_required: int = Field(default=4, ge=1)
-    memory_gb_required: int = Field(default=16, ge=1)
-    gpu_required: bool = False
-    storage_gb: int = Field(default=100, ge=0)
-    database_type: str = Field(default="relational", description="relational, document, cache, timeseries")
-    high_availability: bool = True
-    multi_region: bool = False
-    compliance: list[ComplianceStandard] = Field(default_factory=list)
-    max_monthly_budget_usd: Optional[float] = None
-    preferred_provider: Optional[str] = None  # "aws", "azure", "gcp", or None (open)
+-- Clarification Sessions (Human-in-the-Loop)
+CREATE TABLE clarification_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workload_profile_id UUID REFERENCES workload_profiles(id),
+    status VARCHAR(50) DEFAULT 'in_progress', -- in_progress, completed
+    pending_questions JSONB NOT NULL,
+    user_responses JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Recommendation Reports (Phase A Output)
+CREATE TABLE architecture_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workload_profile_id UUID REFERENCES workload_profiles(id),
+    recommended_primary VARCHAR(20) NOT NULL, -- azure, aws, gcp
+    azure_architecture JSONB NOT NULL,
+    aws_architecture JSONB NOT NULL,
+    gcp_architecture JSONB NOT NULL,
+    pricing_assumptions JSONB NOT NULL,
+    mermaid_diagrams JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Optimization Audits (Phase B Output)
+CREATE TABLE optimization_audits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    azure_subscription_id VARCHAR(100) NOT NULL,
+    current_monthly_spend_usd NUMERIC(12, 2) NOT NULL,
+    projected_monthly_spend_usd NUMERIC(12, 2) NOT NULL,
+    estimated_monthly_savings_usd NUMERIC(12, 2) NOT NULL,
+    detected_waste JSONB NOT NULL,
+    modernization_recommendations JSONB NOT NULL,
+    implementation_effort_days INT NOT NULL,
+    human_approval_status VARCHAR(50) DEFAULT 'pending_review',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 ```
 
-### 5.2 `CloudServiceItem`
-Catalog representation of a discrete cloud service:
-```python
-class CloudProvider(str, Enum):
-    AWS = "aws"
-    AZURE = "azure"
-    GCP = "gcp"
+### 5.2 Microsoft Fabric Lakehouse Layer (Delta Parquet)
 
-class ServiceCategory(str, Enum):
-    COMPUTE = "compute"
-    DATABASE = "database"
-    STORAGE = "storage"
-    NETWORKING = "networking"
-    SECURITY = "security"
-    MONITORING = "monitoring"
+Telemetry and billing data are organized in **Microsoft Fabric OneLake** tables:
 
-class CloudServiceItem(BaseModel):
-    service_id: str
-    provider: CloudProvider
-    category: ServiceCategory
-    name: str
-    description: str
-    supported_compliance: list[ComplianceStandard]
-    sla_percentage: float
-    base_hourly_rate_usd: float
-    unit_metric: str  # e.g., "per_vcpu_hour", "per_gb_month"
-    strengths: list[str]
-    limitations: list[str]
+```text
+onelake/
+└── workspaces/{fabric_workspace_id}/
+    └── lakehouses/{fabric_lakehouse_id}/
+        └── Tables/
+            ├── raw_azure_inventory/        # Resource ID, type, location, SKU, tags
+            ├── raw_azure_metrics/          # Timestamp, resource ID, metric_name, avg, max
+            ├── raw_azure_billing/          # Usage date, resource ID, service, amortized_cost_usd
+            ├── agg_resource_utilization/   # 30-day aggregate P95 CPU/memory, idle flags
+            └── waste_detection_results/    # Resource ID, waste_category, monthly_waste_usd
 ```
 
-### 5.3 `RecommendationResult`
-The unified synthesis response payload:
-```python
-class FitScore(BaseModel):
-    overall: int = Field(ge=0, le=100)
-    cost_score: int = Field(ge=0, le=100)
-    performance_score: int = Field(ge=0, le=100)
-    reliability_score: int = Field(ge=0, le=100)
-    security_score: int = Field(ge=0, le=100)
-    simplicity_score: int = Field(ge=0, le=100)
-
-class ProviderArchitecture(BaseModel):
-    provider: CloudProvider
-    rank: int
-    fit_score: FitScore
-    selected_services: dict[ServiceCategory, CloudServiceItem]
-    estimated_monthly_cost_usd: float
-    cost_breakdown: dict[str, float]
-    justification_summary: str
-    trade_offs: list[str]
-    potential_risks: list[str]
-    mermaid_diagram: str
-    terraform_hcl: str
-
-class RecommendationResponse(BaseModel):
-    workload_summary: WorkloadProfile
-    recommended_primary: CloudProvider
-    provider_blueprints: dict[CloudProvider, ProviderArchitecture]
-    constraint_check_status: str
-    warnings: list[str]
-```
+*Note: For local development and test runs when `FABRIC_ENABLED=false`, a local DuckDB / Parquet engine mirrors this schema under `backend/app/analytics/local_lakehouse/`.*
 
 ---
 
-## 6. Physical Directory Layout
+## 6. Security Boundaries & Zero-Execution Enforcement
 
-The codebase will follow this structured layout when fully implemented:
+```mermaid
+graph LR
+    subgraph ZeroExecutionBoundary ["Security Guardrail: Zero Execution"]
+        Direction1["Platform Role: Strictly Advisory & Scaffolding"]
+        Direction2["No Write Operations to Cloud (No ARM deployment, No CLI write)"]
+        Direction3["Mandatory Human Approval for all Architectural Decisions"]
+    end
+```
+
+1. **Strictly Read-Only Azure Role Scope:**
+   - Permitted: `Reader`, `Cost Management Reader`, `Monitoring Reader`.
+   - Denied: `Contributor`, `Owner`, `User Access Administrator`.
+   - Code verification: Backend Azure client initialization checks token permissions and rejects initialization if write permissions are granted.
+2. **Data & Secret Sanitization:**
+   - Source code uploaded via ZIP is scanned with AST regex detectors to scrub connection strings, `.env` values, and API keys before analysis.
+   - Uploaded documents and code archives are stored ephemerally with a 24-hour cleanup cron.
+3. **Deterministic Pricing Integrity:**
+   - Pricing calculations are verified against official provider pricing APIs or local cached catalog data; LLMs are never prompted for cost values.
+
+---
+
+## 7. Physical Codebase Directory Structure
 
 ```text
 cloud-recommender-poc/
 ├── .github/
 │   └── workflows/
-│       ├── ci.yml                     # CI lint, typecheck, and test runner
-│       └── pr-check.yml               # PR policy check
+│       ├── ci.yml                          # Continuous Integration Pipeline
+│       └── pr-check.yml                    # Pull Request Validation
 ├── docs/
-│   ├── PRODUCT_REQUIREMENTS.md       # Product requirements & acceptance criteria
-│   ├── ARCHITECTURE.md               # System architecture & data models (this file)
-│   ├── IMPLEMENTATION_ROADMAP.md     # Step-by-step phased milestones
-│   └── ADR/
+│   ├── PRODUCT_REQUIREMENTS.md            # Product Requirements Document (PRD)
+│   ├── ARCHITECTURE.md                    # System Architecture (this document)
+│   ├── IMPLEMENTATION_ROADMAP.md          # Phased Implementation Roadmap
+│   └── ADR/                               # Architectural Decision Records
 │       ├── 0001-hybrid-recommendation-engine.md
 │       ├── 0002-fastapi-backend-with-pydantic-v2.md
 │       ├── 0003-cloud-catalog-schema-and-offline-fallback.md
-│       └── 0004-pluggable-llm-provider-interface.md
+│       ├── 0004-pluggable-llm-provider-interface.md
+│       └── 0005-deterministic-pricing-engine.md
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py                   # FastAPI application factory
-│   │   ├── config.py                 # Pydantic Settings & environment variables
-│   │   ├── schemas/                  # Pydantic data schemas
+│   │   ├── main.py                        # FastAPI application entrypoint
+│   │   ├── config.py                      # Pydantic Settings & environment variables
+│   │   ├── database.py                    # SQLAlchemy 2.0 / PostgreSQL connection
+│   │   ├── schemas/                       # Pydantic domain models
 │   │   │   ├── __init__.py
-│   │   │   ├── domain.py             # WorkloadProfile, CloudProvider, etc.
-│   │   │   └── api.py                # Request / Response DTOs
-│   │   ├── catalog/                  # Service catalog & seed datasets
+│   │   │   ├── domain.py                  # Core WorkloadProfile & Blueprint types
+│   │   │   ├── pricing.py                 # Official pricing models
+│   │   │   └── optimization.py            # Code analysis & telemetry schemas
+│   │   ├── ingestion/                     # Document & Archive Ingestion
 │   │   │   ├── __init__.py
-│   │   │   ├── registry.py           # Catalog query & filter service
-│   │   │   └── data/
-│   │   │       ├── aws_services.json
-│   │   │       ├── azure_services.json
-│   │   │       └── gcp_services.json
-│   │   ├── engine/                   # Recommendation pipeline modules
+│   │   │   ├── document_parser.py         # PDF & Word (.docx) extraction
+│   │   │   ├── zip_extractor.py           # Source code archive handler
+│   │   │   └── sanitizer.py               # Secret & PII scrubber
+│   │   ├── agents/                        # LangGraph Workflows
 │   │   │   ├── __init__.py
-│   │   │   ├── normalizer.py         # Freeform NLP -> WorkloadProfile
-│   │   │   ├── rule_engine.py        # Hard constraint filter
-│   │   │   ├── synthesizer.py        # Architectural synthesis & scoring
-│   │   │   ├── cost_estimator.py     # Heuristic BOM cost calculator
-│   │   │   ├── diagram_generator.py  # Mermaid flowchart builder
-│   │   │   └── iac_scaffolder.py     # Terraform template renderer
-│   │   ├── providers/                # Pluggable LLM interfaces
+│   │   │   ├── state.py                   # TypedDict state schemas
+│   │   │   ├── phase_a_graph.py           # New app architecture graph
+│   │   │   ├── phase_b_graph.py           # Optimization & modernization graph
+│   │   │   └── nodes/
+│   │   │       ├── requirement_extractor.py
+│   │   │       ├── clarification_node.py
+│   │   │       ├── architecture_synthesizer.py
+│   │   │       ├── code_analyzer.py
+│   │   │       └── waste_detector.py
+│   │   ├── pricing/                       # Deterministic Pricing Engine
 │   │   │   ├── __init__.py
-│   │   │   ├── base.py               # Abstract LLMProvider interface
-│   │   │   ├── mock_provider.py      # Deterministic local test provider
-│   │   │   ├── gemini_provider.py    # Google Gemini client
-│   │   │   ├── openai_provider.py    # OpenAI client
-│   │   │   └── claude_provider.py    # Anthropic Claude client
-│   │   └── api/
+│   │   │   ├── engine.py                  # Calculation & aggregation engine
+│   │   │   ├── cache.py                   # Local pricing cache (JSON/SQLite)
+│   │   │   ├── azure_retail_client.py     # Azure Retail Prices API client
+│   │   │   ├── aws_pricing_client.py      # AWS Price List API client
+│   │   │   └── gcp_pricing_client.py      # GCP Billing Catalog client
+│   │   ├── cloud/                         # Cloud Integrations (Azure First)
+│   │   │   ├── __init__.py
+│   │   │   ├── azure_client.py            # Azure Read-Only SDK wrapper
+│   │   │   ├── resource_graph.py          # Inventory querying
+│   │   │   ├── cost_management.py         # Billing ingestion
+│   │   │   └── monitor.py                 # Telemetry & metric ingestion
+│   │   ├── analytics/                     # Microsoft Fabric Lakehouse Integration
+│   │   │   ├── __init__.py
+│   │   │   ├── fabric_client.py           # OneLake / Fabric REST API client
+│   │   │   ├── delta_writer.py            # Delta Parquet writer
+│   │   │   └── local_lakehouse.py         # DuckDB / Parquet offline fallback
+│   │   ├── providers/                     # Foundation Model Adapters
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py                    # LLMProvider abstract interface
+│   │   │   ├── mock_provider.py           # Deterministic offline mock provider
+│   │   │   ├── azure_openai_provider.py   # Azure OpenAI adapter
+│   │   │   ├── openai_provider.py         # OpenAI adapter
+│   │   │   └── gemini_provider.py         # Google Gemini adapter
+│   │   └── api/                           # REST Endpoints
 │   │       ├── __init__.py
 │   │       └── v1/
-│   │           ├── __init__.py
-│   │           ├── router.py         # Main v1 API router
+│   │           ├── router.py
 │   │           ├── endpoints/
-│   │           │   ├── recommendations.py
-│   │           │   ├── catalog.py
-│   │           │   └── health.py
-│   ├── tests/
-│   │   ├── __init__.py
-│   │   ├── conftest.py               # Pytest fixtures and mock client
-│   │   ├── test_normalizer.py
-│   │   ├── test_catalog.py
-│   │   ├── test_rule_engine.py
-│   │   ├── test_cost_estimator.py
-│   │   ├── test_diagram_generator.py
-│   │   ├── test_providers.py
+│   │           │   ├── phase_a.py         # Ingestion, clarification, architectures
+│   │           │   ├── phase_b.py         # Code upload, Azure connect, waste
+│   │           │   ├── pricing.py         # Pricing lookup endpoints
+│   │           │   └── health.py          # Health checks
+│   ├── tests/                             # Pytest Suite
+│   │   ├── conftest.py
+│   │   ├── test_document_parser.py
+│   │   ├── test_sanitizer.py
+│   │   ├── test_phase_a_graph.py
+│   │   ├── test_phase_b_graph.py
+│   │   ├── test_pricing_engine.py
+│   │   ├── test_azure_client.py
+│   │   ├── test_fabric_lakehouse.py
 │   │   └── test_api_integration.py
-│   ├── pyproject.toml                # Dependencies, ruff, mypy, pytest config
+│   ├── pyproject.toml
 │   └── requirements.txt
-├── frontend/
+├── frontend/                              # Next.js 14+ Frontend Portal
 │   ├── src/
-│   │   ├── main.tsx
-│   │   ├── App.tsx
-│   │   ├── components/               # React UI components
-│   │   │   ├── WorkloadForm.tsx      # Structured parameter wizard
-│   │   │   ├── PromptInput.tsx       # NLP query bar
-│   │   │   ├── ComparisonMatrix.tsx  # Side-by-side cloud grid
-│   │   │   ├── FitScoreGauge.tsx     # Score visualizer
-│   │   │   ├── CostBreakdown.tsx     # BOM visualization
-│   │   │   ├── DiagramViewer.tsx     # Mermaid SVG renderer
-│   │   │   └── IaCExportModal.tsx    # Terraform viewer & copy
-│   │   ├── services/
-│   │   │   └── api.ts                # Axios/Fetch client
-│   │   ├── types/
-│   │   │   └── index.ts              # TypeScript domain types
-│   │   └── index.css
+│   │   ├── app/
+│   │   │   ├── page.tsx                   # Landing page
+│   │   │   ├── phase-a/                   # Phase A UI wizard & comparison
+│   │   │   └── phase-b/                   # Phase B optimization dashboard
+│   │   ├── components/                    # UI Components
+│   │   │   ├── DocumentUpload.tsx
+│   │   │   ├── ClarificationChat.tsx
+│   │   │   ├── ComparisonGrid.tsx
+│   │   │   ├── MermaidDiagram.tsx
+│   │   │   ├── WasteDashboard.tsx
+│   │   │   └── HumanApprovalModal.tsx
+│   │   ├── lib/                           # API clients & utilities
+│   │   └── types/                         # TypeScript interfaces
 │   ├── package.json
 │   ├── tsconfig.json
-│   ├── vite.config.ts
 │   └── tailwind.config.js
 ├── .env.example
 ├── .gitignore
 ├── AGENTS.md
 └── README.md
 ```
-
----
-
-## 7. Security, Resiliency & Observability
-
-1. **Zero Secret Footprint:** The application operates without requiring cloud provider credentials from the end user. It performs recommendations strictly on public architectural patterns and heuristic cost data.
-2. **Graceful Degradation:** If the configured LLM provider returns an HTTP 429 (Rate Limit) or 5xx error, the engine seamlessly engages the deterministic fallback generator, returning catalog recommendations with heuristic trade-offs and an informative banner.
-3. **Structured Logging:** All engine steps log execution time, token usage (if external LLM was invoked), and constraint outcomes with contextual correlation IDs.

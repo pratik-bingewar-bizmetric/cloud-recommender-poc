@@ -126,3 +126,4 @@ jobs:
           test -f docs/IMPLEMENTATION_ROADMAP.md || (echo "Missing docs/IMPLEMENTATION_ROADMAP.md" && exit 1)
           test -d docs/ADR || (echo "Missing docs/ADR directory" && exit 1)
           echo "All foundational governance and architectural documents are verified."
+

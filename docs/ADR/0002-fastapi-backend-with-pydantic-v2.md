@@ -1,4 +1,4 @@
-# ADR 0002: Backend Framework Selection (FastAPI & Pydantic v2)
+# ADR 0002: Backend API (FastAPI) and Relational Persistence (PostgreSQL)
 
 | Status | Accepted |
 | :--- | :--- |
@@ -10,34 +10,32 @@
 
 ## Context & Problem Statement
 
-The backend of the Cloud Recommender POC must:
-1. Ingest complex, nested workload profile data from both REST clients and natural-language parsers.
-2. Interface with modern AI/LLM SDKs (Google GenAI, OpenAI, Anthropic) which heavily rely on Python type hints and structured JSON schemas.
-3. Serve interactive API responses and diagram code with minimal latency.
-4. Auto-generate OpenAPI / Swagger specifications for easy frontend consumption.
-
-We considered alternatives including Node.js (Express/NestJS), Go (Gin/Fiber), and Python (Django, Flask, FastAPI).
+The backend of the Cloud Recommender platform must:
+1. Ingest complex, nested workload profiles from both REST clients, uploaded documents, and natural-language parsers.
+2. Interface seamlessly with LangGraph, Python AI SDKs, Azure management SDKs, and document parsers (`pypdf`, `python-docx`).
+3. Maintain robust, transactional state persistence for user projects, workload profiles, clarification chat sessions, and generated reports.
+4. Provide high-performance async concurrency for handling long-running agent workflows and streaming responses.
 
 ---
 
 ## Decision
 
-We select **Python 3.11+ with FastAPI and Pydantic v2** as the core backend stack.
+We select **Python 3.11+ with FastAPI** for the API layer and **PostgreSQL 15+** with **SQLAlchemy 2.0 (asyncpg)** for relational persistence.
 
-### Key Factors:
-1. **Pydantic v2 Performance & Validation:** Written in Rust, Pydantic v2 provides 5x–15x faster schema serialization and deserialization, making high-volume validation of cloud catalogs and LLM outputs fast and type-safe.
-2. **First-Class AI/ML Ecosystem:** The latest generative AI SDKs and structured output libraries (such as Pydantic-based Instructor, LangChain, and LiteLLM) have native Python support.
-3. **Async IO Concurrency:** FastAPI's asynchronous architecture handles concurrent LLM calls and streaming responses efficiently.
-4. **Automated Documentation:** Native OpenAPI (Swagger UI) at `/docs` simplifies frontend and agent testing.
+### Key Justifications:
+1. **Python AI & Azure Ecosystem:** The Python ecosystem has first-class native support for LangGraph, Azure Python SDK (`azure-mgmt-*`), document parsing, and static code analysis tools.
+2. **Pydantic v2 Performance:** Written in Rust, Pydantic v2 offers ultra-fast data serialization and strict type validation for complex cloud catalog and workload schemas.
+3. **PostgreSQL Relational Rigor & LangGraph Checkpointing:** PostgreSQL provides reliable ACID persistence for projects, audit trails, and conversational checkpoints (`PostgresSaver` in LangGraph).
+4. **Native OpenAPI & Async IO:** FastAPI automatically exposes interactive OpenAPI (Swagger) documentation and handles high-throughput asynchronous workloads.
 
 ---
 
 ## Consequences
 
 ### Positive
-- Strict compile-time and runtime type checking using `mypy` and Pydantic v2.
-- Direct alignment with Python AI toolchains.
-- Rapid prototyping without boilerplate.
+- Unified Python runtime across API endpoints, LangGraph agents, document processing, and Azure telemetry clients.
+- Clean separation between relational operational data (PostgreSQL) and analytics telemetry (Microsoft Fabric).
+- Strict static type checking via `mypy --strict`.
 
 ### Negative / Trade-offs
-- Python CPU-bound tasks require careful design (though rule evaluation and catalog lookups over hundreds of services are fast enough to run in sub-millisecond time).
+- Async SQLAlchemy 2.0 requires careful session and connection pool management.
