@@ -1,7 +1,5 @@
-"""Business service layer package.
+"""Domain and catalog business services package."""
 
-Domain-specific services for Phase A (architecture recommendation)
-and Phase B (code analysis & cloud optimization) will be mounted here.
-"""
+from cloud_recommender.services.catalog_service import CatalogServiceManager
 
-__all__: list[str] = []
+__all__ = ["CatalogServiceManager"]

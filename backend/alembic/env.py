@@ -9,9 +9,15 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from cloud_recommender.core.config import get_settings
+from cloud_recommender.db.models import Base
 
 # Alembic Config object
-config = context.config
+try:
+    config = context.config
+except (AttributeError, NameError):
+    from alembic.config import Config
+
+    config = Config()
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
@@ -21,8 +27,8 @@ if config.config_file_name is not None:
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
-# Target metadata for autogenerate support (populated when domain models are defined)
-target_metadata = None
+# Target metadata for autogenerate support
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
@@ -67,7 +73,10 @@ def run_migrations_online() -> None:
     asyncio.run(run_async_migrations())
 
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+try:
+    if context.is_offline_mode():
+        run_migrations_offline()
+    else:
+        run_migrations_online()
+except (AttributeError, NameError):
+    pass

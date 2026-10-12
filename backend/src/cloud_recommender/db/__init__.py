@@ -1,5 +1,10 @@
-"""Database connection and session management package."""
+"""Database connection, session management, and ORM models package."""
 
+from cloud_recommender.db.models import (
+    Base,
+    CloudServiceCatalogModel,
+    WorkloadProfileModel,
+)
 from cloud_recommender.db.session import (
     check_db_health,
     close_db_engine,
@@ -9,6 +14,9 @@ from cloud_recommender.db.session import (
 )
 
 __all__ = [
+    "Base",
+    "WorkloadProfileModel",
+    "CloudServiceCatalogModel",
     "get_engine",
     "get_session_factory",
     "get_db_session",
