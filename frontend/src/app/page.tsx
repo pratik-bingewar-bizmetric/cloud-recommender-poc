@@ -173,9 +173,9 @@ export default function Home() {
       try {
         const sim = await simulatePricing(compsToPrice, assumpToPrice, targetRegion, buffer);
         setCostBreakdown(sim.cost_breakdown);
-        setComponents(sim.updated_components);
+        setComponents(sim.components);
         setPricingProvenance(sim.pricing_provenance);
-        setUnverifiedWarnings(sim.unverified_price_warnings);
+        setUnverifiedWarnings(sim.missing_price_warnings);
       } catch (err: unknown) {
         console.warn("Pricing simulation error:", err);
       } finally {

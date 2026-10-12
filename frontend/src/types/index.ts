@@ -154,10 +154,11 @@ export interface RequirementsAnalysisResponse {
 
 export interface CostSimulationResponse {
   cost_breakdown: CostBreakdown;
-  updated_components: ArchitectureComponent[];
+  components: ArchitectureComponent[];
   pricing_provenance: PricingReference[];
-  calculation_source: string;
-  unverified_price_warnings: string[];
+  missing_price_warnings: string[];
+  assumptions?: string[];
+  calculation_timestamp?: string;
 }
 
 export interface ApiErrorDetail {
