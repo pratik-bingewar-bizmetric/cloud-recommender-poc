@@ -53,6 +53,46 @@ class ArchitectureComponent(BaseModel):
         ge=Decimal("0.0"),
         description="Estimated component monthly cost in specified currency.",
     )
+    region: str = Field(
+        default="eastus",
+        description="Target deployment region for this service component.",
+    )
+    workload_quantity: Annotated[Decimal, Field(max_digits=14, decimal_places=4)] | None = Field(
+        default=None,
+        description="Estimated usage quantity (e.g. vCPU-hours, GB storage, API calls, tokens).",
+    )
+    workload_unit: str | None = Field(
+        default=None,
+        description="Unit of measurement for the workload quantity (e.g. 'Hours', 'GB', 'Tokens').",
+    )
+    dependencies: list[str] = Field(
+        default_factory=list,
+        description="Component IDs this component connects to or depends upon.",
+    )
+    security_considerations: str | None = Field(
+        default=None,
+        description="Security controls, private endpoints, or identity configurations.",
+    )
+    reliability_considerations: str | None = Field(
+        default=None,
+        description="Availability zone, replication, and failover characteristics.",
+    )
+    scaling_considerations: str | None = Field(
+        default=None,
+        description="Autoscaling triggers, min/max replica boundaries, or SKU limits.",
+    )
+    pricing_assumptions: str | None = Field(
+        default=None,
+        description="Explicit billing assumptions used to calculate this component's cost.",
+    )
+    known_risks: list[str] = Field(
+        default_factory=list,
+        description="Identified architectural risks, service quotas, or limitations.",
+    )
+    missing_price_warning: str | None = Field(
+        default=None,
+        description="Warning notice if official pricing could not be verified.",
+    )
 
 
 class CostBreakdown(BaseModel):
@@ -70,6 +110,11 @@ class CostBreakdown(BaseModel):
     networking: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
         default=Decimal("0.00"), ge=Decimal("0.0")
     )
+    ai: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
+        default=Decimal("0.00"),
+        ge=Decimal("0.0"),
+        description="Estimated costs for Azure AI Foundry / OpenAI models.",
+    )
     other: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
         default=Decimal("0.00"), ge=Decimal("0.0")
     )
@@ -83,6 +128,11 @@ class CostBreakdown(BaseModel):
     )
     total_monthly: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
         ..., ge=Decimal("0.0"), description="Monthly estimated total including safety buffer."
+    )
+    total_five_month: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
+        default=Decimal("0.00"),
+        ge=Decimal("0.0"),
+        description="Five-month projected total expenditure.",
     )
     total_annual: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
         ..., ge=Decimal("0.0"), description="Annualized estimated total."

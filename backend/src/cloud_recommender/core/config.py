@@ -54,6 +54,32 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=4096, ge=256, le=32768)
     llm_request_timeout_seconds: int = Field(default=45, ge=5, le=300)
 
+    # Azure AI Foundry Configuration (Phase A AI Architect)
+    azure_ai_foundry_endpoint: str | None = Field(
+        default=None,
+        description="Azure AI Foundry / Azure OpenAI inference endpoint URL.",
+    )
+    azure_ai_foundry_api_key: str | None = Field(
+        default=None,
+        description="API key for authenticating with Azure AI Foundry model deployment.",
+    )
+    azure_ai_foundry_deployment_name: str | None = Field(
+        default=None,
+        description="Model deployment name in Azure AI Foundry (e.g. 'gpt-4o' or 'gpt-4o-mini').",
+    )
+    azure_ai_foundry_api_version: str = Field(
+        default="2024-05-01-preview",
+        description="API version for Azure AI Foundry model inference.",
+    )
+    azure_ai_foundry_auth_type: Literal["api_key", "bearer_token"] = Field(
+        default="api_key",
+        description="Authentication method for Azure AI Foundry.",
+    )
+    azure_retail_prices_api_url: str = Field(
+        default="https://prices.azure.com/api/retail/prices",
+        description="Official public Azure Retail Prices API endpoint.",
+    )
+
     # Azure Integration (Phase B - Strictly Read-Only)
     azure_auth_method: Literal["service_principal", "default_azure_credential"] = Field(
         default="service_principal"
