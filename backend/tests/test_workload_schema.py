@@ -112,5 +112,7 @@ def test_workload_profile_json_serialization_preserves_decimals() -> None:
     )
     dumped = profile.model_dump_json()
     data = json.loads(dumped)
-    assert data["storage_volume_gb"] == "1024.75" or data["storage_volume_gb"] == 1024.75
-    assert data["max_monthly_budget"] == "1999.99" or data["max_monthly_budget"] == 1999.99
+    assert data["storage_volume_gb"] == "1024.75"
+    assert isinstance(data["storage_volume_gb"], str)
+    assert data["max_monthly_budget"] == "1999.99"
+    assert isinstance(data["max_monthly_budget"], str)

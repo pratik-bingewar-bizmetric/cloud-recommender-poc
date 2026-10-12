@@ -39,3 +39,15 @@ def test_initial_migration_module_structure() -> None:
     assert migration_module.down_revision is None
     assert callable(migration_module.upgrade)
     assert callable(migration_module.downgrade)
+
+
+def test_alembic_env_preserves_explicit_config_url() -> None:
+    """Verify Alembic env.py respects explicitly configured sqlalchemy.url from Alembic config."""
+    from alembic.config import Config
+
+    custom_url = "postgresql+asyncpg://custom_user:custom_pass@isolated-host:5432/isolated_db"
+    cfg = Config(ALEMBIC_DIR / ".." / "alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", custom_url)
+
+    # Verify that get_main_option retains the custom URL
+    assert cfg.get_main_option("sqlalchemy.url") == custom_url

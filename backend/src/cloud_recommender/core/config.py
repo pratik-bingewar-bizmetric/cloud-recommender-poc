@@ -74,10 +74,14 @@ class Settings(BaseSettings):
     fabric_workspace_id: str | None = Field(default=None)
     fabric_lakehouse_id: str | None = Field(default=None)
 
-    # Multi-Cloud Pricing Engine
+    # Multi-Cloud Pricing Engine & Service Catalog
     offline_pricing_mode: bool = Field(
         default=True,
         description="Use local cached pricing datasets rather than external live APIs.",
+    )
+    catalog_offline_mode: bool = Field(
+        default=False,
+        description="Force service catalog into offline fixture mode without database queries.",
     )
     pricing_cache_ttl_hours: int = Field(default=24, ge=1, le=168)
 

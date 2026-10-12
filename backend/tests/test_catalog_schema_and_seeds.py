@@ -134,3 +134,62 @@ async def test_catalog_manager_get_by_id() -> None:
 
     not_found = await manager.get_catalog_service("non-existent-service")
     assert not_found is None
+
+
+@pytest.mark.asyncio
+async def test_catalog_manager_db_empty_result_does_not_fallback() -> None:
+    """Verify that empty DB query results return total=0 without falling back to fixtures."""
+    from unittest.mock import AsyncMock, patch
+
+    mock_session = AsyncMock()
+    manager = CatalogServiceManager(session=mock_session, offline_mode=False)
+
+    with patch("cloud_recommender.services.catalog_service.CatalogRepository") as mock_repo_cls:
+        mock_repo = AsyncMock()
+        mock_repo.list_services.return_value = ([], 0)
+        mock_repo_cls.return_value = mock_repo
+
+        result = await manager.list_catalog_services(CatalogServiceFilter(search="nonexistent"))
+        assert result.total == 0
+        assert result.items == []
+        # Ensure we did NOT fallback to the 18 curated fixtures
+        assert len(result.items) == 0
+
+
+@pytest.mark.asyncio
+async def test_catalog_manager_db_failure_raises_503() -> None:
+    """Verify that when DB query fails, 503 is raised rather than falling back to fixtures."""
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi import HTTPException
+
+    mock_session = AsyncMock()
+    manager = CatalogServiceManager(session=mock_session, offline_mode=False)
+
+    with patch("cloud_recommender.services.catalog_service.CatalogRepository") as mock_repo_cls:
+        mock_repo = AsyncMock()
+        mock_repo.list_services.side_effect = RuntimeError("Database connection pool exhausted")
+        mock_repo_cls.return_value = mock_repo
+
+        with pytest.raises(HTTPException) as exc_info:
+            await manager.list_catalog_services(CatalogServiceFilter())
+        assert exc_info.value.status_code == 503
+        assert "unavailable" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_catalog_manager_db_get_not_found_returns_none() -> None:
+    """Verify that when DB lookup yields None, manager returns None without searching fixtures."""
+    from unittest.mock import AsyncMock, patch
+
+    mock_session = AsyncMock()
+    manager = CatalogServiceManager(session=mock_session, offline_mode=False)
+
+    with patch("cloud_recommender.services.catalog_service.CatalogRepository") as mock_repo_cls:
+        mock_repo = AsyncMock()
+        mock_repo.get_by_service_id.return_value = None
+        mock_repo_cls.return_value = mock_repo
+
+        result = await manager.get_catalog_service("azure-container-apps")
+        # Even though azure-container-apps exists in fixtures, DB mode returns None
+        assert result is None

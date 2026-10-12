@@ -19,6 +19,7 @@ def test_settings() -> Settings:
         debug=True,
         api_port=8000,
         database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/cloud_recommender_test",
+        catalog_offline_mode=True,
         llm_provider="mock",
         fabric_enabled=False,
         offline_pricing_mode=True,

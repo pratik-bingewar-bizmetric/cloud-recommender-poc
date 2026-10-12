@@ -30,13 +30,13 @@ def load_curated_catalog() -> list[CatalogServiceBase]:
     return services
 
 
-async def seed_catalog(session: AsyncSession) -> int:
+async def seed_catalog(session: AsyncSession, force: bool = False) -> int:
     """Idempotently seed curated catalog fixtures into the operational database.
 
     Returns the count of catalog services seeded or updated.
     """
     services = load_curated_catalog()
     repo = CatalogRepository(session)
-    count = await repo.seed_services(services)
+    count = await repo.seed_services(services, force=force)
     logger.info("catalog_seeding_complete", seeded_count=count)
     return count

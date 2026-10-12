@@ -1,11 +1,12 @@
 """Read-only cloud service catalog API endpoints."""
 
+from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from cloud_recommender.db.session import get_db_session
+from cloud_recommender.core.config import Settings, get_settings
+from cloud_recommender.db.session import get_session_factory
 from cloud_recommender.schemas.catalog import (
     CatalogService,
     CatalogServiceFilter,
@@ -21,14 +22,23 @@ from cloud_recommender.services.catalog_service import CatalogServiceManager
 router = APIRouter(prefix="/catalog", tags=["Catalog"])
 
 
-async def get_optional_db_session() -> AsyncSession | None:
-    """Dependency attempting to provide an async DB session without crashing if unconfigured."""
-    try:
-        async for session in get_db_session():
-            return session
-    except Exception:
-        return None
-    return None
+async def get_catalog_service_manager(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AsyncGenerator[CatalogServiceManager, None]:
+    """FastAPI dependency yielding a CatalogServiceManager with guaranteed session lifecycle."""
+    if settings.catalog_offline_mode:
+        yield CatalogServiceManager(session=None, offline_mode=True)
+        return
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        try:
+            yield CatalogServiceManager(session=session, offline_mode=False)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 @router.get(
@@ -74,7 +84,7 @@ async def list_services(
         int,
         Query(ge=0, description="Number of records to skip"),
     ] = 0,
-    session: Annotated[AsyncSession | None, Depends(get_optional_db_session)] = None,
+    manager: Annotated[CatalogServiceManager, Depends(get_catalog_service_manager)] = None,  # type: ignore[assignment]
 ) -> CatalogServiceListResponse:
     """List normalized catalog services matching query filters."""
     filters = CatalogServiceFilter(
@@ -87,8 +97,29 @@ async def list_services(
         limit=limit,
         offset=offset,
     )
-    manager = CatalogServiceManager(session=session)
     return await manager.list_catalog_services(filters)
+
+
+@router.get(
+    "/services/{provider}/{service_id}",
+    response_model=CatalogService,
+    status_code=status.HTTP_200_OK,
+    summary="Get provider-qualified catalog service details",
+    description="Retrieve details for a specific cloud service by its provider and service_id.",
+)
+async def get_provider_service(
+    provider: CloudProvider,
+    service_id: str,
+    manager: Annotated[CatalogServiceManager, Depends(get_catalog_service_manager)],
+) -> CatalogService:
+    """Retrieve an individual catalog service by provider and ID."""
+    service = await manager.get_catalog_service(service_id=service_id, provider=provider)
+    if service is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Catalog service '{service_id}' for provider '{provider.value}' was not found.",
+        )
+    return service
 
 
 @router.get(
@@ -96,15 +127,21 @@ async def list_services(
     response_model=CatalogService,
     status_code=status.HTTP_200_OK,
     summary="Get catalog service details",
-    description="Retrieve details for a specific cloud service by its normalized service_id.",
+    description=(
+        "Retrieve details for a specific cloud service by its service_id. "
+        "Accepts optional provider parameter to disambiguate identical identifiers."
+    ),
 )
 async def get_service(
     service_id: str,
-    session: Annotated[AsyncSession | None, Depends(get_optional_db_session)] = None,
+    provider: Annotated[
+        CloudProvider | None,
+        Query(description="Optional cloud provider to disambiguate service ID"),
+    ] = None,
+    manager: Annotated[CatalogServiceManager, Depends(get_catalog_service_manager)] = None,  # type: ignore[assignment]
 ) -> CatalogService:
-    """Retrieve an individual catalog service by ID."""
-    manager = CatalogServiceManager(session=session)
-    service = await manager.get_catalog_service(service_id)
+    """Retrieve an individual catalog service by ID with optional provider qualification."""
+    service = await manager.get_catalog_service(service_id=service_id, provider=provider)
     if service is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

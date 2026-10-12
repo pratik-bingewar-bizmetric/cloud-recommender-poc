@@ -90,3 +90,36 @@ async def test_list_catalog_services_invalid_query_parameter(client: httpx.Async
     # Invalid limit (less than 1)
     response_limit = await client.get("/api/v1/catalog/services?limit=0")
     assert response_limit.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_service_provider_qualified_success(client: httpx.AsyncClient) -> None:
+    """Verify GET /api/v1/catalog/services/{provider}/{service_id} returns service details."""
+    response = await client.get("/api/v1/catalog/services/azure/azure-container-apps")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["provider"] == "azure"
+    assert data["service_id"] == "azure-container-apps"
+    assert data["name"] == "Azure Container Apps"
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_service_provider_qualified_mismatch_404(
+    client: httpx.AsyncClient,
+) -> None:
+    """Verify mismatched provider for service_id returns 404."""
+    response = await client.get("/api/v1/catalog/services/aws/azure-container-apps")
+    assert response.status_code == 404
+    data = response.json()
+    assert "not found" in data["error"]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_service_with_provider_query_param(client: httpx.AsyncClient) -> None:
+    """Verify GET /api/v1/catalog/services/{service_id}?provider=azure returns service details."""
+    response = await client.get("/api/v1/catalog/services/azure-container-apps?provider=azure")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["provider"] == "azure"
+    assert data["service_id"] == "azure-container-apps"
