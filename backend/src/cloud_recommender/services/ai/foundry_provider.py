@@ -54,19 +54,19 @@ class AzureAIFoundryProvider:
 
     def is_configured(self) -> bool:
         """Check whether required Azure AI Foundry credentials are configured."""
-        endpoint = self.settings.azure_ai_foundry_endpoint
-        api_key = self.settings.azure_ai_foundry_api_key
-        deployment = self.settings.azure_ai_foundry_deployment_name
+        endpoint = (self.settings.azure_ai_foundry_endpoint or "").strip()
+        api_key = (self.settings.azure_ai_foundry_api_key or "").strip()
+        deployment = (self.settings.azure_ai_foundry_deployment_name or "").strip()
         return bool(endpoint and api_key and deployment)
 
     def assert_configured(self) -> None:
         """Raise AzureAIFoundryNotConfiguredError if configuration is missing."""
         missing = []
-        if not self.settings.azure_ai_foundry_endpoint:
+        if not (self.settings.azure_ai_foundry_endpoint or "").strip():
             missing.append("AZURE_AI_FOUNDRY_ENDPOINT")
-        if not self.settings.azure_ai_foundry_api_key:
+        if not (self.settings.azure_ai_foundry_api_key or "").strip():
             missing.append("AZURE_AI_FOUNDRY_API_KEY")
-        if not self.settings.azure_ai_foundry_deployment_name:
+        if not (self.settings.azure_ai_foundry_deployment_name or "").strip():
             missing.append("AZURE_AI_FOUNDRY_DEPLOYMENT_NAME")
 
         if missing:
@@ -81,12 +81,22 @@ class AzureAIFoundryProvider:
 
     def _build_url(self) -> str:
         """Construct the official inference completion URL for the deployment."""
-        endpoint = (self.settings.azure_ai_foundry_endpoint or "").rstrip("/")
+        endpoint = (self.settings.azure_ai_foundry_endpoint or "").strip().rstrip("/")
         api_version = self.settings.azure_ai_foundry_api_version
-        deployment = self.settings.azure_ai_foundry_deployment_name or ""
+        deployment = (self.settings.azure_ai_foundry_deployment_name or "").strip()
+
+        # Direct chat/completions URL already provided
+        if endpoint.endswith("/chat/completions") or "/chat/completions?" in endpoint:
+            return endpoint
+
+        # Azure OpenAI v1 compatible endpoint (e.g. https://<resource>.openai.azure.com/openai/v1)
+        if endpoint.endswith("/openai/v1") or endpoint.endswith("/v1"):
+            return f"{endpoint}/chat/completions"
 
         # Azure OpenAI style deployment path
         if "openai.azure.com" in endpoint:
+            if "/openai/deployments/" in endpoint:
+                return f"{endpoint}/chat/completions?api-version={api_version}"
             return (
                 f"{endpoint}/openai/deployments/{deployment}"
                 f"/chat/completions?api-version={api_version}"
@@ -111,15 +121,16 @@ class AzureAIFoundryProvider:
         self.assert_configured()
 
         url = self._build_url()
-        api_key = self.settings.azure_ai_foundry_api_key or ""
-        deployment = self.settings.azure_ai_foundry_deployment_name or ""
+        api_key = (self.settings.azure_ai_foundry_api_key or "").strip()
+        deployment = (self.settings.azure_ai_foundry_deployment_name or "").strip()
 
-        headers = {
+        headers: dict[str, str] = {
             "Content-Type": "application/json",
-            "api-key": api_key,
         }
         if self.settings.azure_ai_foundry_auth_type == "bearer_token":
             headers["Authorization"] = f"Bearer {api_key}"
+        else:
+            headers["api-key"] = api_key
 
         payload: dict[str, Any] = {
             "messages": messages,
@@ -127,7 +138,9 @@ class AzureAIFoundryProvider:
             "temperature": temperature
             if temperature is not None
             else self.settings.llm_temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self.settings.llm_max_tokens,
+            "max_completion_tokens": max_tokens
+            if max_tokens is not None
+            else self.settings.llm_max_tokens,
             "response_format": {"type": "json_object"},
         }
 
@@ -163,7 +176,9 @@ class AzureAIFoundryProvider:
             raise AzureAIFoundryTimeoutError(
                 f"Azure AI Foundry request timed out after {timeout} seconds: {exc}"
             ) from exc
-        except (json.JSONDecodeError, KeyError, IndexError) as exc:
+        except httpx.RequestError as exc:
+            raise AzureAIFoundryResponseError(f"Azure AI Foundry network error: {exc}") from exc
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
             raise AzureAIFoundryResponseError(
                 f"Failed to parse structured JSON from Azure AI Foundry response: {exc}"
             ) from exc

@@ -38,26 +38,56 @@ def test_foundry_unconfigured_raises_error() -> None:
     assert "AZURE_AI_FOUNDRY_DEPLOYMENT_NAME" in exc_info.value.missing_vars
 
 
+def test_foundry_whitespace_or_partial_config_raises_error() -> None:
+    """Verify whitespace-only or partially missing configuration is rejected."""
+    settings = Settings(
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
+        azure_ai_foundry_api_key="   ",
+        azure_ai_foundry_deployment_name="",
+    )
+    provider = AzureAIFoundryProvider(settings=settings)
+
+    assert not provider.is_configured()
+    with pytest.raises(AzureAIFoundryNotConfiguredError) as exc_info:
+        provider.assert_configured()
+
+    assert "AZURE_AI_FOUNDRY_ENDPOINT" not in exc_info.value.missing_vars
+    assert "AZURE_AI_FOUNDRY_API_KEY" in exc_info.value.missing_vars
+    assert "AZURE_AI_FOUNDRY_DEPLOYMENT_NAME" in exc_info.value.missing_vars
+
+
 def test_foundry_url_builder_formats() -> None:
     """Verify inference URL formatting across Foundry and Azure OpenAI endpoint styles."""
-    # Azure OpenAI style
+    # Azure OpenAI v1 compatible endpoint (gpt-5.4-mini deployment format)
+    s_v1 = Settings(
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
+        azure_ai_foundry_api_key="key123",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
+    )
+    p_v1 = AzureAIFoundryProvider(settings=s_v1)
+    assert (
+        p_v1._build_url()
+        == "https://rg-cloud-recomender.openai.azure.com/openai/v1/chat/completions"
+    )
+
+    # Legacy Azure OpenAI style
     s1 = Settings(
         azure_ai_foundry_endpoint="https://my-resource.openai.azure.com",
         azure_ai_foundry_api_key="key123",
-        azure_ai_foundry_deployment_name="gpt-4o",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
         azure_ai_foundry_api_version="2024-05-01-preview",
     )
     p1 = AzureAIFoundryProvider(settings=s1)
     assert (
         p1._build_url()
-        == "https://my-resource.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-05-01-preview"
+        == "https://my-resource.openai.azure.com/openai/deployments/gpt-5.4-mini/chat/completions?api-version=2024-05-01-preview"
     )
 
     # Azure AI Foundry / Studio style
     s2 = Settings(
         azure_ai_foundry_endpoint="https://my-project.services.ai.azure.com/models",
         azure_ai_foundry_api_key="key123",
-        azure_ai_foundry_deployment_name="gpt-4o",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
         azure_ai_foundry_api_version="2024-05-01-preview",
     )
     p2 = AzureAIFoundryProvider(settings=s2)
@@ -305,6 +335,116 @@ async def test_foundry_invalid_json_response() -> None:
     mock_resp = httpx.Response(
         status_code=200, json={"choices": [{"message": {"content": "Not JSON!"}}]}
     )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+        with pytest.raises(AzureAIFoundryResponseError):
+            await provider.analyze_requirements(idea="Test app concept")
+
+
+@pytest.mark.asyncio
+async def test_foundry_payload_and_auth_headers_for_gpt_5_4_mini() -> None:
+    """Verify request payload uses max_completion_tokens and sets auth headers properly."""
+    mock_resp = httpx.Response(
+        status_code=200,
+        json={"choices": [{"message": {"content": json.dumps({"status": "ok"})}}]},
+    )
+
+    # 1. API-key authentication mode
+    s_api_key = Settings(
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
+        azure_ai_foundry_api_key="dummy-key-value",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
+        azure_ai_foundry_auth_type="api_key",
+    )
+    p_api_key = AzureAIFoundryProvider(settings=s_api_key)
+
+    with patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp
+    ) as mock_post:
+        result = await p_api_key._call_inference(
+            [{"role": "user", "content": "ping"}], max_tokens=512
+        )
+        assert result == {"status": "ok"}
+        call_args = mock_post.call_args
+        assert (
+            call_args.args[0]
+            == "https://rg-cloud-recomender.openai.azure.com/openai/v1/chat/completions"
+        )
+        sent_headers = call_args.kwargs["headers"]
+        assert sent_headers["api-key"] == "dummy-key-value"
+        assert "Authorization" not in sent_headers
+        sent_payload = call_args.kwargs["json"]
+        assert sent_payload["model"] == "gpt-5.4-mini"
+        assert sent_payload["max_completion_tokens"] == 512
+        assert "max_tokens" not in sent_payload
+
+    # 2. Bearer token (Entra ID) authentication mode
+    s_bearer = Settings(
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
+        azure_ai_foundry_api_key="dummy-entra-token",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
+        azure_ai_foundry_auth_type="bearer_token",
+    )
+    p_bearer = AzureAIFoundryProvider(settings=s_bearer)
+
+    with patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp
+    ) as mock_post:
+        await p_bearer._call_inference([{"role": "user", "content": "ping"}])
+        sent_headers = mock_post.call_args.kwargs["headers"]
+        assert sent_headers["Authorization"] == "Bearer dummy-entra-token"
+        assert "api-key" not in sent_headers
+
+
+@pytest.mark.asyncio
+async def test_foundry_upstream_400_and_404_errors() -> None:
+    """Verify HTTP 400 and 404 inference errors raise AzureAIFoundryResponseError."""
+    settings = Settings(
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
+        azure_ai_foundry_api_key="test-key",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
+    )
+    provider = AzureAIFoundryProvider(settings=settings)
+
+    for status_code, body in [
+        (400, '{"error": {"code": "unsupported_parameter", "message": "Invalid param"}}'),
+        (404, '{"error": {"code": "404", "message": "Resource not found"}}'),
+    ]:
+        mock_resp = httpx.Response(status_code=status_code, text=body)
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
+            with pytest.raises(AzureAIFoundryResponseError):
+                await provider.analyze_requirements(idea="Test app concept")
+
+
+@pytest.mark.asyncio
+async def test_foundry_network_connect_error() -> None:
+    """Verify network connection failure raises AzureAIFoundryResponseError."""
+    settings = Settings(
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
+        azure_ai_foundry_api_key="test-key",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
+    )
+    provider = AzureAIFoundryProvider(settings=settings)
+
+    with patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("DNS lookup failed"),
+    ):
+        with pytest.raises(AzureAIFoundryResponseError):
+            await provider.analyze_requirements(idea="Test app concept")
+
+
+@pytest.mark.asyncio
+async def test_foundry_null_content_response() -> None:
+    """Verify null message content (e.g. content filter refusal) raises AzureAIFoundryResponseError."""
+    settings = Settings(
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
+        azure_ai_foundry_api_key="test-key",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
+    )
+    provider = AzureAIFoundryProvider(settings=settings)
+    mock_resp = httpx.Response(status_code=200, json={"choices": [{"message": {"content": None}}]})
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_resp):
         with pytest.raises(AzureAIFoundryResponseError):

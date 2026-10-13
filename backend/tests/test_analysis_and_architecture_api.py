@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from cloud_recommender.core.config import Settings
+from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.main import create_app
 from cloud_recommender.schemas.analysis import ClarifyingQuestion, WorkloadAssumptions
 from cloud_recommender.schemas.common import ServiceCategory, WorkloadCategory
@@ -29,18 +29,22 @@ def app_with_unconfigured_foundry() -> FastAPI:
         azure_ai_foundry_deployment_name=None,
         catalog_offline_mode=True,
     )
-    return create_app(settings=s)
+    app = create_app(settings=s)
+    app.dependency_overrides[get_settings] = lambda: s
+    return app
 
 
 @pytest.fixture
 def app_with_configured_foundry() -> FastAPI:
     s = Settings(
-        azure_ai_foundry_endpoint="https://my-foundry.services.ai.azure.com/models",
+        azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
         azure_ai_foundry_api_key="valid-key",
-        azure_ai_foundry_deployment_name="gpt-4o",
+        azure_ai_foundry_deployment_name="gpt-5.4-mini",
         catalog_offline_mode=True,
     )
-    return create_app(settings=s)
+    app = create_app(settings=s)
+    app.dependency_overrides[get_settings] = lambda: s
+    return app
 
 
 @pytest.mark.asyncio
