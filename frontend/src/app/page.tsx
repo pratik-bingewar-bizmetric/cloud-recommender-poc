@@ -29,7 +29,16 @@ import {
   simulatePricing,
   ApiError,
 } from "@/lib/api";
-import { Calculator, Layers, Sparkles, Loader2, ArrowDown } from "lucide-react";
+import {
+  Calculator,
+  Layers,
+  Sparkles,
+  Loader2,
+  ArrowDown,
+  ShieldCheck,
+  FolderTree,
+  Scale,
+} from "lucide-react";
 
 const DEFAULT_ASSUMPTIONS: WorkloadAssumptions = {
   customer_count: 10000,
@@ -52,7 +61,7 @@ export default function Home() {
     "checking" | "online" | "offline"
   >("checking");
 
-  // Top-Level View Mode: Architect (Phase A) | Subscription Hierarchy (Phase B) | Multi-Cloud Compare
+  // Top-Level View Mode: AI Architect | Subscription Hierarchy | Multi-Cloud Compare
   const [activeViewMode, setActiveViewMode] = useState<
     "architect" | "inventory" | "compare"
   >("architect");
@@ -377,7 +386,111 @@ export default function Home() {
           onDismiss={() => setFoundryError(null)}
         />
 
-        {/* View Mode 1: AI Cloud Architect & Simulator (Phase A) */}
+        {/* Platform Hero Banner */}
+        <div className="mb-8 rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-6 sm:p-8 lg:p-10 shadow-xl border border-slate-800/80 relative overflow-hidden">
+          <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
+          <div className="absolute bottom-0 left-1/3 -mb-20 w-72 h-72 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
+
+          <div className="relative z-10">
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-400/30 text-blue-300 text-xs font-semibold tracking-wide uppercase">
+                <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                Enterprise Infrastructure Intelligence
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-medium">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                Zero-Execution Policy &bull; 100% Read-Only
+              </span>
+            </div>
+
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white max-w-3xl leading-tight">
+              FinOps &amp; Infrastructure Intelligence Platform
+            </h1>
+            <p className="mt-2 text-base sm:text-lg text-slate-300 max-w-2xl font-light leading-relaxed">
+              Understand your infrastructure. Optimize your costs. Engineer what comes next.
+            </p>
+
+            {/* Quick Interactive Engine Switcher Cards */}
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => setActiveViewMode("architect")}
+                className={`p-4 rounded-2xl text-left transition border ${
+                  activeViewMode === "architect"
+                    ? "bg-white/15 border-blue-400/60 shadow-lg ring-1 ring-blue-400/50 backdrop-blur-md"
+                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-semibold">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  {activeViewMode === "architect" && (
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/30 text-blue-200">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-sm font-semibold text-white">AI Cloud Architect</h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Synthesize topology blueprints, trade-off scorecards, and live bills of materials from natural language requirements.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveViewMode("inventory")}
+                className={`p-4 rounded-2xl text-left transition border ${
+                  activeViewMode === "inventory"
+                    ? "bg-white/15 border-indigo-400/60 shadow-lg ring-1 ring-indigo-400/50 backdrop-blur-md"
+                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-semibold">
+                    <FolderTree className="w-4 h-4" />
+                  </div>
+                  {activeViewMode === "inventory" && (
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/30 text-indigo-200">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-sm font-semibold text-white">Subscription Hierarchy</h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Discover live Azure subscriptions and GCP projects with interactive dependency graphs and hierarchical FinOps rollups.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveViewMode("compare")}
+                className={`p-4 rounded-2xl text-left transition border ${
+                  activeViewMode === "compare"
+                    ? "bg-white/15 border-violet-400/60 shadow-lg ring-1 ring-violet-400/50 backdrop-blur-md"
+                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-8 h-8 rounded-xl bg-violet-500/20 text-violet-400 flex items-center justify-center font-semibold">
+                    <Scale className="w-4 h-4" />
+                  </div>
+                  {activeViewMode === "compare" && (
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-violet-500/30 text-violet-200">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-sm font-semibold text-white">Multi-Cloud Compare</h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Side-by-side architectural alignment and deterministic cost intelligence between Azure and Google Cloud.
+                </p>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* View Mode 1: AI Cloud Architect & Simulator */}
         {activeViewMode === "architect" && (
           <>
             {/* Step 01: Idea & Requirements Ingestion */}
@@ -459,7 +572,7 @@ export default function Home() {
           </>
         )}
 
-        {/* View Mode 2: Subscription & Project Hierarchy Intelligence (Phase B) */}
+        {/* View Mode 2: Subscription & Project Hierarchy Intelligence */}
         {activeViewMode === "inventory" && <SectionCloudScopeInventory />}
 
         {/* View Mode 3: Multi-Cloud Comparison (Azure vs. GCP) */}
@@ -470,6 +583,95 @@ export default function Home() {
           />
         )}
       </main>
+
+      {/* Standardized Glassmorphic Application Footer */}
+      <footer className="mt-20 border-t border-slate-200/80 bg-white/70 backdrop-blur-md">
+        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-10">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-slate-200/70">
+            {/* Column 1: Brand & Tagline */}
+            <div className="md:col-span-2 space-y-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                  <Layers className="w-4 h-4" />
+                </div>
+                <span className="font-bold text-slate-900 text-base tracking-tight">
+                  FinOps &amp; Infrastructure Intelligence Platform
+                </span>
+              </div>
+              <p className="text-sm text-slate-600 font-light max-w-md leading-relaxed">
+                Understand your infrastructure. Optimize your costs. Engineer what comes next.
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  Read-Only Cloud Access
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">
+                  <Calculator className="w-3.5 h-3.5 text-blue-600" />
+                  Deterministic Pricing Engine
+                </span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                  Azure AI Foundry gpt-5.4-mini
+                </span>
+              </div>
+            </div>
+
+            {/* Column 2: Platform Capabilities */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Core Engines
+              </h4>
+              <ul className="space-y-1.5 text-xs text-slate-600">
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => setActiveViewMode("architect")}
+                    className="hover:text-blue-600 transition"
+                  >
+                    AI Cloud Architect &amp; Simulator
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => setActiveViewMode("inventory")}
+                    className="hover:text-blue-600 transition"
+                  >
+                    Subscription Hierarchy Intelligence
+                  </button>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => setActiveViewMode("compare")}
+                    className="hover:text-blue-600 transition"
+                  >
+                    Azure vs. GCP Comparison
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            {/* Column 3: Guardrails & Governance */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                Architecture Guardrails
+              </h4>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Zero-Execution Policy enforced. All cloud provider interactions strictly read-only (<code className="font-mono text-slate-700">Reader</code> role). Pricing calculations use official APIs with zero generative hallucination.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
+            <p>&copy; {new Date().getFullYear()} FinOps &amp; Infrastructure Intelligence Platform. All rights reserved.</p>
+            <p className="font-mono text-[11px] text-slate-400">
+              Deterministic Pricing Engine &bull; Azure Retail Prices API &bull; GCP Cloud Billing Catalog
+            </p>
+          </div>
+        </div>
+      </footer>
 
       {/* Floating Glassmorphic FinOps Summary Dock (Visible when Cost Breakdown is active in Architect view) */}
       {activeViewMode === "architect" && costBreakdown && (

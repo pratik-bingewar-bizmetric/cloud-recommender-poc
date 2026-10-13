@@ -70,7 +70,7 @@ export const FoundryConfigAlert: React.FC<FoundryConfigAlertProps> = ({
               }`}
             >
               {errorDetail.message ||
-                "Phase A requires valid Azure AI Foundry credentials to analyze requirements and synthesize architectures. The platform never substitutes mock LLM output."}
+                "AI Architect requires valid Azure AI Foundry credentials to analyze requirements and synthesize architectures. The platform never substitutes mock LLM output."}
             </p>
 
             {errorDetail.guidance && (

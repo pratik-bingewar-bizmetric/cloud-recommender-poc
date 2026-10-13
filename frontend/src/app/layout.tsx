@@ -14,9 +14,15 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Cloud Recommender — AI Multi-Cloud Architect & Cost Simulator",
+  title: "FinOps & Infrastructure Intelligence Platform",
   description:
-    "AI-powered cloud architecture generation and deterministic multi-cloud cost simulation.",
+    "Understand your infrastructure. Optimize your costs. Engineer what comes next. AI-powered cloud architecture generation, live resource hierarchy discovery, and deterministic multi-cloud cost intelligence.",
+  openGraph: {
+    title: "FinOps & Infrastructure Intelligence Platform",
+    description:
+      "Understand your infrastructure. Optimize your costs. Engineer what comes next.",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

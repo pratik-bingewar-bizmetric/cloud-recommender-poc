@@ -98,7 +98,7 @@ export function SectionMultiCloudCompare({
               <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/80 uppercase tracking-wide">
                 Multi-Cloud Comparison (Azure vs. GCP)
               </span>
-              <span className="text-xs text-slate-400 font-mono">Phase B Architecture Parity</span>
+              <span className="text-xs text-slate-400 font-mono">Architecture Parity &amp; Pricing</span>
             </div>
             <h2 className="text-xl font-bold text-slate-900 mt-1">
               Side-by-Side Architectural Alignment & Deterministic Cost Intelligence
