@@ -291,6 +291,7 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
           <MermaidDiagram
             chart={mermaidDiagram}
             title="AI-Generated Azure Architecture Topology"
+            provider="azure"
           />
         </div>
       )}

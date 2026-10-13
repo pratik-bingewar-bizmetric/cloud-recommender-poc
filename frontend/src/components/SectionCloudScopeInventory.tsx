@@ -665,6 +665,7 @@ export function SectionCloudScopeInventory() {
               <MermaidDiagram
                 chart={analysis.architecture_mermaid}
                 title={`${analysis.provider === "azure" ? "Azure Subscription" : "GCP Project"} Topology (${analysis.resource_count} Resources)`}
+                provider={analysis.provider}
               />
             </div>
           </div>

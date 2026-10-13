@@ -396,6 +396,7 @@ export function SectionMultiCloudCompare({
                     ? `Azure Cloud Blueprint (${azureRegion})`
                     : `GCP Equivalent Blueprint (${gcpRegion})`
                 }
+                provider={selectedArchTab === "azure" ? "azure" : "gcp"}
               />
             </div>
           </div>

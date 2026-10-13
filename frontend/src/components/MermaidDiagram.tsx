@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   ZoomIn,
   ZoomOut,
@@ -13,12 +13,30 @@ import {
   ArrowLeftRight,
   Copy,
   Check,
+  Download,
+  FileCode,
+  Image as ImageIcon,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
+import {
+  CloudProvider,
+  detectDiagramProvider,
+  enrichMermaidWithIcons,
+  PROVIDER_BRANDS,
+} from "@/lib/cloudIcons";
+import {
+  downloadPng,
+  downloadSvg,
+  copyDiagramImageToClipboard,
+} from "@/lib/diagramExport";
 
 interface MermaidDiagramProps {
   chart: string;
   className?: string;
   title?: string;
+  provider?: CloudProvider;
 }
 
 interface SvgDimensions {
@@ -27,10 +45,16 @@ interface SvgDimensions {
   viewBox: string;
 }
 
+interface ToastState {
+  message: string;
+  type: "success" | "error" | "info";
+}
+
 export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
   chart,
   className = "",
   title = "Architecture Topology",
+  provider,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -54,8 +78,28 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
   const [copiedDsl, setCopiedDsl] = useState<boolean>(false);
   const [orientation, setOrientation] = useState<"default" | "TD" | "LR">("default");
 
-  // Determine active chart DSL with orientation toggle applied
-  const effectiveChart = React.useMemo(() => {
+  // Export action states
+  const [isExportingPng, setIsExportingPng] = useState<boolean>(false);
+  const [isExportingSvg, setIsExportingSvg] = useState<boolean>(false);
+  const [isCopyingImage, setIsCopyingImage] = useState<boolean>(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
+
+  // Auto-dismiss toast feedback
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 3800);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  // Determine active provider brand
+  const activeProvider = useMemo(() => {
+    return detectDiagramProvider(chart, title, provider);
+  }, [chart, title, provider]);
+
+  const providerBrand = PROVIDER_BRANDS[activeProvider] || PROVIDER_BRANDS.azure;
+
+  // Clean chart with orientation applied (used in DSL drawer & Copy DSL)
+  const effectiveChart = useMemo(() => {
     if (!chart || !chart.trim()) return "";
     let formatted = chart.trim();
     if (orientation === "TD") {
@@ -67,6 +111,12 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
     }
     return formatted;
   }, [chart, orientation]);
+
+  // Enriched chart with official service icons (used for Mermaid rendering)
+  const enrichedChart = useMemo(() => {
+    if (!effectiveChart) return "";
+    return enrichMermaidWithIcons(effectiveChart, activeProvider);
+  }, [effectiveChart, activeProvider]);
 
   // Clean and enhance SVG markup
   const processSvgMarkup = useCallback((rawSvg: string): { svg: string; dims: SvgDimensions } => {
@@ -147,6 +197,12 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
           fill: #475569 !important;
           stroke: #475569 !important;
         }
+        .cloud-node-icon {
+          display: inline-block !important;
+          vertical-align: middle !important;
+          margin-bottom: 3px !important;
+          pointer-events: none !important;
+        }
       </style>
     `;
 
@@ -180,19 +236,14 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
         return { fitZoom: 100, panCenter: { x: 0, y: 0 } };
       }
 
-      // Comfortable padding around graph
       const padX = 40;
       const padY = 40;
 
       const scaleX = (vpW - padX * 2) / w;
       const scaleY = (vpH - padY * 2) / h;
 
-      // Fit preserving aspect ratio
       let fitScale = Math.min(scaleX, scaleY);
 
-      // Intelligent bounds:
-      // Small diagrams (< 450px): limit scaling to max 1.30 to prevent oversized typography
-      // Large diagrams (> 1200px): allow scaling down to fit viewport (min 0.35)
       if (w < 450 && h < 350) {
         fitScale = Math.min(fitScale, 1.25);
       }
@@ -211,12 +262,12 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
     setPan(panCenter);
   }, [calculateFitZoom]);
 
-  // Render Mermaid on chart or orientation change
+  // Render Mermaid on chart, enriched markup, or orientation change
   useEffect(() => {
     let isMounted = true;
 
     async function renderMermaid() {
-      if (!effectiveChart || !effectiveChart.trim()) {
+      if (!enrichedChart || !enrichedChart.trim()) {
         setSvgContent("");
         return;
       }
@@ -235,7 +286,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
             nodeSpacing: 50,
             rankSpacing: 60,
             padding: 20,
-            useMaxWidth: false, // Prevents artificial max-width clamp
+            useMaxWidth: false,
           },
           themeVariables: {
             primaryColor: "#eff6ff",
@@ -249,7 +300,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
         });
 
         const id = `mermaid-${Math.random().toString(36).substring(2, 9)}`;
-        const { svg: rawSvg } = await mermaid.render(id, effectiveChart);
+        const { svg: rawSvg } = await mermaid.render(id, enrichedChart);
 
         if (isMounted) {
           const { svg, dims } = processSvgMarkup(rawSvg);
@@ -291,14 +342,12 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [effectiveChart, processSvgMarkup]);
+  }, [enrichedChart, processSvgMarkup]);
 
   // Recalculate on container resize
   useEffect(() => {
     if (!viewportRef.current) return;
-    const observer = new ResizeObserver(() => {
-      // Keep pan centered if at fit scale
-    });
+    const observer = new ResizeObserver(() => {});
     observer.observe(viewportRef.current);
     return () => observer.disconnect();
   }, []);
@@ -333,7 +382,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
 
   // Drag & Pan handlers
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return; // Left click only
+    if (e.button !== 0) return;
     setIsDragging(true);
     setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
   };
@@ -387,6 +436,99 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
     });
   };
 
+  // Download PNG Handler
+  const handleDownloadPng = async () => {
+    if (!svgContent || isExportingPng) return;
+    setIsExportingPng(true);
+    try {
+      const result = await downloadPng(svgContent, {
+        title,
+        provider: activeProvider,
+      });
+      if (result.success) {
+        setToast({
+          message: `Saved PNG: ${result.filename}`,
+          type: "success",
+        });
+      } else {
+        setToast({
+          message: result.error || "Failed to download PNG image",
+          type: "error",
+        });
+      }
+    } catch (err: unknown) {
+      setToast({
+        message: err instanceof Error ? err.message : "Failed to download PNG image",
+        type: "error",
+      });
+    } finally {
+      setIsExportingPng(false);
+    }
+  };
+
+  // Download SVG Handler
+  const handleDownloadSvg = async () => {
+    if (!svgContent || isExportingSvg) return;
+    setIsExportingSvg(true);
+    try {
+      const result = await downloadSvg(svgContent, {
+        title,
+        provider: activeProvider,
+      });
+      if (result.success) {
+        setToast({
+          message: `Saved Vector SVG: ${result.filename}`,
+          type: "success",
+        });
+      } else {
+        setToast({
+          message: result.error || "Failed to download SVG vector file",
+          type: "error",
+        });
+      }
+    } catch (err: unknown) {
+      setToast({
+        message: err instanceof Error ? err.message : "Failed to download SVG vector file",
+        type: "error",
+      });
+    } finally {
+      setIsExportingSvg(false);
+    }
+  };
+
+  // Copy Image to Clipboard Handler
+  const handleCopyImage = async () => {
+    if (!svgContent || isCopyingImage) return;
+    setIsCopyingImage(true);
+    try {
+      const result = await copyDiagramImageToClipboard(svgContent, {
+        title,
+        provider: activeProvider,
+      });
+      if (result.success) {
+        setToast({
+          message: "Diagram image copied to clipboard! (Ready to paste into docs/slides)",
+          type: "success",
+        });
+      } else {
+        setToast({
+          message: result.error || "Image clipboard copy failed. Please use 'Download PNG'.",
+          type: "error",
+        });
+      }
+    } catch (err: unknown) {
+      setToast({
+        message:
+          err instanceof Error
+            ? err.message
+            : "Image clipboard copy failed. Please use 'Download PNG'.",
+        type: "error",
+      });
+    } finally {
+      setIsCopyingImage(false);
+    }
+  };
+
   if (renderError) {
     return (
       <div
@@ -414,30 +556,68 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
   const diagramCanvas = (
     <div
       ref={containerRef}
-      className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden flex flex-col transition-all duration-200 ${
+      className={`rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden flex flex-col transition-all duration-200 relative ${
         isExpanded
           ? "fixed inset-4 z-50 bg-white shadow-2xl flex flex-col"
           : `${className} min-h-[500px]`
       }`}
     >
+      {/* Toast Notification Pill */}
+      {toast && (
+        <div
+          className={`absolute top-14 right-4 z-30 flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs shadow-lg backdrop-blur-md transition-all duration-300 animate-in fade-in slide-in-from-top-2 ${
+            toast.type === "success"
+              ? "bg-emerald-950/90 text-emerald-200 border border-emerald-700/60"
+              : toast.type === "error"
+              ? "bg-rose-950/90 text-rose-200 border border-rose-700/60"
+              : "bg-slate-900/90 text-slate-200 border border-slate-700/60"
+          }`}
+        >
+          {toast.type === "success" ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          )}
+          <span className="font-medium">{toast.message}</span>
+        </div>
+      )}
+
       {/* Top Toolbar */}
-      <div className="px-4 py-2.5 bg-slate-50/80 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs select-none">
-        <div className="flex items-center gap-2.5">
-          <span className="p-1.5 rounded-lg bg-blue-100/70 text-blue-700">
-            <Layers className="w-4 h-4" />
-          </span>
-          <div>
-            <span className="font-bold text-slate-900 text-xs">
+      <div className="px-3.5 py-2.5 bg-slate-50/90 border-b border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs select-none">
+        {/* Title & Official Provider Branding Badge */}
+        <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Official Provider Logo Icon */}
+            <span
+              className={`p-1 rounded-lg border flex items-center justify-center shrink-0 ${providerBrand.badgeBg} ${providerBrand.badgeBorder}`}
+              title={`${providerBrand.name} Visual Identity`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={providerBrand.dataUri}
+                alt={providerBrand.name}
+                className="w-4 h-4"
+              />
+            </span>
+            <span
+              className={`hidden md:inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${providerBrand.badgeBg} ${providerBrand.badgeText} ${providerBrand.badgeBorder}`}
+            >
+              {providerBrand.shortName}
+            </span>
+          </div>
+
+          <div className="truncate">
+            <span className="font-bold text-slate-900 text-xs truncate">
               {title}
             </span>
-            <span className="hidden sm:inline-block ml-2 text-[11px] text-slate-500 font-normal">
+            <span className="hidden lg:inline-block ml-2 text-[11px] text-slate-500 font-normal">
               • Interactive Vector Canvas
             </span>
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-1">
+        {/* Action Controls Toolbar */}
+        <div className="flex items-center gap-1 flex-wrap justify-end">
           {/* Zoom Out */}
           <button
             type="button"
@@ -453,7 +633,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
           <button
             type="button"
             onClick={handleZoomReset}
-            className="text-[11px] font-mono font-semibold text-slate-700 min-w-[48px] px-1 py-0.5 rounded hover:bg-slate-200/50 text-center transition"
+            className="text-[11px] font-mono font-semibold text-slate-700 min-w-[44px] px-1 py-0.5 rounded hover:bg-slate-200/50 text-center transition"
             title="Click to reset to 100%"
           >
             {zoom}%
@@ -479,7 +659,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
             title="Fit diagram to viewport"
           >
             <Focus className="w-3.5 h-3.5 text-blue-600" />
-            <span className="hidden md:inline">Fit</span>
+            <span className="hidden sm:inline">Fit</span>
           </button>
 
           {/* Reset View */}
@@ -493,11 +673,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
 
-          <span className="mx-1 text-slate-300" aria-hidden="true">
-            |
-          </span>
-
-          {/* Layout Flow Orientation Toggle */}
+          {/* Flow Direction Toggle */}
           <button
             type="button"
             onClick={toggleOrientation}
@@ -506,9 +682,65 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
           >
             <ArrowLeftRight className="w-3.5 h-3.5 text-slate-600" />
             <span className="hidden md:inline">
-              {orientation === "LR" ? "LR Flow" : "TD Flow"}
+              {orientation === "LR" ? "LR" : "TD"}
             </span>
           </button>
+
+          <span className="mx-0.5 text-slate-300" aria-hidden="true">
+            |
+          </span>
+
+          {/* DOWNLOAD PNG */}
+          <button
+            type="button"
+            onClick={handleDownloadPng}
+            disabled={isExportingPng}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-900 border border-blue-200/80 active:scale-95 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            title="Download high-resolution architecture PNG image"
+          >
+            {isExportingPng ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+            ) : (
+              <Download className="w-3.5 h-3.5 text-blue-600" />
+            )}
+            <span>PNG</span>
+          </button>
+
+          {/* DOWNLOAD SVG */}
+          <button
+            type="button"
+            onClick={handleDownloadSvg}
+            disabled={isExportingSvg}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900 border border-emerald-200/80 active:scale-95 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            title="Download scalable standalone SVG vector graphic"
+          >
+            {isExportingSvg ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600" />
+            ) : (
+              <FileCode className="w-3.5 h-3.5 text-emerald-600" />
+            )}
+            <span>SVG</span>
+          </button>
+
+          {/* COPY IMAGE TO CLIPBOARD */}
+          <button
+            type="button"
+            onClick={handleCopyImage}
+            disabled={isCopyingImage}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-purple-50 text-purple-700 hover:bg-purple-100 hover:text-purple-900 border border-purple-200/80 active:scale-95 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            title="Copy architecture image to clipboard (Paste directly into slides, docs, or chat)"
+          >
+            {isCopyingImage ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-600" />
+            ) : (
+              <ImageIcon className="w-3.5 h-3.5 text-purple-600" />
+            )}
+            <span className="hidden sm:inline">Copy Image</span>
+          </button>
+
+          <span className="mx-0.5 text-slate-300" aria-hidden="true">
+            |
+          </span>
 
           {/* DSL Drawer Toggle */}
           <button
@@ -517,7 +749,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
             aria-pressed={showSource}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition ${
               showSource
-                ? "bg-blue-100 text-blue-800 border border-blue-300"
+                ? "bg-slate-200 text-slate-900 border border-slate-300"
                 : "text-slate-700 hover:bg-slate-200/60"
             }`}
             title="Toggle Mermaid DSL source"
@@ -589,12 +821,12 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
         />
 
         {/* Viewport Interaction Helper Pill */}
-        <div className="absolute bottom-3 right-3 pointer-events-none px-2.5 py-1 rounded-full bg-slate-900/70 backdrop-blur-xs text-[10px] text-slate-200 flex items-center gap-2 shadow-xs">
+        <div className="absolute bottom-3 right-3 pointer-events-none px-2.5 py-1 rounded-full bg-slate-900/75 backdrop-blur-xs text-[10px] text-slate-200 flex items-center gap-2 shadow-xs">
           <span>Drag to pan • Scroll to zoom • Double-click to fit</span>
         </div>
       </div>
 
-      {/* Raw Mermaid DSL Drawer */}
+      {/* Raw Mermaid DSL Drawer (shows clean effectiveChart without base64 noise) */}
       {showSource && (
         <div className="bg-slate-900 text-slate-100 text-xs font-mono border-t border-slate-800">
           <div className="px-4 py-2 bg-slate-950 flex items-center justify-between border-b border-slate-800 text-[11px] text-slate-400">
@@ -623,7 +855,7 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
         </div>
       )}
 
-      {/* Diagram Footer with Legend & Navigation Tips */}
+      {/* Diagram Footer with Legend & Dimensions */}
       <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-3 text-[11px] text-slate-600">
         <div className="flex flex-wrap items-center gap-3">
           <span className="font-semibold text-slate-800">Legend:</span>
@@ -636,8 +868,8 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
             <span>Database</span>
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded bg-purple-100 border border-purple-400 inline-block" />
-            <span>AI / ML</span>
+            <span className="w-3 h-3 rounded bg-amber-100 border border-amber-400 inline-block" />
+            <span>Storage</span>
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="w-3 h-3 rounded bg-sky-100 border border-sky-400 inline-block" />
@@ -646,6 +878,10 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
           <span className="inline-flex items-center gap-1.5">
             <span className="w-3 h-3 rounded bg-orange-100 border border-orange-400 inline-block" />
             <span>Security</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-purple-100 border border-purple-400 inline-block" />
+            <span>AI / ML</span>
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="w-4 h-0.5 bg-slate-600 inline-block" />
