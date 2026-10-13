@@ -11,9 +11,12 @@ import pytest
 from cloud_recommender.services.pricing.azure_retail_client import (
     AzurePriceItem,
     AzureRetailPricesClient,
+    map_region_to_front_door_zone,
+    select_matching_meter,
 )
 from cloud_recommender.services.pricing.price_cache import (
     AzurePriceCache,
+    normalize_service_id,
 )
 
 
@@ -154,6 +157,8 @@ def test_benchmark_pricing_fallback_dataset() -> None:
         "azure-monitor",
         "azure-openai-foundry",
         "azure-bandwidth",
+        "azure-front-door",
+        "azure-web-application-firewall",
     ]
 
     for sid in core_services:
@@ -162,3 +167,133 @@ def test_benchmark_pricing_fallback_dataset() -> None:
         assert Decimal(rate_info["unit_price"]) > Decimal("0.0")
         assert "meter_id" in rate_info
         assert "source_url" in rate_info
+
+
+def test_front_door_region_to_billing_zone_mapping() -> None:
+    """Verify Azure ARM regions map to official Azure Front Door billing zones."""
+    assert map_region_to_front_door_zone("eastus") == "Zone 1"
+    assert map_region_to_front_door_zone("westus2") == "Zone 1"
+    assert map_region_to_front_door_zone("westeurope") == "Zone 1"
+    assert map_region_to_front_door_zone("northeurope") == "Zone 1"
+    assert map_region_to_front_door_zone("global") == "Zone 1"
+    assert map_region_to_front_door_zone("southeastasia") == "Zone 2"
+    assert map_region_to_front_door_zone("japaneast") == "Zone 2"
+    assert map_region_to_front_door_zone("brazilsouth") == "Zone 3"
+    assert map_region_to_front_door_zone("australiaeast") == "Zone 4"
+    assert map_region_to_front_door_zone("centralindia") == "Zone 5"
+    assert map_region_to_front_door_zone("zone 2") == "Zone 2"
+
+
+def test_select_matching_meter_multiple_matches_and_no_match() -> None:
+    """Verify deterministic meter selection across tiered overage, wrong meters, and base meters."""
+    representative_items = [
+        AzurePriceItem(
+            meter_id="captcha-meter",
+            meter_name="Standard Captcha Session",
+            product_id="DZH318Z0BPVW",
+            sku_id="DZH318Z0BPVW/000J",
+            product_name="Azure Front Door",
+            sku_name="Standard",
+            service_name="Azure Front Door Service",
+            service_id="DZH317F70804",
+            service_family="Networking",
+            unit_of_measure="10K",
+            retail_price=Decimal("0.60"),
+            unit_price=Decimal("0.60"),
+            tier_minimum_units=0.0,
+            arm_region_name="Zone 1",
+        ),
+        AzurePriceItem(
+            meter_id="egress-tier-10tb",
+            meter_name="Standard Data Transfer Out",
+            product_id="DZH318Z0BPVW",
+            sku_id="DZH318Z0BPVW/000J",
+            product_name="Azure Front Door",
+            sku_name="Standard",
+            service_name="Azure Front Door Service",
+            service_id="DZH317F70804",
+            service_family="Networking",
+            unit_of_measure="1 GB",
+            retail_price=Decimal("0.08"),
+            unit_price=Decimal("0.08"),
+            tier_minimum_units=10240.0,
+            arm_region_name="Zone 1",
+        ),
+        AzurePriceItem(
+            meter_id="79b4d346-f8f7-55fe-8375-5943ea4e697c",
+            meter_name="Standard Data Transfer Out",
+            product_id="DZH318Z0BPVW",
+            sku_id="DZH318Z0BPVW/000J",
+            product_name="Azure Front Door",
+            sku_name="Standard",
+            service_name="Azure Front Door Service",
+            service_id="DZH317F70804",
+            service_family="Networking",
+            unit_of_measure="1 GB",
+            retail_price=Decimal("0.0825"),
+            unit_price=Decimal("0.0825"),
+            tier_minimum_units=0.0,
+            arm_region_name="Zone 1",
+        ),
+        AzurePriceItem(
+            meter_id="7e3eab72-0b95-5524-984a-d1697f73feee",
+            meter_name="Standard Base Fees",
+            product_id="DZH318Z0BPVW",
+            sku_id="DZH318Z0BPVW/000J",
+            product_name="Azure Front Door",
+            sku_name="Standard",
+            service_name="Azure Front Door Service",
+            service_id="DZH317F70804",
+            service_family="Networking",
+            unit_of_measure="1/Month",
+            retail_price=Decimal("35.0"),
+            unit_price=Decimal("35.0"),
+            tier_minimum_units=0.0,
+            arm_region_name="Zone 1",
+        ),
+    ]
+
+    base_match = select_matching_meter(
+        representative_items,
+        product_name="azure front door",  # case-insensitive check
+        sku_name="standard",
+        meter_name="standard base fees",
+        unit_of_measure="1/month",
+        tier_minimum_units=0.0,
+    )
+    assert base_match is not None
+    assert base_match.meter_id == "7e3eab72-0b95-5524-984a-d1697f73feee"
+    assert base_match.unit_price == Decimal("35.0")
+
+    egress_match = select_matching_meter(
+        representative_items,
+        product_name="Azure Front Door",
+        sku_name="Standard",
+        meter_name="Standard Data Transfer Out",
+        unit_of_measure="1 GB",
+        tier_minimum_units=0.0,
+    )
+    assert egress_match is not None
+    assert egress_match.meter_id == "79b4d346-f8f7-55fe-8375-5943ea4e697c"
+    assert egress_match.unit_price == Decimal("0.0825")
+
+    no_match = select_matching_meter(
+        representative_items,
+        product_name="Azure Front Door",
+        sku_name="Premium",
+        meter_name="Premium Base Fees",
+    )
+    assert no_match is None
+
+
+def test_service_id_normalization_aliases() -> None:
+    """Verify service ID aliases normalize to canonical catalog IDs."""
+    assert normalize_service_id("azure-front-door") == "azure-front-door"
+    assert normalize_service_id("Azure-FrontDoor") == "azure-front-door"
+    assert normalize_service_id("front-door") == "azure-front-door"
+    assert (
+        normalize_service_id("azure-web-application-firewall") == "azure-web-application-firewall"
+    )
+    assert normalize_service_id("azure-waf") == "azure-web-application-firewall"
+    assert normalize_service_id("web-application-firewall") == "azure-web-application-firewall"
+    assert normalize_service_id("azure-postgresql-flexible") == "azure-postgres-flexible"

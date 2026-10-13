@@ -21,10 +21,14 @@ from cloud_recommender.schemas.recommendation import (
     PricingReference,
 )
 from cloud_recommender.services.pricing.azure_retail_client import (
+    AzurePriceItem,
     AzureRetailPricesClient,
+    map_region_to_front_door_zone,
+    select_matching_meter,
 )
 from cloud_recommender.services.pricing.price_cache import (
     AzurePriceCache,
+    normalize_service_id,
 )
 
 logger = structlog.get_logger(__name__)
@@ -52,13 +56,190 @@ class AzurePricingEngine:
         )
         self.cache = cache or AzurePriceCache(ttl_hours=self.settings.pricing_cache_ttl_hours)
 
+    @staticmethod
+    def _resolve_front_door_tier(sku_or_tier: str | None) -> str:
+        """Resolve Azure Front Door SKU tier ('Standard' or 'Premium') from component SKU string."""
+        if sku_or_tier and "premium" in sku_or_tier.lower():
+            return "Premium"
+        return "Standard"
+
+    @staticmethod
+    def _is_regional_app_gateway_waf(sku_or_tier: str | None) -> bool:
+        """Determine whether WAF component specifies regional Application Gateway WAF v2."""
+        if not sku_or_tier:
+            return False
+        lowered = sku_or_tier.lower()
+        return any(
+            kw in lowered
+            for kw in ("application gateway", "app gateway", "waf v2", "waf_v2", "regional")
+        )
+
+    def _build_cache_key(
+        self, canonical_id: str, region: str, sku_or_tier: str | None = None
+    ) -> str:
+        """Construct deterministic cache key accounting for zone/tier variants."""
+        if canonical_id == "azure-front-door":
+            zone = map_region_to_front_door_zone(region)
+            tier = self._resolve_front_door_tier(sku_or_tier).lower()
+            return f"{canonical_id}:{zone}:{tier}"
+        if canonical_id == "azure-web-application-firewall":
+            if self._is_regional_app_gateway_waf(sku_or_tier):
+                return f"{canonical_id}:{region}:appgw_waf_v2"
+            return f"{canonical_id}:global:standard_policy"
+        return f"{canonical_id}:{region}"
+
+    async def _query_front_door_live(
+        self, region: str, tier: str, cache_key: str
+    ) -> AzurePriceItem | None:
+        """Query live Azure Retail Prices API for Azure Front Door and cache base + usage meters."""
+        zone = map_region_to_front_door_zone(region)
+        live_items = await self.client.query_prices(
+            service_name="Azure Front Door Service",
+            region=zone,
+            product_name="Azure Front Door",
+            sku_name=tier,
+        )
+        if not live_items and zone != "Zone 1":
+            live_items = await self.client.query_prices(
+                service_name="Azure Front Door Service",
+                region="Zone 1",
+                product_name="Azure Front Door",
+                sku_name=tier,
+            )
+
+        if not live_items:
+            return None
+
+        base_item = select_matching_meter(
+            live_items,
+            product_name="Azure Front Door",
+            sku_name=tier,
+            meter_name=f"{tier} Base Fees",
+            unit_of_measure="1/Month",
+            tier_minimum_units=0.0,
+        )
+        egress_item = select_matching_meter(
+            live_items,
+            product_name="Azure Front Door",
+            sku_name=tier,
+            meter_name=f"{tier} Data Transfer Out",
+            unit_of_measure="1 GB",
+            tier_minimum_units=0.0,
+        )
+        requests_item = select_matching_meter(
+            live_items,
+            product_name="Azure Front Door",
+            sku_name=tier,
+            meter_name=f"{tier} Requests",
+            unit_of_measure="10K",
+            tier_minimum_units=0.0,
+        )
+
+        if egress_item:
+            self.cache.put_cached_item(f"{cache_key}:egress", egress_item)
+        if requests_item:
+            self.cache.put_cached_item(f"{cache_key}:requests", requests_item)
+        if base_item:
+            self.cache.put_cached_item(cache_key, base_item)
+
+        return base_item
+
+    async def _query_waf_live(
+        self, region: str, is_appgw: bool, cache_key: str
+    ) -> AzurePriceItem | None:
+        """Query live Azure Retail Prices API for WAF Policy or Application Gateway WAF v2."""
+        if is_appgw:
+            live_items = await self.client.query_prices(
+                service_name="Application Gateway",
+                region=region,
+                product_name="Application Gateway WAF v2",
+            )
+            if not live_items and region != "eastus":
+                live_items = await self.client.query_prices(
+                    service_name="Application Gateway",
+                    region="eastus",
+                    product_name="Application Gateway WAF v2",
+                )
+            if not live_items:
+                return None
+
+            fixed_item = select_matching_meter(
+                live_items,
+                product_name="Application Gateway WAF v2",
+                sku_name="Standard",
+                meter_name="Standard Fixed Cost",
+                unit_of_measure="1/Hour",
+                tier_minimum_units=0.0,
+            )
+            cu_item = select_matching_meter(
+                live_items,
+                product_name="Application Gateway WAF v2",
+                sku_name="Standard",
+                meter_name="Standard Capacity Units",
+                unit_of_measure="1/Hour",
+                tier_minimum_units=0.0,
+            )
+            if cu_item:
+                self.cache.put_cached_item(f"{cache_key}:capacity_unit", cu_item)
+            if fixed_item:
+                self.cache.put_cached_item(cache_key, fixed_item)
+            return fixed_item
+
+        # Global Front Door WAF Policy (stored with armRegionName == "" in Azure Retail Prices API)
+        live_items = await self.client.query_prices(
+            service_name="Azure Front Door Service",
+            region="",
+            product_name="Azure Front Door Service",
+        )
+        if not live_items:
+            return None
+
+        policy_item = select_matching_meter(
+            live_items,
+            product_name="Azure Front Door Service",
+            sku_name="Standard",
+            meter_name="Standard Policy",
+            unit_of_measure="1/Month",
+            tier_minimum_units=0.0,
+        )
+        rule_item = select_matching_meter(
+            live_items,
+            product_name="Azure Front Door Service",
+            sku_name="Standard",
+            meter_name="Standard Rule",
+            unit_of_measure="1/Month",
+            tier_minimum_units=0.0,
+        )
+        req_item = select_matching_meter(
+            live_items,
+            product_name="Azure Front Door Service",
+            sku_name="Standard",
+            meter_name="Standard Default Request",
+            unit_of_measure="1M/Month",
+            tier_minimum_units=0.0,
+        )
+        if rule_item:
+            self.cache.put_cached_item(f"{cache_key}:rule", rule_item)
+        if req_item:
+            self.cache.put_cached_item(f"{cache_key}:request", req_item)
+        if policy_item:
+            self.cache.put_cached_item(cache_key, policy_item)
+        return policy_item
+
     async def get_price_for_service(
-        self, service_id: str, region: str = "eastus"
+        self,
+        service_id: str,
+        region: str = "eastus",
+        sku_or_tier: str | None = None,
     ) -> tuple[Decimal, str, str, str, str]:
         """Retrieve unit rate, meter ID, unit description, source URL, and provenance."""
-        # 1. Try local cache
-        cache_key = f"{service_id}:{region}"
+        canonical_id = normalize_service_id(service_id)
+        cache_key = self._build_cache_key(canonical_id, region, sku_or_tier)
+
+        # 1. Try local cache (variant key first, then direct service_id:region key)
         cached = self.cache.get_cached_item(cache_key)
+        if cached is None and cache_key != f"{service_id}:{region}":
+            cached = self.cache.get_cached_item(f"{service_id}:{region}")
         if cached:
             return (
                 cached.unit_price,
@@ -69,39 +250,72 @@ class AzurePricingEngine:
             )
 
         # 2. If not offline_pricing_mode, attempt live query
-        if not self.settings.offline_pricing_mode:
-            benchmark = self.cache.get_benchmark_pricing(service_id)
-            if benchmark:
-                azure_service_name = benchmark["service_name"]
-                try:
+        benchmark = self.cache.get_benchmark_pricing(canonical_id)
+        if not self.settings.offline_pricing_mode and benchmark:
+            try:
+                matched_live: AzurePriceItem | None = None
+                if canonical_id == "azure-front-door":
+                    tier = self._resolve_front_door_tier(sku_or_tier)
+                    matched_live = await self._query_front_door_live(region, tier, cache_key)
+                elif canonical_id == "azure-web-application-firewall":
+                    is_appgw = self._is_regional_app_gateway_waf(sku_or_tier)
+                    matched_live = await self._query_waf_live(region, is_appgw, cache_key)
+                else:
+                    azure_service_name = benchmark["service_name"]
                     live_items = await self.client.query_prices(
                         service_name=azure_service_name,
                         region=region,
                     )
                     if live_items:
-                        first = live_items[0]
-                        self.cache.put_cached_item(cache_key, first)
-                        return (
-                            first.unit_price,
-                            first.meter_id,
-                            first.unit_of_measure,
-                            "https://prices.azure.com/api/retail/prices",
-                            "azure_retail_prices_api_live",
+                        matched_live = (
+                            select_matching_meter(live_items, tier_minimum_units=0.0)
+                            or live_items[0]
                         )
-                except Exception as exc:
-                    logger.warning("live_azure_pricing_failed_falling_back", error=str(exc))
+                        self.cache.put_cached_item(cache_key, matched_live)
+
+                if matched_live:
+                    return (
+                        matched_live.unit_price,
+                        matched_live.meter_id,
+                        matched_live.unit_of_measure,
+                        "https://prices.azure.com/api/retail/prices",
+                        "azure_retail_prices_api_live",
+                    )
+            except Exception as exc:
+                logger.warning("live_azure_pricing_failed_falling_back", error=str(exc))
 
         # 3. Fallback to verified benchmark dataset
-        benchmark = self.cache.get_benchmark_pricing(service_id)
         if benchmark:
+            if canonical_id == "azure-front-door":
+                tier = self._resolve_front_door_tier(sku_or_tier)
+                if tier == "Premium":
+                    return (
+                        Decimal(str(benchmark["premium_unit_price"])),
+                        str(benchmark["premium_meter_id"]),
+                        str(benchmark["unit_of_measure"]),
+                        str(benchmark["source_url"]),
+                        "official_azure_pricing_benchmark_dataset",
+                    )
+            elif (
+                canonical_id == "azure-web-application-firewall"
+                and self._is_regional_app_gateway_waf(sku_or_tier)
+            ):
+                return (
+                    Decimal(str(benchmark["appgw_fixed_unit_price"])),
+                    str(benchmark["appgw_fixed_meter_id"]),
+                    str(benchmark["appgw_fixed_unit_of_measure"]),
+                    str(benchmark["source_url"]),
+                    "official_azure_pricing_benchmark_dataset",
+                )
+
             unit_price_raw = (
                 benchmark.get("unit_price") or benchmark.get("blended_price_per_1k") or "0.00"
             )
             return (
-                Decimal(unit_price_raw),
-                benchmark.get("meter_id", f"meter-{service_id}"),
-                benchmark.get("unit_of_measure", "Unit"),
-                benchmark.get("source_url", "https://azure.microsoft.com/pricing/"),
+                Decimal(str(unit_price_raw)),
+                str(benchmark.get("meter_id", f"meter-{canonical_id}")),
+                str(benchmark.get("unit_of_measure", "Unit")),
+                str(benchmark.get("source_url", "https://azure.microsoft.com/pricing/")),
                 "official_azure_pricing_benchmark_dataset",
             )
 
@@ -114,20 +328,230 @@ class AzurePricingEngine:
             "unverified_missing_rate",
         )
 
+    def _calculate_front_door_cost(
+        self,
+        comp: ArchitectureComponent,
+        assumptions: WorkloadAssumptions,
+        rate: Decimal,
+        region: str,
+    ) -> tuple[Decimal, Decimal, str, str, str | None]:
+        """Calculate Azure Front Door fixed base fee + outbound data transfer + request charges."""
+        tier = self._resolve_front_door_tier(comp.sku_or_tier)
+        zone = map_region_to_front_door_zone(region)
+        cache_key = self._build_cache_key("azure-front-door", region, comp.sku_or_tier)
+        benchmark = self.cache.get_benchmark_pricing("azure-front-door") or {}
+
+        if tier == "Premium":
+            default_base = Decimal(str(benchmark.get("premium_unit_price", "330.00")))
+            base_rate = rate if rate >= Decimal("100.00") else default_base
+            default_egress = (
+                Decimal(str(benchmark.get("premium_egress_price_per_gb_zone2", "0.1400")))
+                if zone == "Zone 2"
+                else Decimal(str(benchmark.get("premium_egress_price_per_gb", "0.0825")))
+            )
+            default_req = (
+                Decimal(str(benchmark.get("premium_requests_price_per_10k_zone2", "0.0160")))
+                if zone == "Zone 2"
+                else Decimal(str(benchmark.get("premium_requests_price_per_10k", "0.0150")))
+            )
+        else:
+            default_base = Decimal(str(benchmark.get("unit_price", "35.00")))
+            base_rate = rate if Decimal("0.00") < rate < Decimal("100.00") else default_base
+            default_egress = (
+                Decimal(str(benchmark.get("egress_price_per_gb_zone2", "0.1400")))
+                if zone == "Zone 2"
+                else Decimal(str(benchmark.get("egress_price_per_gb", "0.0825")))
+            )
+            default_req = (
+                Decimal(str(benchmark.get("requests_price_per_10k_zone2", "0.0095")))
+                if zone == "Zone 2"
+                else Decimal(str(benchmark.get("requests_price_per_10k", "0.0090")))
+            )
+
+        cached_egress = self.cache.get_cached_item(f"{cache_key}:egress")
+        egress_rate = cached_egress.unit_price if cached_egress else default_egress
+
+        cached_req = self.cache.get_cached_item(f"{cache_key}:requests")
+        req_rate = cached_req.unit_price if cached_req else default_req
+
+        qty = Decimal(str(comp.quantity))
+        base_cost = base_rate * qty
+
+        egress_gb = Decimal(str(assumptions.monthly_egress_gb))
+        egress_cost = egress_gb * egress_rate
+
+        monthly_requests = (
+            Decimal(str(assumptions.monthly_active_users))
+            * Decimal(str(assumptions.requests_per_user_per_day))
+            * Decimal("30")
+        )
+        requests_10k_units = monthly_requests / Decimal("10000.0")
+        requests_cost = requests_10k_units * req_rate
+
+        monthly = _quantize_money(base_cost + egress_cost + requests_cost)
+        workload_qty = _quantize_money(egress_gb)
+        unit = "Profile + GB Egress & 10K Requests"
+        assumption_desc = (
+            f"Azure Front Door {tier} ({zone}): {comp.quantity} profile(s) @ "
+            f"${base_rate:.2f}/mo base + {egress_gb} GB data transfer out @ "
+            f"${egress_rate}/GB + {int(monthly_requests):,} HTTP/S requests "
+            f"({requests_10k_units:.1f} x 10K) @ ${req_rate}/10K."
+        )
+        return monthly, workload_qty, unit, assumption_desc, None
+
+    def _calculate_waf_cost(
+        self,
+        comp: ArchitectureComponent,
+        assumptions: WorkloadAssumptions,
+        rate: Decimal,
+        region: str,
+        paired_front_door_tier: str | None,
+    ) -> tuple[Decimal, Decimal, str, str, str | None]:
+        """Calculate Web Application Firewall cost and prevent duplicate Front Door billing."""
+        benchmark = self.cache.get_benchmark_pricing("azure-web-application-firewall") or {}
+        cache_key = self._build_cache_key(
+            "azure-web-application-firewall", region, comp.sku_or_tier
+        )
+        qty = Decimal(str(comp.quantity))
+
+        # Mode 1: Regional Application Gateway WAF v2
+        if self._is_regional_app_gateway_waf(comp.sku_or_tier):
+            default_fixed = Decimal(str(benchmark.get("appgw_fixed_unit_price", "0.36")))
+            fixed_hourly = rate if Decimal("0.05") <= rate <= Decimal("5.00") else default_fixed
+            cached_cu = self.cache.get_cached_item(f"{cache_key}:capacity_unit")
+            cu_hourly = (
+                cached_cu.unit_price
+                if cached_cu
+                else Decimal(str(benchmark.get("appgw_capacity_unit_price", "0.0144")))
+            )
+            capacity_units = max(1, int((assumptions.peak_rps + 9.999) // 10))
+            hours = Decimal("730.0") * qty
+            fixed_cost = hours * fixed_hourly
+            cu_cost = hours * Decimal(str(capacity_units)) * cu_hourly
+            monthly = _quantize_money(fixed_cost + cu_cost)
+            workload_qty = hours
+            unit = "Gateway Hours + Capacity Units"
+            assumption_desc = (
+                f"Application Gateway WAF v2 ({region}): {comp.quantity} instance(s) x 730 hrs "
+                f"@ ${fixed_hourly}/hr fixed + {capacity_units} Capacity Unit(s) "
+                f"@ ${cu_hourly}/CU-hr."
+            )
+            return monthly, workload_qty, unit, assumption_desc, None
+
+        # Mode 2: Paired with Azure Front Door Premium -> Included in $330/mo base fee
+        if paired_front_door_tier == "Premium":
+            monthly = Decimal("0.00")
+            workload_qty = qty
+            unit = "Included in Front Door Premium"
+            assumption_desc = (
+                "Included with Azure Front Door Premium tier (WAF policy, Microsoft Default "
+                "Ruleset, and Bot Protection are covered by the $330.00/mo Front Door Premium "
+                "base fee; $0.00 incremental charge applied to prevent duplicate billing)."
+            )
+            return monthly, workload_qty, unit, assumption_desc, None
+
+        # Mode 3: Paired with Azure Front Door Standard or standalone global WAF Policy
+        default_policy = Decimal(str(benchmark.get("unit_price", "5.00")))
+        policy_rate = rate if Decimal("1.00") <= rate <= Decimal("50.00") else default_policy
+
+        cached_rule = self.cache.get_cached_item(f"{cache_key}:rule")
+        rule_rate = (
+            cached_rule.unit_price
+            if cached_rule
+            else Decimal(str(benchmark.get("custom_rule_unit_price", "1.00")))
+        )
+
+        cached_req = self.cache.get_cached_item(f"{cache_key}:request")
+        req_rate_per_1m = (
+            cached_req.unit_price
+            if cached_req
+            else Decimal(str(benchmark.get("request_price_per_1m", "1.00")))
+        )
+
+        custom_rules_count = Decimal("2")
+        monthly_requests = (
+            Decimal(str(assumptions.monthly_active_users))
+            * Decimal(str(assumptions.requests_per_user_per_day))
+            * Decimal("30")
+        )
+        requests_millions = monthly_requests / Decimal("1000000.0")
+
+        policy_cost = policy_rate * qty
+        rules_cost = custom_rules_count * rule_rate * qty
+        requests_cost = requests_millions * req_rate_per_1m
+
+        monthly = _quantize_money(policy_cost + rules_cost + requests_cost)
+        workload_qty = qty
+        unit = "Policies + 1M Requests"
+        context_label = (
+            "paired with Azure Front Door Standard"
+            if paired_front_door_tier == "Standard"
+            else "Azure Front Door WAF Standard Policy"
+        )
+        assumption_desc = (
+            f"WAF Policy ({context_label}): {comp.quantity} policy @ ${policy_rate:.2f}/mo "
+            f"+ {int(custom_rules_count)} custom rules @ ${rule_rate:.2f}/mo "
+            f"+ {requests_millions:.2f}M inspected requests @ ${req_rate_per_1m:.2f}/1M."
+        )
+        return monthly, workload_qty, unit, assumption_desc, None
+
     def calculate_component_cost(
         self,
         comp: ArchitectureComponent,
         assumptions: WorkloadAssumptions,
         rate: Decimal,
         provenance: str,
+        *,
+        region: str = "eastus",
+        paired_front_door_tier: str | None = None,
     ) -> tuple[Decimal, Decimal, str, str, str | None]:
         """Calculate component monthly cost based on workload parameters."""
         service_id = comp.service_id.lower()
-        missing_warning: str | None = None
+        canonical_id = normalize_service_id(service_id)
+
+        # Never fabricate a numeric price for an unverified service
         if provenance == "unverified_missing_rate":
             missing_warning = (
                 f"Official pricing for service '{comp.service_id}' could not be verified "
                 "from Azure Retail Prices."
+            )
+            return (
+                Decimal("0.00"),
+                Decimal("0.00"),
+                "Unverified",
+                (
+                    f"Official pricing for '{comp.service_name}' ({comp.service_id}) could not be "
+                    "verified from Azure Retail Prices; excluded from deterministic cost total "
+                    "($0.00)."
+                ),
+                missing_warning,
+            )
+
+        # 0A. Azure Front Door
+        if (
+            canonical_id == "azure-front-door"
+            or "front-door" in service_id
+            or "frontdoor" in service_id
+        ):
+            return self._calculate_front_door_cost(
+                comp=comp,
+                assumptions=assumptions,
+                rate=rate,
+                region=region,
+            )
+
+        # 0B. Azure Web Application Firewall (WAF)
+        if (
+            canonical_id == "azure-web-application-firewall"
+            or "web-application-firewall" in service_id
+            or "waf" in service_id
+        ):
+            return self._calculate_waf_cost(
+                comp=comp,
+                assumptions=assumptions,
+                rate=rate,
+                region=region,
+                paired_front_door_tier=paired_front_door_tier,
             )
 
         # 1. Azure Container Apps
@@ -154,7 +578,7 @@ class AzurePricingEngine:
                 f"{comp.quantity} replica(s) sizing: {vcpu_alloc} vCPU, {mem_alloc} GiB RAM, "
                 f"active ratio {int(active_ratio * 100)}% ({assumptions.monthly_active_users} MAU)."
             )
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
         # 2. Azure App Service
         if "app-service" in service_id:
@@ -171,7 +595,7 @@ class AzurePricingEngine:
             assumption_desc = (
                 f"{comp.quantity} x {sku} instances running continuously (730 hrs/month)."
             )
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
         # 3. Azure PostgreSQL Flexible Server
         if "postgres" in service_id:
@@ -195,7 +619,7 @@ class AzurePricingEngine:
                 "Zone-Redundant HA with Standby" if assumptions.ha_required else "Single Node"
             )
             assumption_desc = f"{sku} ({ha_status}) + {storage_gb} GB storage at $0.115/GB-mo."
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
         # 4. Azure Blob Storage
         if (
@@ -217,7 +641,7 @@ class AzurePricingEngine:
             assumption_desc = (
                 f"{storage_gb} GB Hot LRS capacity + estimated read/write IO operations."
             )
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
         # 5. Azure AI Foundry / OpenAI
         if "ai" in service_id or "openai" in service_id or comp.category == ServiceCategory.AI_ML:
@@ -232,7 +656,7 @@ class AzurePricingEngine:
                 f"{assumptions.ai_support_monthly_tokens:,} monthly tokens at "
                 f"${token_rate}/1k tokens blended rate."
             )
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
         # 6. Azure Key Vault
         if "key-vault" in service_id or "vault" in service_id:
@@ -242,7 +666,7 @@ class AzurePricingEngine:
             assumption_desc = (
                 "Base Key Vault certificate/key management + 100k cryptographic operations."
             )
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
         # 7. Azure Monitor
         if "monitor" in service_id or comp.category == ServiceCategory.MONITORING:
@@ -256,7 +680,7 @@ class AzurePricingEngine:
             assumption_desc = (
                 f"{ingest_gb:.1f} GB log telemetry ingestion (first 5 GB included free)."
             )
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
         # 8. Bandwidth / Egress
         if "bandwidth" in service_id or "network" in service_id:
@@ -268,14 +692,14 @@ class AzurePricingEngine:
             assumption_desc = (
                 f"{egress_gb} GB outbound internet transfer (first 100 GB included free)."
             )
-            return monthly, workload_qty, unit, assumption_desc, missing_warning
+            return monthly, workload_qty, unit, assumption_desc, None
 
-        # Default / Other
-        monthly = Decimal("10.00") * Decimal(str(comp.quantity))
+        # Default / Other (only reached when provenance is verified/cached)
+        monthly = _quantize_money(rate * Decimal(str(comp.quantity)))
         workload_qty = Decimal(str(comp.quantity))
         unit = "Units"
         assumption_desc = f"Standard utility pricing allocation for {comp.service_name}."
-        return monthly, workload_qty, unit, assumption_desc, missing_warning
+        return monthly, workload_qty, unit, assumption_desc, None
 
     async def price_architecture(
         self,
@@ -318,9 +742,21 @@ class AzurePricingEngine:
 
         now = datetime.now(UTC)
 
+        # Detect whether Azure Front Door is present in the architecture to coordinate WAF billing
+        front_door_comp = next(
+            (c for c in components if normalize_service_id(c.service_id) == "azure-front-door"),
+            None,
+        )
+        paired_front_door_tier: str | None = None
+        if front_door_comp is not None:
+            paired_front_door_tier = self._resolve_front_door_tier(front_door_comp.sku_or_tier)
+
         for comp in components:
+            canonical_id = normalize_service_id(comp.service_id)
             rate, meter_id, unit_desc, source_url, prov_source = await self.get_price_for_service(
-                comp.service_id, region=region
+                comp.service_id,
+                region=region,
+                sku_or_tier=comp.sku_or_tier,
             )
 
             monthly, qty, u_measure, pricing_desc, warning = self.calculate_component_cost(
@@ -328,10 +764,25 @@ class AzurePricingEngine:
                 assumptions=assumptions,
                 rate=rate,
                 provenance=prov_source,
+                region=region,
+                paired_front_door_tier=paired_front_door_tier,
             )
 
             if warning:
                 missing_warnings.append(warning)
+
+            # When WAF is bundled with Front Door Premium, record the covering Premium meter
+            if (
+                canonical_id == "azure-web-application-firewall"
+                and paired_front_door_tier == "Premium"
+                and not self._is_regional_app_gateway_waf(comp.sku_or_tier)
+            ):
+                fd_benchmark = self.cache.get_benchmark_pricing("azure-front-door") or {}
+                meter_id = str(
+                    fd_benchmark.get("premium_meter_id", "7c765472-0673-5e48-bcb0-5a7b34c6330d")
+                )
+                rate = Decimal("0.00")
+                unit_desc = "Included in Azure Front Door Premium (1/Month)"
 
             updated_comp = comp.model_copy(
                 update={

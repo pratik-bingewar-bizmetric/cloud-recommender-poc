@@ -322,6 +322,7 @@ class AzureAIFoundryProvider:
             "- Architecture must be tailored strictly to requirements and assumptions.\n"
             "- Select real, supported Azure services (e.g. azure-container-apps, "
             "azure-app-service, azure-postgres-flexible, azure-blob-storage, "
+            "azure-front-door, azure-web-application-firewall, "
             "azure-key-vault, azure-monitor, azure-openai-foundry).\n"
             "- For each component, specify component_id, category, service_id, "
             "service_name, sku_or_tier, quantity, rationale, dependencies, "

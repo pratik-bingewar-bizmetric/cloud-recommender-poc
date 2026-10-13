@@ -14,7 +14,28 @@ logger = structlog.get_logger(__name__)
 CACHE_DIR = Path(__file__).parent.parent.parent / "catalog" / "cache"
 CACHE_FILE = CACHE_DIR / "azure_retail_prices_cache.json"
 
-# Official published Azure benchmark rates for East US (USD)
+SERVICE_ID_ALIASES: dict[str, str] = {
+    "azure-front-door": "azure-front-door",
+    "azure-frontdoor": "azure-front-door",
+    "front-door": "azure-front-door",
+    "azure-front-door-cdn": "azure-front-door",
+    "azure-front-door-service": "azure-front-door",
+    "azure-web-application-firewall": "azure-web-application-firewall",
+    "azure-waf": "azure-web-application-firewall",
+    "web-application-firewall": "azure-web-application-firewall",
+    "azure-waf-policy": "azure-web-application-firewall",
+    "azure-application-gateway-waf": "azure-web-application-firewall",
+    "azure-postgresql-flexible": "azure-postgres-flexible",
+}
+
+
+def normalize_service_id(service_id: str) -> str:
+    """Normalize service identifier aliases to canonical catalog service IDs."""
+    cleaned = (service_id or "").strip().lower()
+    return SERVICE_ID_ALIASES.get(cleaned, cleaned)
+
+
+# Official published Azure benchmark rates for East US / Zone 1 (USD)
 BENCHMARK_AZURE_PRICES: dict[str, dict[str, Any]] = {
     "azure-container-apps": {
         "service_name": "Azure Container Apps",
@@ -93,6 +114,69 @@ BENCHMARK_AZURE_PRICES: dict[str, dict[str, Any]] = {
         "free_tier_gb": "100.0",
         "source_url": "https://azure.microsoft.com/en-us/pricing/details/bandwidth/",
     },
+    "azure-front-door": {
+        "service_name": "Azure Front Door Service",
+        "product_name": "Azure Front Door",
+        "sku_name": "Standard",
+        "meter_name": "Standard Base Fees",
+        "meter_id": "7e3eab72-0b95-5524-984a-d1697f73feee",
+        "unit_of_measure": "1/Month",
+        "unit_price": "35.00000000",
+        "egress_meter_id": "79b4d346-f8f7-55fe-8375-5943ea4e697c",
+        "egress_meter_name": "Standard Data Transfer Out",
+        "egress_unit_of_measure": "1 GB",
+        "egress_price_per_gb": "0.08250000",
+        "egress_price_per_gb_zone2": "0.14000000",
+        "requests_meter_id": "10455c17-0774-5e4c-be93-0f3c32b1beda",
+        "requests_meter_name": "Standard Requests",
+        "requests_unit_of_measure": "10K",
+        "requests_price_per_10k": "0.00900000",
+        "requests_price_per_10k_zone2": "0.00950000",
+        "premium_sku_name": "Premium",
+        "premium_meter_name": "Premium Base Fees",
+        "premium_meter_id": "7c765472-0673-5e48-bcb0-5a7b34c6330d",
+        "premium_unit_price": "330.00000000",
+        "premium_egress_meter_id": "fa528978-3833-589c-9a79-be1cc1b13907",
+        "premium_egress_meter_name": "Premium Data Transfer Out",
+        "premium_egress_price_per_gb": "0.08250000",
+        "premium_egress_price_per_gb_zone2": "0.14000000",
+        "premium_requests_meter_id": "c79b85fd-1cb9-58f1-96b5-65dff38474bf",
+        "premium_requests_meter_name": "Premium Requests",
+        "premium_requests_price_per_10k": "0.01500000",
+        "premium_requests_price_per_10k_zone2": "0.01600000",
+        "source_url": "https://azure.microsoft.com/en-us/pricing/details/frontdoor/",
+    },
+    "azure-web-application-firewall": {
+        "service_name": "Azure Front Door Service",
+        "product_name": "Azure Front Door Service",
+        "sku_name": "Standard",
+        "meter_name": "Standard Policy",
+        "meter_id": "87a2540c-01e9-4df7-bcd6-b3054e7696f9",
+        "unit_of_measure": "1/Month",
+        "unit_price": "5.00000000",
+        "custom_rule_meter_id": "e0ad2fc6-efc1-46d0-b1c2-a6d77259cedc",
+        "custom_rule_meter_name": "Standard Rule",
+        "custom_rule_unit_price": "1.00000000",
+        "default_ruleset_meter_id": "e8de7b2c-c207-4b65-a23d-42bf91bc3fa8",
+        "default_ruleset_meter_name": "Standard Default Ruleset",
+        "default_ruleset_unit_price": "20.00000000",
+        "request_meter_id": "1f84aa29-76be-4035-9473-e9d7a7c4f16b",
+        "request_meter_name": "Standard Default Request",
+        "request_unit_of_measure": "1M/Month",
+        "request_price_per_1m": "1.00000000",
+        "appgw_service_name": "Application Gateway",
+        "appgw_product_name": "Application Gateway WAF v2",
+        "appgw_sku_name": "Standard",
+        "appgw_fixed_meter_id": "928d2f33-0737-413d-bcd6-d340f6c67250",
+        "appgw_fixed_meter_name": "Standard Fixed Cost",
+        "appgw_fixed_unit_of_measure": "1/Hour",
+        "appgw_fixed_unit_price": "0.36000000",
+        "appgw_capacity_meter_id": "c53957cb-e558-4d3f-bd96-c2d0d83b0b19",
+        "appgw_capacity_meter_name": "Standard Capacity Units",
+        "appgw_capacity_unit_of_measure": "1/Hour",
+        "appgw_capacity_unit_price": "0.01440000",
+        "source_url": "https://azure.microsoft.com/en-us/pricing/details/web-application-firewall/",
+    },
 }
 
 
@@ -157,4 +241,5 @@ class AzurePriceCache:
 
     def get_benchmark_pricing(self, service_id: str) -> dict[str, Any] | None:
         """Return benchmark rate specification for a supported Azure service."""
-        return BENCHMARK_AZURE_PRICES.get(service_id)
+        canonical_id = normalize_service_id(service_id)
+        return BENCHMARK_AZURE_PRICES.get(canonical_id)

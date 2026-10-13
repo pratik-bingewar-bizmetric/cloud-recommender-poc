@@ -117,6 +117,20 @@ const AVAILABLE_CATALOG_SERVICES = [
     sku_or_tier: "GPT-4o Standard",
     rationale: "Managed LLM endpoint for customer assistant and automated summarization.",
   },
+  {
+    service_id: "azure-front-door",
+    service_name: "Azure Front Door",
+    category: "networking" as ServiceCategory,
+    sku_or_tier: "Standard",
+    rationale: "Global edge load balancing, SSL offload, and CDN acceleration.",
+  },
+  {
+    service_id: "azure-web-application-firewall",
+    service_name: "Azure Web Application Firewall (WAF)",
+    category: "security" as ServiceCategory,
+    sku_or_tier: "Standard Policy",
+    rationale: "OWASP core ruleset and custom edge Layer-7 request protection.",
+  },
 ];
 
 const CORE_CATEGORIES: ServiceCategory[] = [

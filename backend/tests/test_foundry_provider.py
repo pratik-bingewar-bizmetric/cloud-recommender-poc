@@ -437,7 +437,7 @@ async def test_foundry_network_connect_error() -> None:
 
 @pytest.mark.asyncio
 async def test_foundry_null_content_response() -> None:
-    """Verify null message content (e.g. content filter refusal) raises AzureAIFoundryResponseError."""
+    """Verify null message content raises AzureAIFoundryResponseError."""
     settings = Settings(
         azure_ai_foundry_endpoint="https://rg-cloud-recomender.openai.azure.com/openai/v1",
         azure_ai_foundry_api_key="test-key",

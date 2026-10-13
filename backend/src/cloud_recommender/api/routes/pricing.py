@@ -30,6 +30,8 @@ class PriceRefreshRequest(BaseModel):
             "azure-postgres-flexible",
             "azure-blob-storage",
             "azure-monitor",
+            "azure-front-door",
+            "azure-web-application-firewall",
         ]
     )
     region: str = Field(default="eastus")
