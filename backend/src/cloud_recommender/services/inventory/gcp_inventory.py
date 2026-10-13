@@ -13,13 +13,18 @@ Strict Architectural & Security Guardrails:
    - All GCP inventory calls are strictly read-only HTTP GET requests.
 """
 
+import json
+import os
 import shutil
 import subprocess
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
+from typing import Any
 
 import httpx
 import structlog
+from fastapi import HTTPException
 
 from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.schemas.analysis import WorkloadAssumptions
@@ -36,6 +41,7 @@ from cloud_recommender.schemas.inventory import (
 )
 from cloud_recommender.schemas.recommendation import (
     ArchitectureComponent,
+    CostBreakdown,
 )
 from cloud_recommender.services.pricing.gcp_engine import GcpPricingEngine
 
@@ -64,12 +70,35 @@ class GcpInventoryService:
 
         Strictly never uses GCP_CLOUD_API_KEY for inventory authentication.
         """
-        # 1. Explicit short-lived OAuth2 bearer token
-        explicit_token = (self.settings.gcp_access_token or "").strip()
+        # 1. Explicit short-lived OAuth2 bearer token (settings or env var)
+        explicit_token = (
+            self.settings.gcp_access_token or os.environ.get("GCP_ACCESS_TOKEN") or ""
+        ).strip()
         if explicit_token:
             return explicit_token, "gcp_oauth2_access_token"
 
-        # 2. Local gcloud CLI ADC session if installed
+        # 2. Service Account / ADC file via GOOGLE_APPLICATION_CREDENTIALS
+        creds_path = (
+            self.settings.google_application_credentials
+            or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            or ""
+        ).strip()
+        if creds_path:
+            p = Path(creds_path)
+            if p.is_file():
+                try:
+                    content = p.read_text(encoding="utf-8")
+                    data = json.loads(content)
+                    if isinstance(data, dict):
+                        token_candidate = data.get("access_token") or data.get("token")
+                        if token_candidate:
+                            return str(token_candidate).strip(), "service_account_token_file"
+                        client_email = data.get("client_email", "")
+                        logger.info("gcp_service_account_file_detected", client_email=client_email)
+                except Exception as exc:
+                    logger.debug("gcp_creds_file_read_failed", error=str(exc))
+
+        # 3. Local gcloud CLI ADC session if installed
         gcloud_path = shutil.which("gcloud") or shutil.which("gcloud.cmd")
         if gcloud_path:
             try:
@@ -140,13 +169,42 @@ class GcpInventoryService:
         if token:
             url = "https://cloudresourcemanager.googleapis.com/v3/projects"
             headers = {"Authorization": f"Bearer {token}"}
+            summaries: list[CloudScopeSummary] = []
+            page_token: str | None = None
+            max_pages = 5
+            pages = 0
+
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.get(url, headers=headers)
-                    if resp.status_code == 200:
+                    while pages < max_pages:
+                        params: dict[str, Any] = {"pageSize": 100}
+                        if page_token:
+                            params["pageToken"] = page_token
+                        resp = await client.get(url, headers=headers, params=params)
+                        if resp.status_code == 401:
+                            logger.warning("gcp_list_projects_401_unauthorized")
+                            raise HTTPException(
+                                status_code=401,
+                                detail="GCP Resource Manager API returned 401 Unauthorized: Invalid or expired OAuth2 bearer token.",
+                            )
+                        if resp.status_code == 403:
+                            logger.warning("gcp_list_projects_403_forbidden")
+                            raise HTTPException(
+                                status_code=403,
+                                detail=(
+                                    "GCP Resource Manager API returned 403 Forbidden: Insufficient IAM permissions. "
+                                    "Required read-only role: roles/browser or roles/resourcemanager.organizationViewer."
+                                ),
+                            )
+                        if resp.status_code != 200:
+                            logger.warning(
+                                "gcp_list_projects_failed",
+                                status_code=resp.status_code,
+                                text=resp.text[:200],
+                            )
+                            break
                         data = resp.json()
                         projects = data.get("projects", [])
-                        summaries: list[CloudScopeSummary] = []
                         for p in projects:
                             pid = p.get("projectId", p.get("name", ""))
                             dname = p.get("displayName", pid)
@@ -165,10 +223,16 @@ class GcpInventoryService:
                                     data_source="live_authenticated",
                                 )
                             )
-                        if summaries:
-                            return summaries
+                        page_token = data.get("nextPageToken")
+                        pages += 1
+                        if not page_token:
+                            break
+                if summaries:
+                    return summaries
+            except HTTPException:
+                raise
             except Exception as exc:
-                logger.warning("gcp_list_projects_failed", error=str(exc))
+                logger.warning("gcp_list_projects_exception", error=str(exc))
 
         # Return explicitly labeled reference GCP project hierarchy for exploration
         return [
@@ -280,23 +344,375 @@ class GcpInventoryService:
 
         return "\n".join(lines)
 
-    async def analyze_project(
+    def _map_asset_type_to_canonical(
+        self, asset_type: str, _resource_name: str
+    ) -> tuple[str, ServiceCategory, str, str]:
+        """Map native GCP assetType string to canonical service ID, category, name, and default SKU."""
+        lower_type = asset_type.lower()
+        if (
+            "compute.googleapis.com/forwardingrule" in lower_type
+            or "compute.googleapis.com/globalforwardingrule" in lower_type
+        ):
+            return (
+                "gcp-cloud-cdn",
+                ServiceCategory.NETWORKING,
+                "Google Cloud Load Balancing + Cloud CDN",
+                "Global External Application LB + Cloud CDN",
+            )
+        if "compute.googleapis.com/securitypolicy" in lower_type:
+            return (
+                "gcp-cloud-armor",
+                ServiceCategory.SECURITY,
+                "Google Cloud Armor WAF Policy",
+                "Standard WAF Security Policy",
+            )
+        if "run.googleapis.com/service" in lower_type:
+            return (
+                "gcp-cloud-run",
+                ServiceCategory.COMPUTE,
+                "Google Cloud Run",
+                "1 vCPU, 2 GiB RAM (Instance-based billing)",
+            )
+        if "cloudfunctions.googleapis.com/function" in lower_type:
+            return (
+                "gcp-cloud-functions",
+                ServiceCategory.COMPUTE,
+                "Cloud Run functions",
+                "Tier 1 vCPU-seconds",
+            )
+        if "sqladmin.googleapis.com/instance" in lower_type:
+            return (
+                "gcp-cloud-sql-postgres",
+                ServiceCategory.DATABASE,
+                "Google Cloud SQL for PostgreSQL",
+                "db-custom-2-7680 (2 vCPU, 7.5 GiB)",
+            )
+        if "storage.googleapis.com/bucket" in lower_type:
+            return (
+                "gcp-cloud-storage",
+                ServiceCategory.STORAGE,
+                "Google Cloud Storage",
+                "Standard Regional Storage",
+            )
+        if "aiplatform.googleapis.com/endpoint" in lower_type:
+            return (
+                "gcp-vertex-ai",
+                ServiceCategory.AI_ML,
+                "Google Vertex AI (Gemini Inference)",
+                "Gemini 1.5 Pay-as-you-go Tokens",
+            )
+        if "secretmanager.googleapis.com/secret" in lower_type:
+            return (
+                "gcp-secret-manager",
+                ServiceCategory.SECURITY,
+                "Google Secret Manager",
+                "Active Secret Replica + Access Ops",
+            )
+        if "iam.googleapis.com/serviceaccount" in lower_type:
+            return (
+                "gcp-iam-service-account",
+                ServiceCategory.SECURITY,
+                "Google Cloud IAM Service Account",
+                "Control Plane Identity",
+            )
+        if "monitoring.googleapis.com" in lower_type or "logging.googleapis.com" in lower_type:
+            return (
+                "gcp-cloud-monitoring",
+                ServiceCategory.MONITORING,
+                "Cloud Monitoring",
+                "GiB Ingestion",
+            )
+        if "compute.googleapis.com/instance" in lower_type:
+            return (
+                "gcp-compute-engine",
+                ServiceCategory.COMPUTE,
+                "Google Compute Engine",
+                "e2-standard-2 (2 vCPU, 8 GiB RAM)",
+            )
+
+        # Fallback mappings based on resource category hints
+        if "compute" in lower_type:
+            return (
+                "gcp-compute-generic",
+                ServiceCategory.COMPUTE,
+                f"GCP Compute ({asset_type.split('/')[-1]})",
+                "Standard",
+            )
+        if "sql" in lower_type or "database" in lower_type or "spanner" in lower_type:
+            return (
+                "gcp-database-generic",
+                ServiceCategory.DATABASE,
+                f"GCP Database ({asset_type.split('/')[-1]})",
+                "Standard",
+            )
+        if "storage" in lower_type:
+            return (
+                "gcp-storage-generic",
+                ServiceCategory.STORAGE,
+                f"GCP Storage ({asset_type.split('/')[-1]})",
+                "Standard",
+            )
+        return (
+            "gcp-generic-service",
+            ServiceCategory.COMPUTE,
+            asset_type.split("/")[-1],
+            "Standard",
+        )
+
+    def _category_to_domain_name(self, category: ServiceCategory) -> str:
+        """Map architectural ServiceCategory to GCP Domain grouping (strictly avoiding Azure RG semantics)."""
+        if category == ServiceCategory.NETWORKING:
+            return "Edge Networking & Security"
+        if category == ServiceCategory.SECURITY:
+            return "Security & Identity Management"
+        if category == ServiceCategory.COMPUTE:
+            return "Serverless & Compute Services"
+        if category == ServiceCategory.DATABASE:
+            return "Data & Persistence Layer"
+        if category == ServiceCategory.STORAGE:
+            return "Object & File Storage"
+        if category == ServiceCategory.AI_ML:
+            return "AI & Machine Learning Services"
+        if category == ServiceCategory.MONITORING:
+            return "Observability & Monitoring"
+        return "General Infrastructure"
+
+    async def _discover_live_hierarchy(
         self,
-        project_id: str | None = None,
-        assumptions: WorkloadAssumptions | None = None,
-        buffer_percentage: Decimal = Decimal("0.00"),
+        project_id: str,
+        token: str,
+    ) -> tuple[str | None, str | None, list[HierarchyNode]]:
+        """Query Cloud Resource Manager v3 to discover Organization, Folder, and Project hierarchy."""
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"https://cloudresourcemanager.googleapis.com/v3/projects/{project_id}"
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 401:
+                    logger.warning("gcp_hierarchy_401_unauthorized", project_id=project_id)
+                    raise HTTPException(
+                        status_code=401,
+                        detail="GCP Resource Manager API returned 401 Unauthorized: Invalid or expired OAuth2 bearer token.",
+                    )
+                if resp.status_code == 403:
+                    logger.warning("gcp_hierarchy_403_forbidden", project_id=project_id)
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            f"GCP Resource Manager API returned 403 Forbidden for project '{project_id}'. "
+                            "Required read-only IAM role: roles/browser or roles/resourcemanager.projectViewer."
+                        ),
+                    )
+                if resp.status_code != 200:
+                    logger.warning(
+                        "gcp_project_lookup_failed",
+                        status_code=resp.status_code,
+                        text=resp.text[:200],
+                    )
+                    fallback_nodes = [
+                        HierarchyNode(
+                            node_id=f"projects/{project_id}",
+                            name=project_id,
+                            node_type="gcp_project",
+                            parent_id=None,
+                            state_or_status="ACTIVE",
+                        )
+                    ]
+                    return None, None, fallback_nodes
+
+                p_data = resp.json()
+                parent_ref = p_data.get("parent", "")
+                display_name = p_data.get("displayName", project_id)
+                state = p_data.get("state", "ACTIVE")
+
+                org_id: str | None = None
+                folder_id: str | None = None
+                nodes: list[HierarchyNode] = []
+
+                if parent_ref.startswith("organizations/"):
+                    org_id = parent_ref
+                elif parent_ref.startswith("folders/"):
+                    folder_id = parent_ref
+                    try:
+                        folder_resp = await client.get(
+                            f"https://cloudresourcemanager.googleapis.com/v3/{folder_id}",
+                            headers=headers,
+                        )
+                        if folder_resp.status_code == 200:
+                            f_data = folder_resp.json()
+                            f_parent = f_data.get("parent", "")
+                            if f_parent.startswith("organizations/"):
+                                org_id = f_parent
+                            nodes.append(
+                                HierarchyNode(
+                                    node_id=folder_id,
+                                    name=f_data.get("displayName", folder_id),
+                                    node_type="gcp_folder",
+                                    parent_id=org_id,
+                                    state_or_status=f_data.get("state", "ACTIVE"),
+                                )
+                            )
+                    except Exception as f_exc:
+                        logger.debug("gcp_folder_lookup_failed", error=str(f_exc))
+                        nodes.append(
+                            HierarchyNode(
+                                node_id=folder_id,
+                                name=folder_id,
+                                node_type="gcp_folder",
+                                parent_id=None,
+                                state_or_status="ACTIVE",
+                            )
+                        )
+
+                if org_id:
+                    nodes.insert(
+                        0,
+                        HierarchyNode(
+                            node_id=org_id,
+                            name=org_id.replace("organizations/", "Organization "),
+                            node_type="gcp_organization",
+                            parent_id=None,
+                            state_or_status="ACTIVE",
+                        ),
+                    )
+
+                project_node = HierarchyNode(
+                    node_id=f"projects/{project_id}",
+                    name=display_name,
+                    node_type="gcp_project",
+                    parent_id=folder_id or org_id,
+                    state_or_status=state,
+                )
+                nodes.append(project_node)
+                return org_id, folder_id, nodes
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("gcp_hierarchy_discovery_exception", error=str(exc))
+            nodes = [
+                HierarchyNode(
+                    node_id=f"projects/{project_id}",
+                    name=project_id,
+                    node_type="gcp_project",
+                    parent_id=None,
+                    state_or_status="ACTIVE",
+                )
+            ]
+            return None, None, nodes
+
+    async def _discover_live_assets(
+        self,
+        project_id: str,
+        token: str,
+        region: str,
+        folder_id: str | None = None,
+        org_id: str | None = None,
+    ) -> list[DiscoveredResource]:
+        """Query Cloud Asset Inventory API for project assets with pagination and map to DiscoveredResource."""
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"https://cloudasset.googleapis.com/v1/projects/{project_id}/assets"
+        assets: list[dict[str, Any]] = []
+        page_token: str | None = None
+        max_pages = 5
+        pages = 0
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            while pages < max_pages:
+                params: dict[str, Any] = {
+                    "contentType": "RESOURCE",
+                    "pageSize": 100,
+                }
+                if page_token:
+                    params["pageToken"] = page_token
+
+                resp = await client.get(url, headers=headers, params=params)
+                if resp.status_code == 401:
+                    logger.warning("gcp_asset_inventory_401_unauthorized", project_id=project_id)
+                    raise HTTPException(
+                        status_code=401,
+                        detail="GCP Cloud Asset Inventory API returned 401 Unauthorized: Invalid or expired OAuth2 bearer token.",
+                    )
+                if resp.status_code == 403:
+                    logger.warning("gcp_asset_inventory_403_forbidden", project_id=project_id)
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            f"GCP Cloud Asset Inventory API returned 403 Forbidden for project '{project_id}'. "
+                            "Required read-only IAM role: roles/cloudasset.viewer."
+                        ),
+                    )
+                if resp.status_code != 200:
+                    logger.warning(
+                        "gcp_asset_inventory_failed",
+                        status_code=resp.status_code,
+                        text=resp.text[:200],
+                    )
+                    break
+
+                data = resp.json()
+                page_assets = data.get("assets", [])
+                assets.extend(page_assets)
+                page_token = data.get("nextPageToken")
+                pages += 1
+                if not page_token:
+                    break
+
+        discovered: list[DiscoveredResource] = []
+        for a in assets:
+            full_name = a.get("name", "")
+            asset_type = a.get("assetType", "")
+            short_name = full_name.split("/")[-1] if "/" in full_name else full_name
+            canonical_id, cat, s_name, sku = self._map_asset_type_to_canonical(
+                asset_type, short_name
+            )
+
+            asset_loc = a.get("location") or region
+            if not asset_loc or asset_loc == "global":
+                parts = full_name.split("/")
+                for idx, p in enumerate(parts):
+                    if p in ("locations", "regions") and idx + 1 < len(parts):
+                        asset_loc = parts[idx + 1]
+                        break
+
+            discovered.append(
+                DiscoveredResource(
+                    provider=CloudProvider.GCP,
+                    resource_id=full_name,
+                    resource_name=short_name,
+                    native_resource_type=asset_type,
+                    canonical_service_id=canonical_id,
+                    service_category=cat,
+                    region=asset_loc or region,
+                    sku_or_tier=sku,
+                    kind=None,
+                    parent_scope_id=f"projects/{project_id}",
+                    subscription_id=None,
+                    resource_group=None,  # Strictly None for GCP!
+                    project_id=project_id,
+                    folder_id=folder_id,
+                    organization_id=org_id,
+                    tags_or_labels=a.get("resource", {}).get("labels", {}),
+                    configuration={"project": project_id, "assetType": asset_type},
+                    relationships=[],
+                    origin="discovered",
+                    pricing_status="unpriced",
+                    estimated_monthly_cost=Decimal("0.00"),
+                    actual_monthly_spend=None,
+                    discovery_timestamp=datetime.now(UTC),
+                )
+            )
+
+        return discovered
+
+    async def _get_reference_fixture_analysis(
+        self,
+        target_project: str,
+        assumptions: WorkloadAssumptions,
+        buffer_percentage: Decimal,
     ) -> SubscriptionOrProjectAnalysis:
-        """Analyze GCP Project hierarchy and price resources deterministically via GcpPricingEngine."""
-        assumptions = assumptions or WorkloadAssumptions(target_region="us-central1")
-        target_project = project_id or self.settings.gcp_project_id or "smart-expense-gcp-prod"
-        token, auth_method = await self.get_inventory_access_token()
-
-        # Note: Even when project asset list comes from the reference GCP architecture equivalent
-        # (because GCP ADC is not configured on the host), pricing is computed deterministically
-        # through GcpPricingEngine (backed by live GCP_CLOUD_API_KEY catalog rates when online).
-        data_source = "live_authenticated" if token else "mock_fixture"
-        origin_tag = "discovered" if token else "mock_fixture"
-
+        """Return explicitly labeled benchmark GCP project architecture with deterministic catalog pricing."""
         org_id = "organizations/9014820194"
         folder_id = "folders/441920184"
         region = (
@@ -330,7 +746,6 @@ class GcpInventoryService:
             ),
         ]
 
-        # Define GCP project resources (mirroring the workload capabilities in GCP native hierarchy)
         raw_blueprint = [
             {
                 "domain": "Edge Networking & Security",
@@ -422,7 +837,6 @@ class GcpInventoryService:
             },
         ]
 
-        # Build ArchitectureComponents to price via GcpPricingEngine
         arch_comps = [
             ArchitectureComponent(
                 component_id=item["name"],
@@ -451,7 +865,6 @@ class GcpInventoryService:
             buffer_percentage=buffer_percentage,
         )
 
-        # Group by GCP Service Domain (NEVER Azure Resource Group!)
         domain_map: dict[str, list[DiscoveredResource]] = {}
         all_discovered: list[DiscoveredResource] = []
         prov_by_sid = {p.service_id: p for p in provenance}
@@ -480,7 +893,7 @@ class GcpInventoryService:
                 tags_or_labels={"env": "production", "managed-by": "terraform"},
                 configuration={"project": target_project, "region": item["region"]},
                 relationships=[],
-                origin=origin_tag,  # type: ignore[arg-type]
+                origin="mock_fixture",
                 pricing_status=p_comp.pricing_status,  # type: ignore[arg-type]
                 estimated_monthly_cost=p_comp.monthly_cost,
                 actual_monthly_spend=None,
@@ -494,7 +907,6 @@ class GcpInventoryService:
             domain_map[dom].append(d_res)
             all_discovered.append(d_res)
 
-        # Add relationships
         by_name = {r.resource_name: r for r in all_discovered}
         if "smart-expense-https-lb-cdn" in by_name and "smart-expense-armor-waf" in by_name:
             by_name["smart-expense-https-lb-cdn"].relationships.append(
@@ -605,11 +1017,8 @@ class GcpInventoryService:
         access_limits = [
             "GCP hierarchy models Organization -> Folders -> Projects -> Resources (no Azure-style Resource Groups).",
             "GCP SKU pricing verified via Google Cloud Billing Catalog API v1 (GCP_CLOUD_API_KEY).",
+            "Live GCP Cloud Asset Inventory credentials (GOOGLE_APPLICATION_CREDENTIALS / GCP_ACCESS_TOKEN) not configured on host; displaying explicitly labeled reference project fixture priced with official GCP Cloud Billing Catalog rates.",
         ]
-        if not token:
-            access_limits.append(
-                "Live GCP Cloud Asset Inventory credentials (GOOGLE_APPLICATION_CREDENTIALS / GCP_ACCESS_TOKEN) not configured on host; displaying explicitly labeled reference project hierarchy priced with official GCP Cloud Billing Catalog rates."
-            )
 
         return SubscriptionOrProjectAnalysis(
             provider=CloudProvider.GCP,
@@ -618,7 +1027,7 @@ class GcpInventoryService:
             scope_type="gcp_project",
             tenant_or_org_id=org_id,
             hierarchy_nodes=hierarchy_nodes,
-            data_source=data_source,  # type: ignore[arg-type]
+            data_source="mock_fixture",
             spend_label="estimated_public_list_pricing",
             actual_billed_monthly_spend=None,
             resource_count=len(all_discovered),
@@ -636,4 +1045,182 @@ class GcpInventoryService:
             ],
             completeness_warning=None,
             analyzed_at=datetime.now(UTC),
+        )
+
+    async def _analyze_live_project(
+        self,
+        target_project: str,
+        token: str,
+        auth_method: str,
+        assumptions: WorkloadAssumptions,
+        buffer_percentage: Decimal,
+    ) -> SubscriptionOrProjectAnalysis:
+        """Perform authenticated read-only discovery of live GCP hierarchy and asset inventory."""
+        region = (
+            assumptions.target_region
+            if assumptions.target_region.startswith(("us-", "europe-", "asia-"))
+            else "us-central1"
+        )
+        org_id, folder_id, hierarchy_nodes = await self._discover_live_hierarchy(
+            project_id=target_project, token=token
+        )
+        discovered_resources = await self._discover_live_assets(
+            project_id=target_project,
+            token=token,
+            region=region,
+            folder_id=folder_id,
+            org_id=org_id,
+        )
+
+        arch_comps = [
+            ArchitectureComponent(
+                component_id=r.resource_name,
+                category=r.service_category,
+                service_id=r.canonical_service_id,
+                service_name=r.canonical_service_id.replace("gcp-", "GCP "),
+                sku_or_tier=r.sku_or_tier or "Standard",
+                quantity=1,
+                rationale=f"Live GCP Asset ({r.native_resource_type})",
+                monthly_cost=Decimal("0.00"),
+                region=r.region,
+            )
+            for r in discovered_resources
+        ]
+
+        if arch_comps:
+            (
+                priced_comps,
+                cost_breakdown,
+                provenance,
+                warnings,
+                _,
+            ) = await self.pricing_engine.price_architecture(
+                components=arch_comps,
+                assumptions=assumptions,
+                region=region,
+                buffer_percentage=buffer_percentage,
+            )
+            prov_by_sid = {p.service_id: p for p in provenance}
+            for r, p_comp in zip(discovered_resources, priced_comps, strict=False):
+                r.pricing_status = p_comp.pricing_status  # type: ignore[assignment]
+                r.estimated_monthly_cost = p_comp.monthly_cost
+                r.workload_quantity = p_comp.workload_quantity
+                r.workload_unit = p_comp.workload_unit
+                r.calculation_explanation = p_comp.pricing_assumptions or ""
+                r.missing_price_warning = p_comp.missing_price_warning
+                r.pricing_reference = prov_by_sid.get(r.canonical_service_id)
+        else:
+            cost_breakdown = CostBreakdown(
+                subtotal=Decimal("0.00"),
+                total_monthly=Decimal("0.00"),
+                total_annual=Decimal("0.00"),
+            )
+            provenance = []
+
+        domain_map: dict[str, list[DiscoveredResource]] = {}
+        for r in discovered_resources:
+            dom = self._category_to_domain_name(r.service_category)
+            domain_map.setdefault(dom, []).append(r)
+
+        groups: list[ScopeCostGroup] = []
+        for dom_name, dom_resources in domain_map.items():
+            sub_val = _quantize_money(
+                sum((r.estimated_monthly_cost for r in dom_resources), Decimal("0.00"))
+            )
+            unp = sum(1 for r in dom_resources if r.pricing_status == "unpriced")
+            groups.append(
+                ScopeCostGroup(
+                    group_id=f"projects/{target_project}/domains/{dom_name.lower().replace(' ', '-')}",
+                    group_name=dom_name,
+                    group_type="gcp_service_domain",
+                    location=region,
+                    resource_count=len(dom_resources),
+                    verified_monthly_subtotal=sub_val,
+                    total_monthly=sub_val,
+                    total_five_month=_quantize_money(sub_val * Decimal("5.00")),
+                    total_annual=_quantize_money(sub_val * Decimal("12.00")),
+                    unpriced_resource_count=unp,
+                    is_complete=unp == 0,
+                    resources=dom_resources,
+                )
+            )
+
+        org_label = org_id or "Root Organization"
+        folder_label = folder_id or "Root Folder"
+        mermaid = self._build_mermaid_diagram(
+            org_label,
+            folder_label,
+            target_project,
+            groups,
+            discovered_resources,
+        )
+
+        return SubscriptionOrProjectAnalysis(
+            provider=CloudProvider.GCP,
+            scope_id=target_project,
+            scope_name=f"GCP Project: {target_project}",
+            scope_type="gcp_project",
+            tenant_or_org_id=org_id,
+            hierarchy_nodes=hierarchy_nodes,
+            data_source="live_authenticated",
+            spend_label="estimated_public_list_pricing",
+            actual_billed_monthly_spend=None,
+            resource_count=len(discovered_resources),
+            group_count=len(groups),
+            groups=groups,
+            resources=discovered_resources,
+            cost_breakdown=cost_breakdown,
+            pricing_provenance=provenance,
+            architecture_mermaid=mermaid,
+            recommendations=[],
+            access_limitations=[
+                "GCP hierarchy models Organization -> Folders -> Projects -> Resources (no Azure-style Resource Groups).",
+                f"Live GCP asset discovery authenticated via {auth_method}.",
+                "Read-only IAM roles verified: roles/browser, roles/cloudasset.viewer.",
+            ],
+            assumptions=[
+                f"GCP Region: {region}",
+                "Pricing computed deterministically via Google Cloud Billing Catalog API v1.",
+            ],
+            completeness_warning=None,
+            analyzed_at=datetime.now(UTC),
+        )
+
+    async def analyze_project(
+        self,
+        project_id: str | None = None,
+        assumptions: WorkloadAssumptions | None = None,
+        buffer_percentage: Decimal = Decimal("0.00"),
+    ) -> SubscriptionOrProjectAnalysis:
+        """Analyze GCP Project hierarchy and price resources deterministically via GcpPricingEngine."""
+        assumptions = assumptions or WorkloadAssumptions(target_region="us-central1")
+        target_project = (
+            project_id or self.settings.gcp_project_id or "smart-expense-gcp-prod"
+        ).strip()
+        token, auth_method = await self.get_inventory_access_token()
+
+        if not token:
+            # Reject unauthorized custom project requests with actionable diagnostic
+            if target_project != "smart-expense-gcp-prod":
+                raise HTTPException(
+                    status_code=401,
+                    detail=(
+                        f"GCP inventory authentication not configured: Bearer token (GCP_ACCESS_TOKEN or "
+                        f"GOOGLE_APPLICATION_CREDENTIALS) is required to discover custom project '{target_project}'. "
+                        "Required read-only IAM roles: roles/browser, roles/cloudasset.viewer. "
+                        "Use reference project 'smart-expense-gcp-prod' to explore benchmark architecture."
+                    ),
+                )
+            return await self._get_reference_fixture_analysis(
+                target_project=target_project,
+                assumptions=assumptions,
+                buffer_percentage=buffer_percentage,
+            )
+
+        return await self._analyze_live_project(
+            target_project=target_project,
+            token=token,
+            auth_method=auth_method,
+            assumptions=assumptions,
+            buffer_percentage=buffer_percentage,
         )

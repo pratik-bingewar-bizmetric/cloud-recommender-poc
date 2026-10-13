@@ -1,8 +1,11 @@
 """Unit tests for GCP project inventory hierarchy and Azure vs. GCP multi-cloud comparator."""
 
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+from fastapi import HTTPException
 
 from cloud_recommender.core.config import Settings
 from cloud_recommender.schemas.analysis import WorkloadAssumptions
@@ -103,3 +106,91 @@ async def test_multi_cloud_comparator_azure_vs_gcp() -> None:
     assert len(resp.comparison_assumptions) > 0
     assert "AWS" in resp.comparison_assumptions[-1]  # Confirms AWS deferred note
     assert len(resp.trade_off_summary) > 50
+
+
+@pytest.mark.asyncio
+async def test_gcp_unauthenticated_custom_project_raises_401() -> None:
+    """Verify unauthenticated request for custom project returns 401 with required read-only IAM roles."""
+    settings = Settings(offline_pricing_mode=True, gcp_access_token=None)
+    svc = GcpInventoryService(settings=settings)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.analyze_project(project_id="arbitrary-custom-proj-999")
+
+    assert exc_info.value.status_code == 401
+    assert "roles/browser" in exc_info.value.detail
+    assert "roles/cloudasset.viewer" in exc_info.value.detail
+    assert "smart-expense-gcp-prod" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_gcp_unauthenticated_reference_fixture_returns_mock_data_source() -> None:
+    """Verify reference fixture is strictly labeled as mock_fixture when unauthenticated."""
+    settings = Settings(offline_pricing_mode=True, gcp_access_token=None)
+    svc = GcpInventoryService(settings=settings)
+
+    analysis = await svc.analyze_project(project_id="smart-expense-gcp-prod")
+
+    assert analysis.data_source == "mock_fixture"
+    for r in analysis.resources:
+        assert r.origin == "mock_fixture"
+        assert r.resource_group is None
+        assert r.project_id == "smart-expense-gcp-prod"
+
+
+@pytest.mark.asyncio
+async def test_gcp_live_hierarchy_discovery_handling() -> None:
+    """Verify live hierarchy discovery handles 401 and 403 status codes correctly."""
+    settings = Settings(offline_pricing_mode=True)
+    svc = GcpInventoryService(settings=settings)
+
+    # Test 401 Unauthorized from Cloud Resource Manager
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(401, json={"error": "unauthorized"})
+        with pytest.raises(HTTPException) as exc_info:
+            await svc._discover_live_hierarchy("test-proj", "fake-token")
+        assert exc_info.value.status_code == 401
+
+    # Test 403 Forbidden with required role notice
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(403, json={"error": "forbidden"})
+        with pytest.raises(HTTPException) as exc_info:
+            await svc._discover_live_hierarchy("test-proj", "fake-token")
+        assert exc_info.value.status_code == 403
+        assert "roles/browser" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_gcp_live_asset_discovery_mapping_and_failures() -> None:
+    """Verify asset discovery correctly maps asset types to canonical IDs and enforces 403 permission details."""
+    settings = Settings(offline_pricing_mode=True)
+    svc = GcpInventoryService(settings=settings)
+
+    # Test 403 Forbidden with roles/cloudasset.viewer detail
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(403, json={"error": "forbidden"})
+        with pytest.raises(HTTPException) as exc_info:
+            await svc._discover_live_assets("test-proj", "fake-token", "us-central1")
+        assert exc_info.value.status_code == 403
+        assert "roles/cloudasset.viewer" in exc_info.value.detail
+
+    # Test mapping asset types
+    assert (
+        svc._map_asset_type_to_canonical("run.googleapis.com/Service", "api")[0] == "gcp-cloud-run"
+    )
+    assert (
+        svc._map_asset_type_to_canonical("sqladmin.googleapis.com/Instance", "db")[0]
+        == "gcp-cloud-sql-postgres"
+    )
+    assert (
+        svc._map_asset_type_to_canonical("storage.googleapis.com/Bucket", "bkt")[0]
+        == "gcp-cloud-storage"
+    )
+    assert (
+        svc._map_asset_type_to_canonical("compute.googleapis.com/SecurityPolicy", "waf")[0]
+        == "gcp-cloud-armor"
+    )
+    assert (
+        svc._map_asset_type_to_canonical("compute.googleapis.com/GlobalForwardingRule", "lb")[0]
+        == "gcp-cloud-cdn"
+    )
