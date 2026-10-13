@@ -661,8 +661,11 @@ export function SectionCloudScopeInventory() {
                 </p>
               </div>
             </div>
-            <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-2 overflow-hidden">
-              <MermaidDiagram chart={analysis.architecture_mermaid} />
+            <div className="rounded-xl overflow-hidden">
+              <MermaidDiagram
+                chart={analysis.architecture_mermaid}
+                title={`${analysis.provider === "azure" ? "Azure Subscription" : "GCP Project"} Topology (${analysis.resource_count} Resources)`}
+              />
             </div>
           </div>
 

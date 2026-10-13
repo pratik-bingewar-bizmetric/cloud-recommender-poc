@@ -384,12 +384,17 @@ export function SectionMultiCloudCompare({
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-2 overflow-hidden">
+            <div className="rounded-xl overflow-hidden">
               <MermaidDiagram
                 chart={
                   selectedArchTab === "azure"
                     ? comparison.azure_report.mermaid_diagram
                     : comparison.gcp_report.mermaid_diagram
+                }
+                title={
+                  selectedArchTab === "azure"
+                    ? `Azure Cloud Blueprint (${azureRegion})`
+                    : `GCP Equivalent Blueprint (${gcpRegion})`
                 }
               />
             </div>

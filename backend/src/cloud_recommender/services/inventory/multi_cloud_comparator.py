@@ -336,26 +336,64 @@ class MultiCloudComparatorService:
 
         az_mermaid = (
             "flowchart TD\n"
-            f'  subgraph Azure["Azure Subscription ({request.azure_region})"]\n'
-            '    AFD["Azure Front Door"] --> AWAF["Azure WAF Policy"]\n'
-            '    AWAF --> ACA["Azure Container Apps"]\n'
-            '    ACA --> APSQL[("PostgreSQL Flexible Server")]\n'
-            '    ACA --> ABLOB[("Azure Blob Storage")]\n'
-            '    ACA --> AAI["Azure AI Foundry"]\n'
-            '    ACA --> AKV["Azure Key Vault"]\n'
-            "  end"
+            f'  subgraph Azure["Azure Architecture Blueprint ({request.azure_region})"]\n'
+            '    subgraph Edge["Edge & Security Layer"]\n'
+            '      AFD["<b>Azure Front Door</b><br/>Standard Profile<br/><b>$40.50/mo</b>"]:::netNode\n'
+            '      AWAF["<b>Azure WAF Policy</b><br/>Global Rules<br/><b>$20.00/mo</b>"]:::secNode\n'
+            '      AKV["<b>Azure Key Vault</b><br/>Standard Vault<br/><b>$5.00/mo</b>"]:::secNode\n'
+            "    end\n"
+            '    subgraph App["Container Compute Layer"]\n'
+            '      ACA["<b>Azure Container Apps</b><br/>0.5 vCPU 1.0 GiB (3 replicas)<br/><b>$32.40/mo</b>"]:::computeNode\n'
+            "    end\n"
+            '    subgraph Data["Persistence & Intelligence Layer"]\n'
+            '      APSQL[("<b>PostgreSQL Flexible Server</b><br/>Standard_D2ds_v4 HA<br/><b>$164.25/mo</b>")]:::dbNode\n'
+            '      ABLOB[("<b>Azure Blob Storage</b><br/>Hot LRS 200 GB<br/><b>$3.68/mo</b>")]:::storageNode\n'
+            '      AAI["<b>Azure AI Foundry</b><br/>GPT-4o (5M tokens)<br/><b>$25.00/mo</b>"]:::aiNode\n'
+            "    end\n"
+            "    AFD --> AWAF\n"
+            "    AWAF --> ACA\n"
+            "    ACA --> APSQL\n"
+            "    ACA --> ABLOB\n"
+            "    ACA --> AAI\n"
+            "    ACA -.-> AKV\n"
+            "  end\n"
+            "  classDef computeNode fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;\n"
+            "  classDef dbNode fill:#f0fdf4,stroke:#10b981,stroke-width:2px,color:#064e3b;\n"
+            "  classDef storageNode fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#78350f;\n"
+            "  classDef netNode fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#0c4a6e;\n"
+            "  classDef aiNode fill:#faf5ff,stroke:#a855f7,stroke-width:2px,color:#581c87;\n"
+            "  classDef secNode fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#7c2d12;"
         )
 
         gcp_mermaid = (
             "flowchart TD\n"
-            f'  subgraph GCP["GCP Project ({request.gcp_region})"]\n'
-            '    GLB["Cloud Load Balancing + CDN"] --> GARMOR["Cloud Armor WAF"]\n'
-            '    GARMOR --> GRUN["Google Cloud Run"]\n'
-            '    GRUN --> GSQL[("Cloud SQL for PostgreSQL")]\n'
-            '    GRUN --> GGCS[("Google Cloud Storage")]\n'
-            '    GRUN --> GVERTEX["Vertex AI (Gemini)"]\n'
-            '    GRUN --> GSM["Secret Manager"]\n'
-            "  end"
+            f'  subgraph GCP["GCP Equivalent Architecture Blueprint ({request.gcp_region})"]\n'
+            '    subgraph Edge["Edge & Security Layer"]\n'
+            '      GLB["<b>Cloud Load Balancing + CDN</b><br/>Global External Forwarding<br/><b>$20.00/mo</b>"]:::netNode\n'
+            '      GARMOR["<b>Cloud Armor WAF</b><br/>Standard Policy<br/><b>$8.25/mo</b>"]:::secNode\n'
+            '      GSM["<b>Secret Manager</b><br/>Regional Secrets<br/><b>$0.36/mo</b>"]:::secNode\n'
+            "    end\n"
+            '    subgraph App["Serverless Container Layer"]\n'
+            '      GRUN["<b>Google Cloud Run</b><br/>Tier 1 (3 instances)<br/><b>$46.80/mo</b>"]:::computeNode\n'
+            "    end\n"
+            '    subgraph Data["Persistence & Intelligence Layer"]\n'
+            '      GSQL[("<b>Cloud SQL for PostgreSQL</b><br/>db-custom-2-7680 HA<br/><b>$138.45/mo</b>")]:::dbNode\n'
+            '      GGCS[("<b>Google Cloud Storage</b><br/>Standard Regional 200 GiB<br/><b>$4.00/mo</b>")]:::storageNode\n'
+            '      GVERTEX["<b>Vertex AI (Gemini)</b><br/>Gemini 1.5 Pro (5M tokens)<br/><b>$17.50/mo</b>"]:::aiNode\n'
+            "    end\n"
+            "    GLB --> GARMOR\n"
+            "    GARMOR --> GRUN\n"
+            "    GRUN --> GSQL\n"
+            "    GRUN --> GGCS\n"
+            "    GRUN --> GVERTEX\n"
+            "    GRUN -.-> GSM\n"
+            "  end\n"
+            "  classDef computeNode fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;\n"
+            "  classDef dbNode fill:#f0fdf4,stroke:#10b981,stroke-width:2px,color:#064e3b;\n"
+            "  classDef storageNode fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#78350f;\n"
+            "  classDef netNode fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#0c4a6e;\n"
+            "  classDef aiNode fill:#faf5ff,stroke:#a855f7,stroke-width:2px,color:#581c87;\n"
+            "  classDef secNode fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#7c2d12;"
         )
 
         az_report = RecommendationReport(

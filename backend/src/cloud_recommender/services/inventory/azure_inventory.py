@@ -597,6 +597,24 @@ class AzureInventoryService:
                 None,
             )
 
+    def _get_category_node_class(self, category: ServiceCategory) -> str:
+        """Map ServiceCategory enum to high-contrast Mermaid node class."""
+        if category == ServiceCategory.COMPUTE:
+            return "computeNode"
+        if category == ServiceCategory.DATABASE:
+            return "dbNode"
+        if category == ServiceCategory.STORAGE:
+            return "storageNode"
+        if category == ServiceCategory.NETWORKING:
+            return "netNode"
+        if category == ServiceCategory.AI_ML:
+            return "aiNode"
+        if category == ServiceCategory.SECURITY:
+            return "secNode"
+        if category == ServiceCategory.MONITORING:
+            return "monNode"
+        return "computeNode"
+
     def _build_mermaid_diagram(
         self,
         sub_name: str,
@@ -613,16 +631,22 @@ class AzureInventoryService:
             lines.append(
                 f'    subgraph {rg_node_id}["Resource Group: {group.group_name} ({group.location})"]'
             )
+            if not group.resources:
+                lines.append(
+                    f'      empty_{g_idx}["(No active resources provisioned)"]:::emptyNode'
+                )
             for r_idx, r in enumerate(group.resources):
                 r_code = f"res_{g_idx}_{r_idx}"
-                clean_name = r.resource_name.replace('"', "'")
+                clean_name = r.resource_name.split("/")[-1].replace('"', "'")
+                service_label = r.canonical_service_id.replace("azure-", "")
                 cost_tag = (
                     f"${r.estimated_monthly_cost:.2f}/mo"
                     if r.estimated_monthly_cost > 0
                     else r.pricing_status.capitalize()
                 )
+                cls_name = self._get_category_node_class(r.service_category)
                 lines.append(
-                    f'      {r_code}["{clean_name}\\n({r.canonical_service_id})\\n{cost_tag}"]'
+                    f'      {r_code}["<b>{clean_name}</b><br/>{service_label}<br/><b>{cost_tag}</b>"]:::{cls_name}'
                 )
             lines.append("    end")
         lines.append("  end")
@@ -652,6 +676,32 @@ class AzureInventoryService:
                     lines.append(f'  {src_code} -->|"{rel.direction}"| {tgt_code}')
                 else:
                     lines.append(f'  {src_code} -.->|"{rel.direction}"| {tgt_code}')
+
+        # Node class styling definitions
+        lines.append(
+            "  classDef computeNode fill:#eff6ff,stroke:#3b82f6,stroke-width:2px,color:#1e3a8a;"
+        )
+        lines.append(
+            "  classDef dbNode fill:#f0fdf4,stroke:#10b981,stroke-width:2px,color:#064e3b;"
+        )
+        lines.append(
+            "  classDef storageNode fill:#fffbeb,stroke:#f59e0b,stroke-width:2px,color:#78350f;"
+        )
+        lines.append(
+            "  classDef netNode fill:#f0f9ff,stroke:#0284c7,stroke-width:2px,color:#0c4a6e;"
+        )
+        lines.append(
+            "  classDef aiNode fill:#faf5ff,stroke:#a855f7,stroke-width:2px,color:#581c87;"
+        )
+        lines.append(
+            "  classDef secNode fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#7c2d12;"
+        )
+        lines.append(
+            "  classDef monNode fill:#f8fafc,stroke:#64748b,stroke-width:2px,color:#1e293b;"
+        )
+        lines.append(
+            "  classDef emptyNode fill:#f8fafc,stroke:#94a3b8,stroke-width:1.5px,stroke-dasharray: 4 4,color:#64748b;"
+        )
 
         return "\n".join(lines)
 

@@ -288,7 +288,10 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
       {/* Topological Diagram */}
       {mermaidDiagram && (
         <div className="mb-6">
-          <MermaidDiagram chart={mermaidDiagram} />
+          <MermaidDiagram
+            chart={mermaidDiagram}
+            title="AI-Generated Azure Architecture Topology"
+          />
         </div>
       )}
 
