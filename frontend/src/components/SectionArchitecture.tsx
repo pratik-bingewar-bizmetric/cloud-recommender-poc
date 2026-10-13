@@ -133,6 +133,17 @@ const AVAILABLE_CATALOG_SERVICES = [
   },
 ];
 
+const SERVICE_SKU_OPTIONS: Record<string, string[]> = {
+  "azure-front-door": ["Standard", "Premium"],
+  "azure-web-application-firewall": [
+    "Standard Policy",
+    "Premium Policy",
+    "Application Gateway WAF v2",
+  ],
+  "azure-app-service": ["B1 Basic", "P1v3 Premium"],
+  "azure-postgres-flexible": ["Burstable B1ms", "General Purpose D2ds_v5"],
+};
+
 const CORE_CATEGORIES: ServiceCategory[] = [
   "compute",
   "database",
@@ -162,6 +173,17 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
         if (c.component_id === id) {
           const nextQty = Math.max(1, c.quantity + delta);
           return { ...c, quantity: nextQty };
+        }
+        return c;
+      })
+    );
+  };
+
+  const handleSkuChange = (id: string, nextSku: string) => {
+    onComponentsChange(
+      components.map((c) => {
+        if (c.component_id === id) {
+          return { ...c, sku_or_tier: nextSku };
         }
         return c;
       })
@@ -218,7 +240,7 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              AI-synthesized topology tailored to your requirements. Add, remove, or scale service instances to evaluate alternatives in real time.
+              AI-synthesized topology tailored to your requirements. Add, remove, change SKU tiers, or scale service instances to evaluate alternatives in real time.
             </p>
           </div>
         </div>
@@ -339,6 +361,11 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
               badge: "bg-slate-100 text-slate-700 border-slate-200",
               label: comp.category,
             };
+            const isUnpriced =
+              comp.pricing_status === "unpriced" ||
+              comp.missing_price_warning != null;
+            const isBundled = comp.pricing_status === "bundled";
+            const skuOptions = SERVICE_SKU_OPTIONS[comp.service_id];
 
             return (
               <div
@@ -379,10 +406,15 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
                         >
                           {meta.label}
                         </span>
-                        {comp.missing_price_warning && (
+                        {isUnpriced && (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
                             <AlertTriangle className="w-3 h-3 text-amber-600" />
-                            Pricing Notice
+                            Unpriced / Missing Rate
+                          </span>
+                        )}
+                        {isBundled && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200">
+                            Bundled in Front Door Premium
                           </span>
                         )}
                       </div>
@@ -390,7 +422,7 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
                         <span className="font-mono font-medium text-slate-700">
                           {comp.sku_or_tier}
                         </span>
-                        {comp.workload_quantity && comp.workload_unit && (
+                        {comp.workload_quantity && comp.workload_unit && !isUnpriced && (
                           <span className="text-slate-400">
                             • {comp.workload_quantity} {comp.workload_unit}
                           </span>
@@ -399,8 +431,30 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
                     </div>
                   </div>
 
-                  {/* Right: Quantity Stepper, Monthly Cost & Actions */}
-                  <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100 shrink-0">
+                  {/* Right: SKU Selector, Quantity Stepper, Monthly Cost & Actions */}
+                  <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2.5 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100 shrink-0">
+                    {/* SKU / Tier Selector (when service supports multiple SKUs) */}
+                    {skuOptions && (
+                      <select
+                        aria-label={`Select SKU tier for ${comp.service_name}`}
+                        value={
+                          skuOptions.includes(comp.sku_or_tier)
+                            ? comp.sku_or_tier
+                            : skuOptions[0]
+                        }
+                        onChange={(e) =>
+                          handleSkuChange(comp.component_id, e.target.value)
+                        }
+                        className="text-xs font-mono font-medium bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-slate-800 hover:border-blue-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500/20"
+                      >
+                        {skuOptions.map((skuOpt) => (
+                          <option key={skuOpt} value={skuOpt}>
+                            {skuOpt}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
                     {/* Quantity Stepper */}
                     <div className="inline-flex items-center gap-1 bg-slate-100/90 p-1 rounded-lg border border-slate-200/80">
                       <span className="text-[10px] text-slate-500 px-1.5 font-medium">
@@ -428,11 +482,37 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
                     </div>
 
                     {/* Monthly Cost */}
-                    <div className="text-right min-w-[92px]">
-                      <div className="text-sm font-bold text-slate-900 font-mono">
-                        ${parseFloat(comp.monthly_cost).toFixed(2)}
-                      </div>
-                      <div className="text-[10px] text-slate-400">est. / month</div>
+                    <div className="text-right min-w-[100px]">
+                      {isUnpriced ? (
+                        <>
+                          <div className="text-xs font-bold text-amber-800 font-mono">
+                            Unpriced
+                          </div>
+                          <div className="text-[10px] text-amber-600">
+                            missing verified rate
+                          </div>
+                        </>
+                      ) : isBundled ? (
+                        <>
+                          <div className="text-sm font-bold text-teal-800 font-mono">
+                            $0.00
+                          </div>
+                          <div className="text-[10px] text-teal-600 font-medium">
+                            Bundled (FD Premium)
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-sm font-bold text-slate-900 font-mono">
+                            ${parseFloat(comp.monthly_cost).toFixed(2)}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            {comp.pricing_status === "provisional"
+                              ? "provisional / mo"
+                              : "verified / month"}
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     {/* Remove Button */}

@@ -265,13 +265,13 @@ async def test_pricing_engine_front_door_standard_and_premium_dimensions() -> No
     assert priced_prem[0].monthly_cost == Decimal("344.63")
     assert prov_prem[0].meter_or_sku_id == "7c765472-0673-5e48-bcb0-5a7b34c6330d"
 
-    # Zone 2 (southeastasia): $35.00 base + (150 GB * $0.14) + (150 * 10K * $0.0095)
-    # = 35.00 + 21.00 + 1.425 = 57.425 -> $57.43
+    # Zone 2 (southeastasia): $35.00 base + (150 GB * $0.115) + (150 * 10K * $0.0108)
+    # = 35.00 + 17.25 + 1.62 = $53.87
     priced_z2, _, _, warns_z2, _ = await engine.price_architecture(
         fd_standard, assumptions, region="southeastasia"
     )
     assert len(warns_z2) == 0
-    assert priced_z2[0].monthly_cost == Decimal("57.43")
+    assert priced_z2[0].monthly_cost == Decimal("53.87")
 
 
 @pytest.mark.asyncio
@@ -452,3 +452,229 @@ async def test_pricing_engine_live_api_matching_caching_and_zone_fallback(
     assert rate2 == Decimal("35.00")
     assert meter_id2 == "7e3eab72-0b95-5524-984a-d1697f73feee"
     assert mock_client.query_prices.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_pricing_engine_unknown_skus_and_incomplete_estimate_behavior() -> None:
+    """Verify unknown SKUs and unverified services mark the estimate incomplete without fabricating prices."""
+    engine = AzurePricingEngine()
+    assumptions = WorkloadAssumptions(
+        customer_count=10000,
+        monthly_active_users=2500,
+        requests_per_user_per_day=20,
+        monthly_egress_gb=150.0,
+    )
+
+    components = [
+        ArchitectureComponent(
+            component_id="comp-aca",
+            category=ServiceCategory.COMPUTE,
+            service_id="azure-container-apps",
+            service_name="Azure Container Apps",
+            sku_or_tier="Consumption",
+            quantity=2,
+            rationale="Verified compute workload",
+            monthly_cost=Decimal("0.00"),
+        ),
+        ArchitectureComponent(
+            component_id="comp-fd-bad-sku",
+            category=ServiceCategory.NETWORKING,
+            service_id="azure-front-door",
+            service_name="Azure Front Door",
+            sku_or_tier="Enterprise-Ultra-Invalid",
+            quantity=1,
+            rationale="Front Door with unknown SKU",
+            monthly_cost=Decimal("0.00"),
+        ),
+        ArchitectureComponent(
+            component_id="comp-waf-bad-sku",
+            category=ServiceCategory.SECURITY,
+            service_id="azure-web-application-firewall",
+            service_name="Azure Web Application Firewall",
+            sku_or_tier="Legacy-WAF-v0",
+            quantity=1,
+            rationale="WAF with unknown SKU",
+            monthly_cost=Decimal("0.00"),
+        ),
+    ]
+
+    priced, bom, prov, warnings, assumps = await engine.price_architecture(
+        components, assumptions, region="eastus", buffer_percentage=Decimal("15.00")
+    )
+
+    assert len(warnings) == 2
+    assert bom.is_complete is False
+    assert bom.estimate_status == "incomplete"
+    assert bom.unpriced_component_count == 2
+    assert bom.unpriced_service_ids == ["azure-front-door", "azure-web-application-firewall"]
+
+    # Verified component is priced normally
+    assert priced[0].pricing_status == "verified"
+    assert priced[0].monthly_cost > Decimal("0.00")
+    assert bom.verified_subtotal == priced[0].monthly_cost
+    assert bom.subtotal == bom.verified_subtotal
+    assert bom.safety_buffer_amount == (bom.verified_subtotal * Decimal("0.15")).quantize(
+        Decimal("0.01")
+    )
+
+    # Unpriced components never receive an invented price and preserve unverified provenance
+    assert priced[1].pricing_status == "unpriced"
+    assert priced[1].monthly_cost == Decimal("0.00")
+    assert priced[1].missing_price_warning is not None
+    assert prov[1].provenance_source == "unverified_missing_rate"
+
+    assert priced[2].pricing_status == "unpriced"
+    assert priced[2].monthly_cost == Decimal("0.00")
+    assert priced[2].missing_price_warning is not None
+    assert prov[2].provenance_source == "unverified_missing_rate"
+
+    # Assumptions explicitly disclose that the buffer applies only to the verified subtotal
+    assert any("INCOMPLETE ESTIMATE" in a and "verified subtotal" in a for a in assumps)
+
+
+@pytest.mark.asyncio
+async def test_pricing_engine_quantity_changes_and_unit_conversions() -> None:
+    """Verify quantity scaling and request billing unit conversions for Front Door & WAF."""
+    engine = AzurePricingEngine()
+    assumptions = WorkloadAssumptions(
+        customer_count=10000,
+        monthly_active_users=2500,
+        requests_per_user_per_day=20,  # 1,500,000 requests/mo
+        monthly_egress_gb=150.0,
+        peak_rps=15.0,  # 2 Capacity Units
+    )
+
+    # Verify request unit conversion helper
+    raw_reqs = Decimal("1500000")
+    assert AzurePricingEngine._convert_requests_to_billing_units(raw_reqs, "10K") == Decimal("150")
+    assert AzurePricingEngine._convert_requests_to_billing_units(raw_reqs, "1M/Month") == Decimal(
+        "1.5"
+    )
+    assert AzurePricingEngine._convert_requests_to_billing_units(raw_reqs, "1K") == Decimal("1500")
+
+    # 1. Front Door Standard quantity=2 adds a second $35.00 base profile fee
+    fd_qty2 = [
+        ArchitectureComponent(
+            component_id="fd-2",
+            category=ServiceCategory.NETWORKING,
+            service_id="azure-front-door",
+            service_name="Azure Front Door",
+            sku_or_tier="Standard",
+            quantity=2,
+            rationale="Dual edge profiles",
+            monthly_cost=Decimal("0.00"),
+        )
+    ]
+    priced_fd2, _, _, _, _ = await engine.price_architecture(fd_qty2, assumptions, region="eastus")
+    # 2 * $35.00 + $12.375 + $1.35 = $83.73
+    assert priced_fd2[0].monthly_cost == Decimal("83.73")
+
+    # 2. WAF Standard Policy quantity=2 scales policy ($5 * 2) and custom rules ($2 * 2)
+    waf_qty2 = [
+        ArchitectureComponent(
+            component_id="waf-2",
+            category=ServiceCategory.SECURITY,
+            service_id="azure-web-application-firewall",
+            service_name="Azure Web Application Firewall",
+            sku_or_tier="Standard Policy",
+            quantity=2,
+            rationale="Dual WAF policies",
+            monthly_cost=Decimal("0.00"),
+        )
+    ]
+    priced_waf2, _, _, _, _ = await engine.price_architecture(
+        waf_qty2, assumptions, region="eastus"
+    )
+    # 2 * $5.00 + 2 * (2 * $1.00) + 1.5M * $1.00 = 10.00 + 4.00 + 1.50 = $15.50
+    assert priced_waf2[0].monthly_cost == Decimal("15.50")
+
+    # 3. Application Gateway WAF v2 quantity=2 doubles 730-hour gateway + capacity unit costs
+    appgw_qty2 = [
+        ArchitectureComponent(
+            component_id="appgw-2",
+            category=ServiceCategory.SECURITY,
+            service_id="azure-web-application-firewall",
+            service_name="Application Gateway WAF v2",
+            sku_or_tier="Application Gateway WAF v2",
+            quantity=2,
+            rationale="Dual regional AppGW WAF v2",
+            monthly_cost=Decimal("0.00"),
+        )
+    ]
+    priced_appgw2, _, _, _, _ = await engine.price_architecture(
+        appgw_qty2, assumptions, region="eastus"
+    )
+    # 2 * 730 * ($0.36 + 2 * $0.0144) = 1460 * 0.3888 = $567.65
+    assert priced_appgw2[0].monthly_cost == Decimal("567.65")
+    assert priced_appgw2[0].workload_quantity == Decimal("1460.0")
+
+
+@pytest.mark.asyncio
+async def test_pricing_engine_never_selects_arbitrary_first_result_and_handles_missing_rates(
+    tmp_path: Path,
+) -> None:
+    """Verify live query never selects an arbitrary first result when no base-tier meter matches."""
+    settings = Settings(offline_pricing_mode=False)
+    cache = AzurePriceCache(cache_file=tmp_path / "empty_cache.json", ttl_hours=24)
+    mock_client = AsyncMock(spec=AzureRetailPricesClient)
+
+    # Return only a high-tier overage meter (tier_minimum_units=10240.0) and an unrelated meter
+    non_matching_items = [
+        AzurePriceItem(
+            meter_id="captcha-meter",
+            meter_name="Standard Captcha Session",
+            product_id="DZH318Z0BPVW",
+            sku_id="DZH318Z0BPVW/000J",
+            product_name="Azure Front Door",
+            sku_name="Standard",
+            service_name="Azure Front Door Service",
+            service_id="DZH317F70804",
+            service_family="Networking",
+            unit_of_measure="10K",
+            retail_price=Decimal("0.60"),
+            unit_price=Decimal("0.60"),
+            tier_minimum_units=0.0,
+            arm_region_name="Zone 1",
+        ),
+        AzurePriceItem(
+            meter_id="overage-tier",
+            meter_name="Standard Data Transfer Out",
+            product_id="DZH318Z0BPVW",
+            sku_id="DZH318Z0BPVW/000J",
+            product_name="Azure Front Door",
+            sku_name="Standard",
+            service_name="Azure Front Door Service",
+            service_id="DZH317F70804",
+            service_family="Networking",
+            unit_of_measure="1 GB",
+            retail_price=Decimal("0.04"),
+            unit_price=Decimal("0.04"),
+            tier_minimum_units=51200.0,
+            arm_region_name="Zone 1",
+        ),
+    ]
+    mock_client.query_prices.return_value = non_matching_items
+
+    # Simulate empty benchmark to verify missing-rate behavior when live match fails
+    cache.get_benchmark_pricing = lambda _sid: {}  # type: ignore[method-assign]
+    engine = AzurePricingEngine(settings=settings, client=mock_client, cache=cache)
+
+    comp = ArchitectureComponent(
+        component_id="fd-missing",
+        category=ServiceCategory.NETWORKING,
+        service_id="azure-front-door",
+        service_name="Azure Front Door",
+        sku_or_tier="Standard",
+        quantity=1,
+        rationale="Edge",
+        monthly_cost=Decimal("0.00"),
+    )
+    priced, bom, prov, warnings, _ = await engine.price_architecture(
+        [comp], WorkloadAssumptions(), region="eastus"
+    )
+    # Must NOT pick 0.60 from non_matching_items[0] and must mark component unpriced
+    assert priced[0].monthly_cost == Decimal("0.00")
+    assert priced[0].pricing_status == "unpriced"
+    assert len(warnings) == 1
+    assert bom.is_complete is False
+    assert prov[0].provenance_source == "unverified_missing_rate"

@@ -64,6 +64,12 @@ export interface WorkloadProfile {
   estimation_assumptions: Record<string, string>;
 }
 
+export type ComponentPricingStatus =
+  | "verified"
+  | "provisional"
+  | "bundled"
+  | "unpriced";
+
 export interface ArchitectureComponent {
   component_id: string;
   category: ServiceCategory;
@@ -83,6 +89,7 @@ export interface ArchitectureComponent {
   pricing_assumptions?: string | null;
   known_risks: string[];
   missing_price_warning?: string | null;
+  pricing_status?: ComponentPricingStatus;
 }
 
 export interface CostBreakdown {
@@ -93,10 +100,15 @@ export interface CostBreakdown {
   ai: string;
   other: string;
   subtotal: string;
+  verified_subtotal?: string;
   safety_buffer_amount: string;
   total_monthly: string;
   total_five_month: string;
   total_annual: string;
+  is_complete?: boolean;
+  estimate_status?: "complete" | "incomplete" | string;
+  unpriced_component_count?: number;
+  unpriced_service_ids?: string[];
 }
 
 export interface TradeOffDimension {
@@ -119,9 +131,17 @@ export interface PricingReference {
   meter_or_sku_id: string;
   rate: string;
   unit_description: string;
-  monthly_workload_quantity: string;
-  source_api_or_url: string;
+  monthly_workload_quantity?: string;
+  source_url?: string;
+  source_api_or_url?: string;
   retrieval_timestamp: string;
+  provenance_source?: string;
+  service_name?: string | null;
+  product_name?: string | null;
+  sku_name?: string | null;
+  meter_name?: string | null;
+  arm_region_name?: string | null;
+  tier_minimum_units?: number | null;
   pricing_tier_or_notes?: string | null;
 }
 

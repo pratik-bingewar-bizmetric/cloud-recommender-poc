@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cloud_recommender.schemas.common import (
     CloudProvider,
@@ -93,6 +93,10 @@ class ArchitectureComponent(BaseModel):
         default=None,
         description="Warning notice if official pricing could not be verified.",
     )
+    pricing_status: str = Field(
+        default="verified",
+        description="Pricing classification: 'verified', 'provisional', 'bundled', or 'unpriced'.",
+    )
 
 
 class CostBreakdown(BaseModel):
@@ -121,6 +125,11 @@ class CostBreakdown(BaseModel):
     subtotal: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
         ..., ge=Decimal("0.0"), description="Raw sum of all service component estimates."
     )
+    verified_subtotal: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
+        default=Decimal("0.00"),
+        ge=Decimal("0.0"),
+        description="Sum of verified and provisional component estimates only.",
+    )
     safety_buffer_amount: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
         default=Decimal("0.00"),
         ge=Decimal("0.0"),
@@ -137,6 +146,33 @@ class CostBreakdown(BaseModel):
     total_annual: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
         ..., ge=Decimal("0.0"), description="Annualized estimated total."
     )
+    is_complete: bool = Field(
+        default=True,
+        description="False when any required component lacks a verified price.",
+    )
+    estimate_status: str = Field(
+        default="complete",
+        description="'complete' when all components are priced; 'incomplete' when any is unpriced.",
+    )
+    unpriced_component_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of required components excluded due to missing verified rates.",
+    )
+    unpriced_service_ids: list[str] = Field(
+        default_factory=list,
+        description="Identifiers of components lacking verified pricing.",
+    )
+
+    @model_validator(mode="after")
+    def _sync_verified_subtotal(self) -> "CostBreakdown":
+        if (
+            self.verified_subtotal == Decimal("0.00")
+            and self.subtotal > Decimal("0.00")
+            and self.unpriced_component_count == 0
+        ):
+            self.verified_subtotal = self.subtotal
+        return self
 
 
 class TradeOffDimension(BaseModel):
@@ -183,6 +219,29 @@ class PricingReference(BaseModel):
     )
     source_url: str = Field(
         ..., description="Official pricing documentation or API reference endpoint."
+    )
+    provenance_source: str = Field(
+        default="official_azure_pricing_benchmark_dataset",
+        description="Pricing source classification (live, cached, benchmark, bundled, unverified).",
+    )
+    service_name: str | None = Field(
+        default=None, description="Matched Azure Retail Prices serviceName."
+    )
+    product_name: str | None = Field(
+        default=None, description="Matched Azure Retail Prices productName."
+    )
+    sku_name: str | None = Field(default=None, description="Matched Azure Retail Prices skuName.")
+    meter_name: str | None = Field(
+        default=None, description="Matched Azure Retail Prices meterName."
+    )
+    arm_region_name: str | None = Field(
+        default=None, description="Matched Azure Retail Prices armRegionName or Billing Zone."
+    )
+    tier_minimum_units: float | None = Field(
+        default=None, description="Matched Azure Retail Prices tierMinimumUnits."
+    )
+    pricing_tier_or_notes: str | None = Field(
+        default=None, description="Additional notes on multi-meter or bundled pricing."
     )
 
 

@@ -38,12 +38,23 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
   if (!costBreakdown) return null;
 
   const subtotal = parseFloat(costBreakdown.subtotal) || 0;
+  const verifiedSubtotal =
+    parseFloat(costBreakdown.verified_subtotal ?? costBreakdown.subtotal) ||
+    subtotal;
   const bufferAmount = parseFloat(costBreakdown.safety_buffer_amount) || 0;
   const monthlyTotal = parseFloat(costBreakdown.total_monthly) || 0;
   const fiveMonthTotal = parseFloat(costBreakdown.total_five_month) || 0;
   const annualTotal = parseFloat(costBreakdown.total_annual) || 0;
 
-  const hasWarnings = unverifiedWarnings && unverifiedWarnings.length > 0;
+  const hasWarnings =
+    (unverifiedWarnings && unverifiedWarnings.length > 0) ||
+    costBreakdown.is_complete === false;
+  const isComplete = !hasWarnings;
+  const unpricedCount =
+    costBreakdown.unpriced_component_count ??
+    components.filter(
+      (c) => c.pricing_status === "unpriced" || c.missing_price_warning != null
+    ).length;
 
   const categories = [
     {
@@ -77,7 +88,7 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
       dotColor: "bg-cyan-500",
     },
     {
-      label: "Other / Ops",
+      label: "Other / Security",
       amount: parseFloat(costBreakdown.other) || 0,
       barColor: "bg-slate-500",
       dotColor: "bg-slate-500",
@@ -90,38 +101,64 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
     },
   ];
 
+  const resolveComponentStatus = (
+    comp: ArchitectureComponent,
+    prov: PricingReference | undefined
+  ): "verified" | "provisional" | "bundled" | "unpriced" => {
+    if (
+      comp.pricing_status === "unpriced" ||
+      comp.missing_price_warning != null ||
+      prov?.provenance_source === "unverified_missing_rate"
+    ) {
+      return "unpriced";
+    }
+    if (
+      comp.pricing_status === "bundled" ||
+      prov?.provenance_source === "bundled_in_front_door_premium"
+    ) {
+      return "bundled";
+    }
+    if (comp.pricing_status === "provisional") {
+      return "provisional";
+    }
+    const notes = (prov?.pricing_tier_or_notes || "").toLowerCase();
+    if (notes.includes("provisional") || notes.includes("fallback")) {
+      return "provisional";
+    }
+    return "verified";
+  };
+
   const getProvenanceBadge = (
-    prov: PricingReference | undefined,
-    hasWarning: boolean
+    status: "verified" | "provisional" | "bundled" | "unpriced"
   ) => {
-    if (hasWarning) {
+    if (status === "unpriced") {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-semibold">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-semibold">
           <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
-          Unverified / Unavailable
+          Unpriced / Missing Rate
         </span>
       );
     }
-    const notes = (prov?.pricing_tier_or_notes || "").toLowerCase();
-    if (notes.includes("benchmark") || notes.includes("fallback")) {
+    if (status === "bundled") {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-semibold">
+          <CheckCircle2 className="w-3 h-3 text-teal-600 shrink-0" />
+          Bundled in Front Door Premium
+        </span>
+      );
+    }
+    if (status === "provisional") {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-semibold">
           <Database className="w-3 h-3 text-indigo-600 shrink-0" />
-          Benchmark Reference
-        </span>
-      );
-    }
-    if (prov) {
-      return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
-          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-          Verified Retail Rate
+          Provisional Benchmark
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-semibold">
-        Catalog Rate
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
+        <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+        Verified Retail Rate
       </span>
     );
   };
@@ -154,10 +191,10 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
 
         {/* Engine & Verification Status */}
         <div className="flex flex-wrap items-center gap-2">
-          {hasWarnings ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-medium">
+          {!isComplete ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-300 text-xs font-semibold">
               <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-              <span>Partial Pricing Warnings</span>
+              <span>Incomplete Estimate ({unpricedCount} Unpriced)</span>
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
@@ -176,18 +213,23 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
         </div>
       </div>
 
-      {/* Unverified Price Warnings Banner */}
-      {hasWarnings && (
+      {/* Incomplete Estimate / Unverified Price Warnings Banner */}
+      {!isComplete && (
         <div
           role="alert"
           className="mb-5 p-4 bg-amber-50/90 border border-amber-300 rounded-xl text-xs text-amber-950"
         >
           <div className="font-semibold flex items-center gap-1.5 mb-1.5">
             <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>Unverified or Missing SKU Rate Notice</span>
+            <span>
+              Incomplete Cost Estimate — {unpricedCount} Component(s) Unpriced
+            </span>
           </div>
           <p className="text-[11px] text-amber-800 mb-2">
-            The following components did not match an active live retail meter and require manual rate verification:
+            The overall estimate is marked <strong>incomplete</strong> because one or more required components have no verified retail price. Unpriced components are never assigned an invented default price and are not free services. The{" "}
+            <strong>Verified Subtotal (${formatUsd(verifiedSubtotal)})</strong>{" "}
+            and FinOps safety buffer (+${formatUsd(bufferAmount)}) cover{" "}
+            <strong>only verified/priced components</strong> and do not conceal unpriced items:
           </p>
           <ul className="list-disc list-inside space-y-1 text-amber-900 font-medium">
             {unverifiedWarnings.map((w, idx) => (
@@ -199,38 +241,66 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
 
       {/* Cost Overview Projection Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
-        {/* 1. Service Subtotal + Buffer Breakdown */}
+        {/* 1. Verified Subtotal + Buffer Breakdown */}
         <div className="p-4 rounded-xl bg-slate-50/90 border border-slate-200/90 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-xs text-slate-600 font-semibold mb-1">
-              <span>Service Subtotal (Base BOM)</span>
+              <span>Verified Subtotal (Priced BOM)</span>
               <Layers className="w-4 h-4 text-slate-500" />
             </div>
             <div className="text-xl font-bold text-slate-900 font-mono tracking-tight">
-              ${formatUsd(subtotal)}
+              ${formatUsd(verifiedSubtotal)}
             </div>
           </div>
           <div className="mt-2 pt-2 border-t border-slate-200/80 flex items-center justify-between text-[11px]">
-            <span className="text-slate-500 font-medium">+ FinOps Safety Buffer:</span>
+            <span className="text-slate-500 font-medium">
+              + Buffer (on verified only):
+            </span>
             <span className="font-mono font-semibold text-indigo-700">
               +${formatUsd(bufferAmount)}
             </span>
           </div>
         </div>
 
-        {/* 2. Estimated Monthly Total */}
-        <div className="p-4 rounded-xl bg-blue-50/50 border border-blue-200/90 shadow-2xs flex flex-col justify-between">
+        {/* 2. Estimated Monthly Total (or Incomplete Monthly Estimate) */}
+        <div
+          className={`p-4 rounded-xl shadow-2xs flex flex-col justify-between ${
+            isComplete
+              ? "bg-blue-50/50 border border-blue-200/90"
+              : "bg-amber-50/60 border border-amber-300"
+          }`}
+        >
           <div>
-            <div className="flex items-center justify-between text-xs text-blue-700 font-semibold mb-1">
-              <span>Estimated Monthly Total</span>
-              <DollarSign className="w-4 h-4 text-blue-600" />
+            <div
+              className={`flex items-center justify-between text-xs font-semibold mb-1 ${
+                isComplete ? "text-blue-700" : "text-amber-900"
+              }`}
+            >
+              <span>
+                {isComplete
+                  ? "Estimated Monthly Total"
+                  : "Incomplete Monthly Estimate"}
+              </span>
+              <DollarSign
+                className={`w-4 h-4 ${
+                  isComplete ? "text-blue-600" : "text-amber-600"
+                }`}
+              />
             </div>
             <div className="text-2xl font-bold text-slate-900 font-mono tracking-tight transition-all">
               ${formatUsd(monthlyTotal)}
             </div>
           </div>
-          <div className="mt-2 pt-2 border-t border-blue-200/60 text-[11px] text-slate-600">
-            Includes base BOM + contingency buffer
+          <div
+            className={`mt-2 pt-2 text-[11px] ${
+              isComplete
+                ? "border-t border-blue-200/60 text-slate-600"
+                : "border-t border-amber-200 text-amber-800 font-medium"
+            }`}
+          >
+            {isComplete
+              ? "Includes verified BOM + contingency buffer"
+              : `Excludes ${unpricedCount} unpriced service(s)`}
           </div>
         </div>
 
@@ -238,7 +308,11 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
         <div className="p-4 rounded-xl bg-slate-50/90 border border-slate-200/90 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-xs text-indigo-700 font-semibold mb-1">
-              <span>5-Month Projected Spend</span>
+              <span>
+                {isComplete
+                  ? "5-Month Projected Spend"
+                  : "5-Month (Verified Only)"}
+              </span>
               <Calendar className="w-4 h-4 text-indigo-600" />
             </div>
             <div className="text-2xl font-bold text-slate-900 font-mono tracking-tight">
@@ -254,7 +328,11 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
         <div className="p-4 rounded-xl bg-slate-50/90 border border-slate-200/90 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between text-xs text-emerald-700 font-semibold mb-1">
-              <span>Annual Projected Spend</span>
+              <span>
+                {isComplete
+                  ? "Annual Projected Spend"
+                  : "Annual (Verified Only)"}
+              </span>
               <Calendar className="w-4 h-4 text-emerald-600" />
             </div>
             <div className="text-2xl font-bold text-slate-900 font-mono tracking-tight">
@@ -354,12 +432,20 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
                   const prov = pricingProvenance.find(
                     (p) => p.service_id === comp.service_id
                   );
-                  const hasWarning = comp.missing_price_warning != null;
+                  const status = resolveComponentStatus(comp, prov);
+                  const isUnpriced = status === "unpriced";
+                  const isBundled = status === "bundled";
+                  const provenanceUrl =
+                    prov?.source_url ||
+                    prov?.source_api_or_url ||
+                    "https://azure.microsoft.com/en-us/pricing/";
 
                   return (
                     <tr
                       key={comp.component_id}
-                      className="hover:bg-slate-50/80 transition"
+                      className={`hover:bg-slate-50/80 transition ${
+                        isUnpriced ? "bg-amber-50/30" : ""
+                      }`}
                     >
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-900">
@@ -368,7 +454,7 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
                         <div className="text-[11px] text-slate-500 font-mono">
                           {comp.sku_or_tier}
                         </div>
-                        {hasWarning && (
+                        {comp.missing_price_warning && (
                           <div className="inline-flex items-center gap-1 text-[11px] text-amber-800 font-medium mt-1">
                             <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
                             <span>{comp.missing_price_warning}</span>
@@ -384,17 +470,25 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
                         {comp.quantity}
                       </td>
                       <td className="py-3 px-3 text-right font-mono text-slate-700">
-                        {prov ? `$${parseFloat(prov.rate).toFixed(5)}` : "—"}
+                        {isUnpriced
+                          ? "Unpriced"
+                          : isBundled
+                            ? "$0.00 (Bundled)"
+                            : prov
+                              ? `$${parseFloat(prov.rate).toFixed(4)}`
+                              : "—"}
                       </td>
                       <td className="py-3 px-3 text-slate-500">
-                        {prov?.unit_description || comp.workload_unit || "Instance Hour"}
+                        {comp.workload_unit ||
+                          prov?.unit_description ||
+                          "Instance Hour"}
                       </td>
                       <td className="py-3 px-3">
                         <div className="flex flex-col items-start gap-1">
-                          {getProvenanceBadge(prov, hasWarning)}
+                          {getProvenanceBadge(status)}
                           {prov && (
                             <a
-                              href={prov.source_api_or_url}
+                              href={provenanceUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-[11px] font-mono text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
@@ -403,10 +497,33 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
                               <ExternalLink className="w-3 h-3 shrink-0" />
                             </a>
                           )}
+                          {prov?.product_name && prov?.meter_name && (
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {prov.product_name} • {prov.meter_name}
+                              {prov.arm_region_name
+                                ? ` (${prov.arm_region_name})`
+                                : ""}
+                            </span>
+                          )}
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-bold text-slate-900 font-mono text-sm">
-                        ${formatUsd(parseFloat(comp.monthly_cost) || 0)}
+                      <td className="py-3 px-4 text-right font-bold font-mono text-sm">
+                        {isUnpriced ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold">
+                            Unpriced
+                          </span>
+                        ) : isBundled ? (
+                          <span className="text-teal-800">
+                            $0.00{" "}
+                            <span className="text-[10px] font-sans font-medium text-teal-600 block">
+                              Bundled in FD Premium
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-900">
+                            ${formatUsd(parseFloat(comp.monthly_cost) || 0)}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );
@@ -415,26 +532,41 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
               <tfoot className="bg-slate-50/90 border-t border-slate-200 text-slate-900">
                 <tr>
                   <td colSpan={6} className="py-2.5 px-4 text-right font-semibold text-slate-600">
-                    Service Subtotal (Base BOM):
+                    Verified Subtotal (Priced BOM Items Only):
                   </td>
                   <td className="py-2.5 px-4 text-right font-mono font-bold text-sm">
-                    ${formatUsd(subtotal)}
+                    ${formatUsd(verifiedSubtotal)}
                   </td>
                 </tr>
                 <tr>
                   <td colSpan={6} className="py-2.5 px-4 text-right text-slate-600">
-                    FinOps Contingency Buffer:
+                    FinOps Contingency Buffer (Applies to Verified Subtotal Only):
                   </td>
                   <td className="py-2.5 px-4 text-right font-mono font-semibold text-sm text-indigo-700">
                     +${formatUsd(bufferAmount)}
                   </td>
                 </tr>
-                <tr className="border-t border-slate-200 bg-blue-50/50 text-slate-900">
+                <tr
+                  className={`border-t border-slate-200 text-slate-900 ${
+                    isComplete ? "bg-blue-50/50" : "bg-amber-50/70"
+                  }`}
+                >
                   <td colSpan={6} className="py-3 px-4 text-right font-bold text-sm">
-                    Estimated Total Monthly Cost (USD):
+                    {isComplete
+                      ? "Estimated Total Monthly Cost (USD):"
+                      : `Incomplete Monthly Estimate (Excludes ${unpricedCount} Unpriced Component(s)):`}
                   </td>
-                  <td className="py-3 px-4 text-right font-mono text-base font-bold text-blue-700">
+                  <td
+                    className={`py-3 px-4 text-right font-mono text-base font-bold ${
+                      isComplete ? "text-blue-700" : "text-amber-900"
+                    }`}
+                  >
                     ${formatUsd(monthlyTotal)}
+                    {!isComplete && (
+                      <span className="block text-[10px] font-sans font-semibold text-amber-700">
+                        Incomplete (Excludes Unpriced)
+                      </span>
+                    )}
                   </td>
                 </tr>
               </tfoot>
@@ -448,11 +580,22 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
             const prov = pricingProvenance.find(
               (p) => p.service_id === comp.service_id
             );
-            const hasWarning = comp.missing_price_warning != null;
+            const status = resolveComponentStatus(comp, prov);
+            const isUnpriced = status === "unpriced";
+            const isBundled = status === "bundled";
+            const provenanceUrl =
+              prov?.source_url ||
+              prov?.source_api_or_url ||
+              "https://azure.microsoft.com/en-us/pricing/";
+
             return (
               <div
                 key={comp.component_id}
-                className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2 text-xs"
+                className={`p-3.5 rounded-xl border space-y-2 text-xs ${
+                  isUnpriced
+                    ? "border-amber-300 bg-amber-50/40"
+                    : "border-slate-200 bg-slate-50/60"
+                }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -464,7 +607,13 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
                     </div>
                   </div>
                   <div className="text-right font-mono font-bold text-sm text-slate-900">
-                    ${formatUsd(parseFloat(comp.monthly_cost) || 0)}
+                    {isUnpriced ? (
+                      <span className="text-amber-800">Unpriced</span>
+                    ) : isBundled ? (
+                      <span className="text-teal-800">$0.00 (Bundled)</span>
+                    ) : (
+                      `$${formatUsd(parseFloat(comp.monthly_cost) || 0)}`
+                    )}
                   </div>
                 </div>
 
@@ -472,17 +621,23 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
                   <span>
                     Qty: <strong className="font-mono">{comp.quantity}</strong> • Rate:{" "}
                     <span className="font-mono">
-                      {prov ? `$${parseFloat(prov.rate).toFixed(4)}` : "—"}
+                      {isUnpriced
+                        ? "Unpriced"
+                        : isBundled
+                          ? "$0.00 (Bundled)"
+                          : prov
+                            ? `$${parseFloat(prov.rate).toFixed(4)}`
+                            : "—"}
                     </span>
                   </span>
-                  {getProvenanceBadge(prov, hasWarning)}
+                  {getProvenanceBadge(status)}
                 </div>
 
                 {prov && (
                   <div className="text-[11px] flex items-center justify-between text-slate-500">
-                    <span>Unit: {prov.unit_description}</span>
+                    <span>Unit: {comp.workload_unit || prov.unit_description}</span>
                     <a
-                      href={prov.source_api_or_url}
+                      href={provenanceUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-mono text-blue-600 hover:underline inline-flex items-center gap-1"
@@ -493,7 +648,7 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
                   </div>
                 )}
 
-                {hasWarning && (
+                {comp.missing_price_warning && (
                   <div className="p-2 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                     <span>{comp.missing_price_warning}</span>
@@ -503,20 +658,38 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
             );
           })}
 
-          <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-200 space-y-1 text-xs">
+          <div
+            className={`p-3.5 rounded-xl border space-y-1 text-xs ${
+              isComplete
+                ? "bg-blue-50/60 border-blue-200"
+                : "bg-amber-50/70 border-amber-300"
+            }`}
+          >
             <div className="flex justify-between text-slate-600">
-              <span>Service Subtotal:</span>
-              <span className="font-mono font-semibold">${formatUsd(subtotal)}</span>
+              <span>Verified Subtotal:</span>
+              <span className="font-mono font-semibold">
+                ${formatUsd(verifiedSubtotal)}
+              </span>
             </div>
             <div className="flex justify-between text-slate-600">
-              <span>Safety Buffer:</span>
+              <span>Safety Buffer (on Verified Only):</span>
               <span className="font-mono font-semibold text-indigo-700">
                 +${formatUsd(bufferAmount)}
               </span>
             </div>
-            <div className="flex justify-between pt-1.5 border-t border-blue-200 font-bold text-slate-900 text-sm">
-              <span>Total Monthly (USD):</span>
-              <span className="font-mono text-blue-700">${formatUsd(monthlyTotal)}</span>
+            <div className="flex justify-between pt-1.5 border-t border-slate-200 font-bold text-slate-900 text-sm">
+              <span>
+                {isComplete
+                  ? "Total Monthly (USD):"
+                  : `Incomplete Monthly (Excludes ${unpricedCount} Unpriced):`}
+              </span>
+              <span
+                className={`font-mono ${
+                  isComplete ? "text-blue-700" : "text-amber-900"
+                }`}
+              >
+                ${formatUsd(monthlyTotal)}
+              </span>
             </div>
           </div>
         </div>

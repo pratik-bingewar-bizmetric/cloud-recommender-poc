@@ -213,22 +213,27 @@ export default function Home() {
     async (
       compsToPrice: ArchitectureComponent[],
       assumpToPrice: WorkloadAssumptions,
-      buffer: string
+      buffer: string,
+      regionOverride?: string
     ) => {
       if (compsToPrice.length === 0) return;
       setIsSimulating(true);
+      const effectiveRegion = regionOverride || targetRegion;
 
       try {
         const sim = await simulatePricing(
           compsToPrice,
           assumpToPrice,
-          targetRegion,
+          effectiveRegion,
           buffer
         );
         setCostBreakdown(sim.cost_breakdown);
         setComponents(sim.components);
         setPricingProvenance(sim.pricing_provenance);
         setUnverifiedWarnings(sim.missing_price_warnings);
+        if (sim.assumptions && sim.assumptions.length > 0) {
+          setArchAssumptions(sim.assumptions);
+        }
       } catch (err: unknown) {
         console.warn("Pricing simulation error:", err);
       } finally {
@@ -237,6 +242,19 @@ export default function Home() {
     },
     [targetRegion]
   );
+
+  // 4b. Region Change Handler (Updates Region & Triggers Simulation)
+  const handleTargetRegionChange = (newRegion: string) => {
+    setTargetRegion(newRegion);
+    const updatedAssump: WorkloadAssumptions = {
+      ...assumptions,
+      target_region: newRegion,
+    };
+    setAssumptions(updatedAssump);
+    if (components.length > 0) {
+      triggerSimulation(components, updatedAssump, safetyBufferPct, newRegion);
+    }
+  };
 
   // 5. Presets Selector (Updates Assumptions & Triggers Simulation)
   const handlePresetSelect = (preset: number) => {
@@ -301,7 +319,7 @@ export default function Home() {
     }
   };
 
-  // 7. Component Change Handler (Add / Remove / Quantity)
+  // 7. Component Change Handler (Add / Remove / Quantity / SKU)
   const handleComponentsChange = (updatedComps: ArchitectureComponent[]) => {
     setComponents(updatedComps);
     triggerSimulation(updatedComps, assumptions, safetyBufferPct);
@@ -326,7 +344,7 @@ export default function Home() {
 
   const pricingStatus: "standby" | "verified" | "warning" = !costBreakdown
     ? "standby"
-    : unverifiedWarnings.length > 0
+    : unverifiedWarnings.length > 0 || costBreakdown.is_complete === false
       ? "warning"
       : "verified";
 
@@ -355,7 +373,7 @@ export default function Home() {
           idea={idea}
           setIdea={setIdea}
           targetRegion={targetRegion}
-          setTargetRegion={setTargetRegion}
+          setTargetRegion={handleTargetRegionChange}
           customerPreset={customerPreset}
           setCustomerPreset={setCustomerPreset}
           onAnalyze={handleAnalyze}
