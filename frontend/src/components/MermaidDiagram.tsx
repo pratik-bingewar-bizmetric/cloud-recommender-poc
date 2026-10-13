@@ -808,6 +808,30 @@ export const MermaidDiagram: React.FC<MermaidDiagramProps> = ({
           }}
         />
 
+        {/* On-Canvas Official Provider Identity Watermark Card */}
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-slate-200/90 shadow-xs pointer-events-none select-none">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={providerBrand.dataUri}
+            alt={providerBrand.name}
+            className="w-5 h-5 shrink-0"
+          />
+          <div className="flex flex-col">
+            <span className="text-[11px] font-bold text-slate-900 leading-tight">
+              {providerBrand.name}
+            </span>
+            <span className="text-[9px] font-medium text-slate-500 uppercase tracking-wider">
+              {activeProvider === "azure"
+                ? "Azure Architecture"
+                : activeProvider === "gcp"
+                ? "GCP Architecture"
+                : activeProvider === "aws"
+                ? "AWS Architecture"
+                : "Cloud Blueprint"}
+            </span>
+          </div>
+        </div>
+
         {/* Transform container holding the SVG */}
         <div
           style={{

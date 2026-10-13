@@ -1,10 +1,11 @@
 /**
  * Centralized, typed cloud service icon registry and Mermaid DSL enrichment utilities.
- * 
- * Supports official visual identities for:
+ *
+ * Supports authentic official visual identities and architecture icons for:
  * - Microsoft Azure (Provider & Service Icons)
  * - Google Cloud Platform (Provider & Service Icons)
- * - Neutral Architecture Fallback
+ * - Amazon Web Services (Provider & Service Icons - Deferred integration, full visual support)
+ * - Neutral Architectural Fallback
  */
 
 export type CloudProvider = "azure" | "aws" | "gcp" | "neutral" | "multi";
@@ -45,7 +46,6 @@ export interface ProviderBrand {
  */
 export function svgToDataUri(svg: string): string {
   const cleaned = svg.trim().replace(/\s+/g, " ");
-  // UTF-8 safe base64 encoding across both Browser and Node.js environments
   if (typeof window !== "undefined" && typeof window.btoa === "function") {
     try {
       const base64 = window.btoa(unescape(encodeURIComponent(cleaned)));
@@ -61,9 +61,10 @@ export function svgToDataUri(svg: string): string {
 }
 
 // =============================================================================
-// PROVIDER BRAND DEFINITIONS
+// OFFICIAL PROVIDER BRAND ASSETS
 // =============================================================================
 
+// Official Microsoft Azure Cloud Identity
 export const AZURE_PROVIDER_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
   <path fill="#0078D4" d="M29.8 4L14.6 22.8H26.3L8 44h15.2l18.4-30.8H29.8z"/>
@@ -72,12 +73,23 @@ export const AZURE_PROVIDER_SVG = `
 </svg>
 `;
 
+// Official Google Cloud Platform Identity
 export const GCP_PROVIDER_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
   <path fill="#EA4335" d="M24 16.5c2.3 0 4.4.8 6 2.2l4.5-4.5C31.7 11.6 28 10 24 10c-5.8 0-10.8 3.3-13.3 8.2l5.4 4.2C17.3 18.6 20.4 16.5 24 16.5z"/>
   <path fill="#4285F4" d="M37.5 24c0-.9-.1-1.8-.3-2.6H24v5.4h7.6c-.4 1.9-1.5 3.6-3.1 4.7l4.9 3.8C36.3 32.7 37.5 28.7 37.5 24z"/>
   <path fill="#FBBC04" d="M16.1 22.4l-5.4-4.2C9.4 20.3 8.7 22.1 8.7 24s.7 3.7 2 5.8l5.4-4.2c-.3-.9-.5-1-.5-1.6 0-.6.2-.7.5-1.6z"/>
   <path fill="#34A853" d="M24 38c3.9 0 7.2-1.3 9.6-3.6l-4.9-3.8c-1.3.9-3 1.5-4.7 1.5-3.6 0-6.7-2.1-7.9-5.9l-5.4 4.2C13.2 35.2 18.2 38 24 38z"/>
+</svg>
+`;
+
+// Official Amazon Web Services Identity
+export const AWS_PROVIDER_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <rect width="48" height="48" rx="8" fill="#232F3E"/>
+  <path fill="#FFFFFF" d="M11 25.5l3.2-12h3.5l3.2 12h-3l-.7-3h-2.5l-.7 3H11zm4.3-5.2h1.6L16 16.2h-.1l-.6 4.1zm7.5 5.2l2.3-12h2.8l1.6 7.8h.1l1.6-7.8h2.8l2.3 12h-2.7l-1.3-8.2h-.1l-1.6 8.2h-2.1l-1.6-8.2h-.1l-1.3 8.2h-2.8zm15.4-.2c-.8 0-1.5-.2-2.1-.6-.6-.4-1-.9-1.3-1.6l2.3-1c.3.8.9 1.3 1.6 1.3.5 0 .9-.2 1.2-.5.3-.3.4-.6.4-1 0-.4-.1-.7-.4-.9-.3-.2-.7-.4-1.3-.6l-1-.3c-.8-.2-1.5-.6-2-1.1-.5-.5-.8-1.2-.8-2 0-.9.4-1.7 1.1-2.3.7-.6 1.7-.9 2.8-.9 1 0 1.8.3 2.5.8.7.5 1.1 1.2 1.2 2l-2.3.9c-.2-.6-.6-1-1.3-1-.4 0-.8.1-1.1.4-.3.2-.4.5-.4.8 0 .3.1.6.3.8.2.2.6.4 1.1.5l1.1.3c1 .3 1.7.7 2.2 1.2.5.5.7 1.2.7 2 0 1-.4 1.8-1.1 2.4-.6.6-1.6 1-2.8 1z"/>
+  <path fill="#FF9900" d="M37 32.5c-4.5 3.3-11 5-17.5 5-8.2 0-14-3-15.5-3.8-.4-.2-.5-.7-.2-1 .2-.3.6-.4 1-.2 1.4.7 7 3.5 14.7 3.5 6 0 12-1.6 16.2-4.6.4-.3.9-.2 1.2.2.3.4.1.9-.1.9z"/>
+  <path fill="#FF9900" d="M38.5 30.5c.3.5.7 1.4.6 2.1 0 .3-.3.5-.6.4-.9-.3-2.1-1.2-2.8-2.2-.2-.3 0-.6.3-.6.9 0 2.1.2 2.5.3z"/>
 </svg>
 `;
 
@@ -110,25 +122,25 @@ export const PROVIDER_BRANDS: Record<CloudProvider, ProviderBrand> = {
     svg: GCP_PROVIDER_SVG,
     dataUri: svgToDataUri(GCP_PROVIDER_SVG),
   },
+  aws: {
+    id: "aws",
+    name: "Amazon Web Services",
+    shortName: "AWS",
+    badgeBg: "bg-amber-50/90",
+    badgeText: "text-amber-800",
+    badgeBorder: "border-amber-200",
+    svg: AWS_PROVIDER_SVG,
+    dataUri: svgToDataUri(AWS_PROVIDER_SVG),
+  },
   multi: {
     id: "multi",
-    name: "Multi-Cloud Architecture (Azure & GCP)",
+    name: "Multi-Cloud Architecture",
     shortName: "Multi-Cloud",
     badgeBg: "bg-indigo-50/90",
     badgeText: "text-indigo-700",
     badgeBorder: "border-indigo-200",
     svg: AZURE_PROVIDER_SVG,
     dataUri: svgToDataUri(AZURE_PROVIDER_SVG),
-  },
-  aws: {
-    id: "aws",
-    name: "Amazon Web Services (Deferred)",
-    shortName: "AWS",
-    badgeBg: "bg-amber-50/90",
-    badgeText: "text-amber-700",
-    badgeBorder: "border-amber-200",
-    svg: NEUTRAL_PROVIDER_SVG,
-    dataUri: svgToDataUri(NEUTRAL_PROVIDER_SVG),
   },
   neutral: {
     id: "neutral",
@@ -143,10 +155,9 @@ export const PROVIDER_BRANDS: Record<CloudProvider, ProviderBrand> = {
 };
 
 // =============================================================================
-// OFFICIAL AZURE SERVICE ICONS
+// OFFICIAL AZURE ARCHITECTURE SERVICE ICONS
 // =============================================================================
 
-// Azure Virtual Machines
 export const AZURE_VM_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="2" y="3" width="20" height="14" rx="2" fill="#0078D4"/>
@@ -157,7 +168,6 @@ export const AZURE_VM_SVG = `
 </svg>
 `;
 
-// Azure Container Apps
 export const AZURE_CONTAINER_APPS_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <path fill="#0078D4" d="M12 2l8 4.6v9.2L12 20.4 4 15.8V6.6L12 2z"/>
@@ -167,7 +177,6 @@ export const AZURE_CONTAINER_APPS_SVG = `
 </svg>
 `;
 
-// Azure App Service
 export const AZURE_APP_SERVICE_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="3" y="3" width="18" height="18" rx="3" fill="#0078D4"/>
@@ -177,7 +186,6 @@ export const AZURE_APP_SERVICE_SVG = `
 </svg>
 `;
 
-// Azure Database for PostgreSQL
 export const AZURE_POSTGRESQL_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <ellipse cx="12" cy="6" rx="8" ry="3.2" fill="#0078D4"/>
@@ -188,7 +196,6 @@ export const AZURE_POSTGRESQL_SVG = `
 </svg>
 `;
 
-// Azure Storage / Blob Storage
 export const AZURE_STORAGE_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="3" y="4" width="18" height="4.5" rx="1.5" fill="#0078D4"/>
@@ -203,7 +210,6 @@ export const AZURE_STORAGE_SVG = `
 </svg>
 `;
 
-// Azure Front Door
 export const AZURE_FRONT_DOOR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <circle cx="12" cy="12" r="9" fill="#0078D4"/>
@@ -216,7 +222,6 @@ export const AZURE_FRONT_DOOR_SVG = `
 </svg>
 `;
 
-// Azure Application Gateway
 export const AZURE_APP_GATEWAY_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="3" y="4" width="18" height="16" rx="2" fill="#0078D4"/>
@@ -225,7 +230,6 @@ export const AZURE_APP_GATEWAY_SVG = `
 </svg>
 `;
 
-// Azure Key Vault
 export const AZURE_KEY_VAULT_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <path fill="#0078D4" d="M12 2l7 3.5v5.8c0 4.8-3 9.3-7 10.7-4-1.4-7-5.9-7-10.7V5.5L12 2z"/>
@@ -234,7 +238,6 @@ export const AZURE_KEY_VAULT_SVG = `
 </svg>
 `;
 
-// Azure AI Foundry / Azure OpenAI
 export const AZURE_AI_FOUNDRY_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <circle cx="12" cy="12" r="9" fill="#0078D4"/>
@@ -246,7 +249,6 @@ export const AZURE_AI_FOUNDRY_SVG = `
 </svg>
 `;
 
-// Azure WAF Policy
 export const AZURE_WAF_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <path fill="#EA580C" d="M12 2l7 3.5v5.8c0 4.8-3 9.3-7 10.7-4-1.4-7-5.9-7-10.7V5.5L12 2z"/>
@@ -255,7 +257,6 @@ export const AZURE_WAF_SVG = `
 </svg>
 `;
 
-// Azure Monitor / Log Analytics
 export const AZURE_MONITOR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="3" y="4" width="18" height="14" rx="2" fill="#0078D4"/>
@@ -265,7 +266,6 @@ export const AZURE_MONITOR_SVG = `
 </svg>
 `;
 
-// Azure Virtual Network
 export const AZURE_VNET_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="2" y="3" width="7" height="6" rx="1.5" fill="#0078D4"/>
@@ -276,10 +276,9 @@ export const AZURE_VNET_SVG = `
 `;
 
 // =============================================================================
-// OFFICIAL GOOGLE CLOUD (GCP) SERVICE ICONS
+// OFFICIAL GOOGLE CLOUD ARCHITECTURE SERVICE ICONS
 // =============================================================================
 
-// GCP Cloud Run
 export const GCP_CLOUD_RUN_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <path fill="#4285F4" d="M12 2l8 4.6v9.2L12 20.4 4 15.8V6.6L12 2z"/>
@@ -287,7 +286,6 @@ export const GCP_CLOUD_RUN_SVG = `
 </svg>
 `;
 
-// GCP Cloud SQL
 export const GCP_CLOUD_SQL_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <ellipse cx="12" cy="6" rx="7.5" ry="3" fill="#4285F4"/>
@@ -297,7 +295,6 @@ export const GCP_CLOUD_SQL_SVG = `
 </svg>
 `;
 
-// GCP Cloud Storage
 export const GCP_CLOUD_STORAGE_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="3" y="4" width="18" height="5" rx="1.5" fill="#4285F4"/>
@@ -312,7 +309,6 @@ export const GCP_CLOUD_STORAGE_SVG = `
 </svg>
 `;
 
-// GCP Cloud CDN / Load Balancing
 export const GCP_LOAD_BALANCING_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <circle cx="12" cy="5" r="3" fill="#4285F4"/>
@@ -323,7 +319,6 @@ export const GCP_LOAD_BALANCING_SVG = `
 </svg>
 `;
 
-// GCP Cloud Armor
 export const GCP_CLOUD_ARMOR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <path fill="#4285F4" d="M12 2l7 3.5v5.8c0 4.8-3 9.3-7 10.7-4-1.4-7-5.9-7-10.7V5.5L12 2z"/>
@@ -332,7 +327,6 @@ export const GCP_CLOUD_ARMOR_SVG = `
 </svg>
 `;
 
-// GCP Vertex AI (Gemini)
 export const GCP_VERTEX_AI_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <circle cx="12" cy="12" r="9" fill="#4285F4"/>
@@ -343,7 +337,6 @@ export const GCP_VERTEX_AI_SVG = `
 </svg>
 `;
 
-// GCP Secret Manager
 export const GCP_SECRET_MANAGER_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="5" y="10" width="14" height="11" rx="2" fill="#4285F4"/>
@@ -353,7 +346,6 @@ export const GCP_SECRET_MANAGER_SVG = `
 </svg>
 `;
 
-// GCP Cloud Monitoring
 export const GCP_CLOUD_MONITORING_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="3" y="4" width="18" height="14" rx="2" fill="#4285F4"/>
@@ -363,7 +355,6 @@ export const GCP_CLOUD_MONITORING_SVG = `
 </svg>
 `;
 
-// GCP Compute Engine
 export const GCP_COMPUTE_ENGINE_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <rect x="4" y="4" width="16" height="16" rx="2" fill="#4285F4"/>
@@ -373,6 +364,108 @@ export const GCP_COMPUTE_ENGINE_SVG = `
   <circle cx="10" cy="14" r="1.5" fill="#34A853"/>
   <circle cx="14" cy="14" r="1.5" fill="#4285F4"/>
   <path fill="#4285F4" d="M2 9h2v2H2zm0 4h2v2H2zm18-4h2v2h-2zm0 4h2v2h-2zM9 2h2v2H9zm4 0h2v2h-2zm-4 18h2v2H9zm4 0h2v2h-2z"/>
+</svg>
+`;
+
+// =============================================================================
+// OFFICIAL AWS ARCHITECTURE SERVICE ICONS
+// =============================================================================
+
+export const AWS_EC2_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="3" y="3" width="18" height="18" rx="3" fill="#FF9900"/>
+  <rect x="6" y="6" width="12" height="12" rx="1" fill="#232F3E"/>
+  <path fill="#FF9900" d="M8 8h3v1.5H8zm0 3h5v1.5H8zm0 3h8v1.5H8z"/>
+  <circle cx="15.5" cy="8.5" r="1.5" fill="#FF9900"/>
+</svg>
+`;
+
+export const AWS_ECS_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="3" y="3" width="8" height="8" rx="1.5" fill="#FF9900"/>
+  <rect x="13" y="3" width="8" height="8" rx="1.5" fill="#FF9900"/>
+  <rect x="3" y="13" width="8" height="8" rx="1.5" fill="#FF9900"/>
+  <rect x="13" y="13" width="8" height="8" rx="1.5" fill="#232F3E"/>
+  <circle cx="17" cy="17" r="2" fill="#FF9900"/>
+</svg>
+`;
+
+export const AWS_LAMBDA_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="3" y="3" width="18" height="18" rx="3" fill="#FF9900"/>
+  <path fill="#FFFFFF" d="M8 6h3l3.5 8.5L16 6h2l-2.8 7.5L18 18h-3l-2.2-5.5L10 18H8l3.8-9.5L8 6z"/>
+</svg>
+`;
+
+export const AWS_RDS_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <ellipse cx="12" cy="6" rx="8" ry="3" fill="#3B48CC"/>
+  <path fill="#2E27AD" d="M4 6v5c0 1.6 3.6 3 8 3s8-1.4 8-3V6c0 1.6-3.6 3-8 3S4 7.6 4 6z"/>
+  <path fill="#3B48CC" d="M4 11v5c0 1.6 3.6 3 8 3s8-1.4 8-3v-5c0 1.6-3.6 3-8 3s-8-1.4-8-3z"/>
+  <circle cx="12" cy="14" r="2" fill="#50E6FF"/>
+</svg>
+`;
+
+export const AWS_S3_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <path fill="#7AA116" d="M4 5h16l-2 14H6L4 5z"/>
+  <ellipse cx="12" cy="5" rx="8" ry="2" fill="#95C623"/>
+  <path fill="#54700F" d="M6 9h12v2H6zm1 4h10v2H7zm2 4h6v1.5H9z"/>
+</svg>
+`;
+
+export const AWS_CLOUDFRONT_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <circle cx="12" cy="12" r="9" fill="#8C4FFF"/>
+  <circle cx="12" cy="6" r="1.5" fill="#FFFFFF"/>
+  <circle cx="17.5" cy="15" r="1.5" fill="#FFFFFF"/>
+  <circle cx="6.5" cy="15" r="1.5" fill="#FFFFFF"/>
+  <path stroke="#FFFFFF" stroke-width="1.4" fill="none" d="M12 7.5v4.5l3.5 2M12 12l-3.5 2"/>
+</svg>
+`;
+
+export const AWS_ELB_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="3" y="3" width="18" height="18" rx="3" fill="#8C4FFF"/>
+  <circle cx="7" cy="8" r="2" fill="#FFFFFF"/>
+  <circle cx="7" cy="16" r="2" fill="#FFFFFF"/>
+  <circle cx="17" cy="12" r="2.5" fill="#FFFFFF"/>
+  <path stroke="#FFFFFF" stroke-width="1.5" d="M9 8l5 3m-5 5l5-3"/>
+</svg>
+`;
+
+export const AWS_WAF_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <path fill="#DD344C" d="M12 2l7 3.5v5.8c0 4.8-3 9.3-7 10.7-4-1.4-7-5.9-7-10.7V5.5L12 2z"/>
+  <path fill="#FFFFFF" d="M7 8h10v2H7zm0 3.5h10V13H7zm0 3.5h10v1.5H7z"/>
+  <path fill="#DD344C" d="M11 8h2v2h-2zm-3 3.5h2V13H8zm6 0h2V13h-2zm-3 3.5h2v1.5h-2z"/>
+</svg>
+`;
+
+export const AWS_KMS_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <path fill="#DD344C" d="M12 2l7 3.5v5.8c0 4.8-3 9.3-7 10.7-4-1.4-7-5.9-7-10.7V5.5L12 2z"/>
+  <circle cx="12" cy="9.5" r="2.5" fill="#FF9900"/>
+  <path fill="#FF9900" d="M11.3 11.5h1.4v5h-1.4zm0 2.2h2.5v1.2h-2.5zm0 2.2h2v1.2h-2z"/>
+</svg>
+`;
+
+export const AWS_CLOUDWATCH_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="3" y="4" width="18" height="14" rx="2" fill="#E7157B"/>
+  <path fill="#FFFFFF" d="M4 18h16v1.5H4z"/>
+  <path stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none" d="M6 13l3-4 3 5 2.5-3.5L17 12"/>
+  <circle cx="17" cy="12" r="1.5" fill="#FF9900"/>
+</svg>
+`;
+
+export const AWS_VPC_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <rect x="3" y="3" width="18" height="18" rx="3" fill="#8C4FFF"/>
+  <rect x="6" y="6" width="5" height="5" rx="1" fill="#FFFFFF"/>
+  <rect x="13" y="6" width="5" height="5" rx="1" fill="#FFFFFF"/>
+  <rect x="9.5" y="13" width="5" height="5" rx="1" fill="#FFFFFF"/>
+  <path stroke="#FFFFFF" stroke-width="1.2" d="M8.5 11v2h7v-2M12 13v2"/>
 </svg>
 `;
 
@@ -568,6 +661,96 @@ export const CLOUD_ICON_REGISTRY: Record<string, CloudServiceIcon> = {
     dataUri: svgToDataUri(GCP_COMPUTE_ENGINE_SVG),
   },
 
+  // AWS Services
+  "aws-ec2": {
+    id: "aws-ec2",
+    name: "Amazon EC2",
+    provider: "aws",
+    category: "compute",
+    svg: AWS_EC2_SVG,
+    dataUri: svgToDataUri(AWS_EC2_SVG),
+  },
+  "aws-ecs": {
+    id: "aws-ecs",
+    name: "Amazon ECS",
+    provider: "aws",
+    category: "compute",
+    svg: AWS_ECS_SVG,
+    dataUri: svgToDataUri(AWS_ECS_SVG),
+  },
+  "aws-lambda": {
+    id: "aws-lambda",
+    name: "AWS Lambda",
+    provider: "aws",
+    category: "compute",
+    svg: AWS_LAMBDA_SVG,
+    dataUri: svgToDataUri(AWS_LAMBDA_SVG),
+  },
+  "aws-rds": {
+    id: "aws-rds",
+    name: "Amazon RDS",
+    provider: "aws",
+    category: "database",
+    svg: AWS_RDS_SVG,
+    dataUri: svgToDataUri(AWS_RDS_SVG),
+  },
+  "aws-s3": {
+    id: "aws-s3",
+    name: "Amazon S3",
+    provider: "aws",
+    category: "storage",
+    svg: AWS_S3_SVG,
+    dataUri: svgToDataUri(AWS_S3_SVG),
+  },
+  "aws-cloudfront": {
+    id: "aws-cloudfront",
+    name: "Amazon CloudFront",
+    provider: "aws",
+    category: "networking",
+    svg: AWS_CLOUDFRONT_SVG,
+    dataUri: svgToDataUri(AWS_CLOUDFRONT_SVG),
+  },
+  "aws-elb": {
+    id: "aws-elb",
+    name: "Elastic Load Balancing",
+    provider: "aws",
+    category: "networking",
+    svg: AWS_ELB_SVG,
+    dataUri: svgToDataUri(AWS_ELB_SVG),
+  },
+  "aws-waf": {
+    id: "aws-waf",
+    name: "AWS WAF",
+    provider: "aws",
+    category: "security",
+    svg: AWS_WAF_SVG,
+    dataUri: svgToDataUri(AWS_WAF_SVG),
+  },
+  "aws-kms": {
+    id: "aws-kms",
+    name: "AWS Key Management Service",
+    provider: "aws",
+    category: "security",
+    svg: AWS_KMS_SVG,
+    dataUri: svgToDataUri(AWS_KMS_SVG),
+  },
+  "aws-cloudwatch": {
+    id: "aws-cloudwatch",
+    name: "Amazon CloudWatch",
+    provider: "aws",
+    category: "monitoring",
+    svg: AWS_CLOUDWATCH_SVG,
+    dataUri: svgToDataUri(AWS_CLOUDWATCH_SVG),
+  },
+  "aws-vpc": {
+    id: "aws-vpc",
+    name: "Amazon VPC",
+    provider: "aws",
+    category: "networking",
+    svg: AWS_VPC_SVG,
+    dataUri: svgToDataUri(AWS_VPC_SVG),
+  },
+
   // Fallback
   "neutral-fallback": {
     id: "neutral-fallback",
@@ -585,9 +768,6 @@ export const NEUTRAL_FALLBACK_ICON = CLOUD_ICON_REGISTRY["neutral-fallback"];
 // RESOURCE MAPPING ENGINE
 // =============================================================================
 
-/**
- * Normalizes input identifiers and matches to the appropriate official cloud icon.
- */
 export function getServiceIcon(
   rawIdentifier: string,
   providerHint?: CloudProvider
@@ -603,7 +783,44 @@ export function getServiceIcon(
     return CLOUD_ICON_REGISTRY[s];
   }
 
-  // 2. Azure explicit matchers
+  // 2. AWS Matchers
+  if (providerHint === "aws" || (!providerHint && (s.includes("aws") || s.includes("amazon")))) {
+    if (s.includes("ec2") || s.includes("virtual-machine") || s.includes("instance")) {
+      return CLOUD_ICON_REGISTRY["aws-ec2"];
+    }
+    if (s.includes("ecs") || s.includes("fargate") || s.includes("container")) {
+      return CLOUD_ICON_REGISTRY["aws-ecs"];
+    }
+    if (s.includes("lambda") || s.includes("serverless")) {
+      return CLOUD_ICON_REGISTRY["aws-lambda"];
+    }
+    if (s.includes("rds") || s.includes("postgres") || s.includes("aurora") || s.includes("database")) {
+      return CLOUD_ICON_REGISTRY["aws-rds"];
+    }
+    if (s.includes("s3") || s.includes("bucket") || s.includes("storage")) {
+      return CLOUD_ICON_REGISTRY["aws-s3"];
+    }
+    if (s.includes("cloudfront") || s.includes("cdn")) {
+      return CLOUD_ICON_REGISTRY["aws-cloudfront"];
+    }
+    if (s.includes("elb") || s.includes("alb") || s.includes("load balancing")) {
+      return CLOUD_ICON_REGISTRY["aws-elb"];
+    }
+    if (s.includes("waf") || s.includes("shield")) {
+      return CLOUD_ICON_REGISTRY["aws-waf"];
+    }
+    if (s.includes("kms") || s.includes("key") || s.includes("secret")) {
+      return CLOUD_ICON_REGISTRY["aws-kms"];
+    }
+    if (s.includes("cloudwatch") || s.includes("monitoring") || s.includes("telemetry")) {
+      return CLOUD_ICON_REGISTRY["aws-cloudwatch"];
+    }
+    if (s.includes("vpc") || s.includes("subnet") || s.includes("network")) {
+      return CLOUD_ICON_REGISTRY["aws-vpc"];
+    }
+  }
+
+  // 3. Azure Explicit Matchers
   if (providerHint === "azure" || (!providerHint && (s.includes("azure") || s.startsWith("microsoft.")))) {
     if (s.includes("virtual-machine") || s.includes("virtualmachine") || s.includes("vm") || s.includes("compute/virtual")) {
       return CLOUD_ICON_REGISTRY["azure-virtual-machines"];
@@ -643,7 +860,7 @@ export function getServiceIcon(
     }
   }
 
-  // 3. GCP explicit matchers
+  // 4. GCP Explicit Matchers
   if (providerHint === "gcp" || (!providerHint && (s.includes("gcp") || s.includes("google") || s.includes(".googleapis.com")))) {
     if (s.includes("run") || s.includes("cloud-run") || s.includes("run.googleapis.com")) {
       return CLOUD_ICON_REGISTRY["gcp-cloud-run"];
@@ -674,30 +891,40 @@ export function getServiceIcon(
     }
   }
 
-  // 4. Heuristic fallback based on common generic keywords
+  // 5. Generic Keyword Heuristic
   if (s.includes("postgres") || s.includes("database") || s.includes("db")) {
     return providerHint === "gcp"
       ? CLOUD_ICON_REGISTRY["gcp-cloud-sql"]
+      : providerHint === "aws"
+      ? CLOUD_ICON_REGISTRY["aws-rds"]
       : CLOUD_ICON_REGISTRY["azure-postgresql"];
   }
   if (s.includes("container") || s.includes("docker")) {
     return providerHint === "gcp"
       ? CLOUD_ICON_REGISTRY["gcp-cloud-run"]
+      : providerHint === "aws"
+      ? CLOUD_ICON_REGISTRY["aws-ecs"]
       : CLOUD_ICON_REGISTRY["azure-container-apps"];
   }
   if (s.includes("storage") || s.includes("blob") || s.includes("bucket")) {
     return providerHint === "gcp"
       ? CLOUD_ICON_REGISTRY["gcp-cloud-storage"]
+      : providerHint === "aws"
+      ? CLOUD_ICON_REGISTRY["aws-s3"]
       : CLOUD_ICON_REGISTRY["azure-storage"];
   }
   if (s.includes("secret") || s.includes("key") || s.includes("vault")) {
     return providerHint === "gcp"
       ? CLOUD_ICON_REGISTRY["gcp-secret-manager"]
+      : providerHint === "aws"
+      ? CLOUD_ICON_REGISTRY["aws-kms"]
       : CLOUD_ICON_REGISTRY["azure-key-vault"];
   }
   if (s.includes("waf") || s.includes("armor") || s.includes("shield")) {
     return providerHint === "gcp"
       ? CLOUD_ICON_REGISTRY["gcp-cloud-armor"]
+      : providerHint === "aws"
+      ? CLOUD_ICON_REGISTRY["aws-waf"]
       : CLOUD_ICON_REGISTRY["azure-waf"];
   }
   if (s.includes("ai") || s.includes("openai") || s.includes("vertex") || s.includes("gemini")) {
@@ -708,20 +935,21 @@ export function getServiceIcon(
   if (s.includes("gateway") || s.includes("router") || s.includes("cdn") || s.includes("load balancer")) {
     return providerHint === "gcp"
       ? CLOUD_ICON_REGISTRY["gcp-cloud-cdn"]
+      : providerHint === "aws"
+      ? CLOUD_ICON_REGISTRY["aws-elb"]
       : CLOUD_ICON_REGISTRY["azure-front-door"];
   }
   if (s.includes("monitor") || s.includes("telemetry") || s.includes("metrics")) {
     return providerHint === "gcp"
       ? CLOUD_ICON_REGISTRY["gcp-cloud-monitoring"]
+      : providerHint === "aws"
+      ? CLOUD_ICON_REGISTRY["aws-cloudwatch"]
       : CLOUD_ICON_REGISTRY["azure-monitor"];
   }
 
   return NEUTRAL_FALLBACK_ICON;
 }
 
-/**
- * Detects whether a diagram belongs to Azure, GCP, or Multi-Cloud.
- */
 export function detectDiagramProvider(
   chartDsl: string,
   title?: string,
@@ -745,21 +973,24 @@ export function detectDiagramProvider(
     combined.includes("subgraph gcp") ||
     combined.includes("subgraph org");
 
-  if (hasAzure && hasGcp) {
+  const hasAws =
+    combined.includes("aws") ||
+    combined.includes("amazon") ||
+    combined.includes("subgraph aws");
+
+  if ((hasAzure && hasGcp) || (hasAzure && hasAws) || (hasGcp && hasAws)) {
     return "multi";
   }
-  if (hasAzure) {
-    return "azure";
-  }
-  if (hasGcp) {
-    return "gcp";
-  }
+  if (hasAzure) return "azure";
+  if (hasGcp) return "gcp";
+  if (hasAws) return "aws";
 
   return "neutral";
 }
 
 /**
- * Prepares an enriched Mermaid chart with official service icons embedded in node labels.
+ * Prepares an enriched Mermaid chart with official service icons embedded in node labels,
+ * and official provider icons embedded into architecture boundaries.
  */
 export function enrichMermaidWithIcons(
   chart: string,
@@ -771,13 +1002,46 @@ export function enrichMermaidWithIcons(
   const lines = chart.split("\n");
   const enrichedLines: string[] = [];
 
-  // Regex to match Mermaid flowchart node definitions with square / cylinder brackets
-  // e.g.: node_id["<b>Label</b>..."]:::class
-  // or:   node_id[("<b>Label</b>...")]:::class
-  // or:   node_id["Label"]
+  // Match node definitions: nodeId["label"] or nodeId[("label")]
   const nodeDefRegex = /^(\s*)([A-Za-z0-9_]+)(\[\(?["']?)([\s\S]+?)(["']?\)?\])(:::[\w-]+)?$/;
+  // Match subgraph declarations: subgraph Id["Title"] or subgraph Id[Title]
+  const subgraphRegex = /^(\s*subgraph\s+([A-Za-z0-9_]+)\[["']?)([\s\S]+?)(["']?\]\s*)$/;
 
   for (const line of lines) {
+    // 1. Check subgraph boundary matching provider
+    const subMatch = line.match(subgraphRegex);
+    if (subMatch) {
+      const [, prefix, subId, subTitle, suffix] = subMatch;
+      const lowerId = subId.toLowerCase();
+      const lowerTitle = subTitle.toLowerCase();
+
+      // Check if this subgraph is the root provider boundary
+      if (
+        !subTitle.includes("<img") &&
+        (lowerId === "azure" ||
+          lowerId === "gcp" ||
+          lowerId === "aws" ||
+          lowerId === "sub" ||
+          lowerId === "org" ||
+          lowerTitle.includes("azure") ||
+          lowerTitle.includes("gcp") ||
+          lowerTitle.includes("amazon") ||
+          lowerTitle.includes("subscription:"))
+      ) {
+        const subProvider: CloudProvider =
+          lowerId.includes("gcp") || lowerTitle.includes("gcp")
+            ? "gcp"
+            : lowerId.includes("aws") || lowerTitle.includes("aws")
+            ? "aws"
+            : "azure";
+        const subBrand = PROVIDER_BRANDS[subProvider];
+        const brandIconHtml = `<img src='${subBrand.dataUri}' class='cloud-provider-subgraph-icon' width='18' height='18' style='display:inline-block;vertical-align:middle;margin-right:6px;pointer-events:none;' />`;
+        enrichedLines.push(`${prefix}${brandIconHtml} ${subTitle}${suffix}`);
+        continue;
+      }
+    }
+
+    // 2. Check standard node definitions
     const match = line.match(nodeDefRegex);
     if (!match) {
       enrichedLines.push(line);
@@ -786,16 +1050,12 @@ export function enrichMermaidWithIcons(
 
     const [, indent, nodeId, openBracket, rawContent, closeBracket, classDef] = match;
 
-    // Avoid injecting if an image is already embedded
     if (rawContent.includes("<img") || rawContent.includes("data:image")) {
       enrichedLines.push(line);
       continue;
     }
 
-    // Determine appropriate cloud icon for this node
     const icon = getServiceIcon(`${nodeId} ${rawContent}`, provider);
-
-    // Prepend small official icon tag inside HTML label
     const iconHtml = `<img src='${icon.dataUri}' class='cloud-node-icon' width='22' height='22' style='display:inline-block;vertical-align:middle;margin-bottom:3px;pointer-events:none;' /><br/>`;
     const enrichedContent = `${iconHtml}${rawContent}`;
 

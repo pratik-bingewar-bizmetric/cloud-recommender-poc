@@ -2,10 +2,11 @@
  * Diagram export and clipboard utility for Mermaid architecture diagrams.
  *
  * Implements:
+ * - Fail-proof, 100% XML-compliant standalone SVG export
+ * - Pure SVG vector translation for reliable, error-free Canvas rasterization
  * - High-resolution PNG export (retina scale 2x)
- * - Scalable, self-contained SVG export
- * - Clipboard image copy via ClipboardItem API
- * - Automatic provider and content-aware filename generation
+ * - System clipboard image copying via ClipboardItem API
+ * - Content and provider-aware filename generation
  */
 
 import {
@@ -48,6 +49,8 @@ export function generateExportFilename(
       ? "azure-"
       : provider === "gcp"
       ? "gcp-"
+      : provider === "aws"
+      ? "aws-"
       : provider === "multi"
       ? "multicloud-"
       : "";
@@ -59,6 +62,137 @@ export function generateExportFilename(
 
   const timestamp = new Date().toISOString().slice(0, 10);
   return `${base}-${timestamp}.${extension}`;
+}
+
+/**
+ * Sanitizes raw Mermaid SVG string to ensure 100% strict XML compliance.
+ * Resolves void HTML tags (<br>, <hr>, <img>) that cause XML parsers to abort in new Image().
+ */
+export function sanitizeSvgForXmlCompliance(rawSvg: string): string {
+  let xml = rawSvg;
+
+  // 1. Close unclosed <br> tags
+  xml = xml.replace(/<br(?!\s*\/?>)(\s*[^>]*)>/gi, "<br$1/>");
+  xml = xml.replace(/<br\s*>/gi, "<br/>");
+
+  // 2. Close unclosed <hr> tags
+  xml = xml.replace(/<hr(?!\s*\/?>)(\s*[^>]*)>/gi, "<hr$1/>");
+  xml = xml.replace(/<hr\s*>/gi, "<hr/>");
+
+  // 3. Close unclosed <img> tags
+  xml = xml.replace(/<img(?!\s*\/?>)([^>]*?)>/gi, "<img$1/>");
+
+  // 4. Ensure foreignObject divs declare XHTML namespace
+  xml = xml.replace(
+    /<foreignObject([^>]*)>\s*<div(?!\s+xmlns)/gi,
+    '<foreignObject$1><div xmlns="http://www.w3.org/1999/xhtml"'
+  );
+
+  // 5. Ensure requiredExtensions on foreignObject for strict SVG validators
+  xml = xml.replace(
+    /<foreignObject(?![^>]*requiredExtensions)([^>]*)>/gi,
+    '<foreignObject requiredExtensions="http://www.w3.org/1999/xhtml"$1>'
+  );
+
+  // 6. Ensure image tags have both href and xlink:href
+  xml = xml.replace(
+    /<image\s+([^>]*?)href="([^"]+)"(?!\s+xlink:href)/gi,
+    '<image $1href="$2" xlink:href="$2"'
+  );
+
+  // 7. Ensure bare ampersands in text/styles are XML encoded
+  xml = xml.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;");
+
+  return xml;
+}
+
+/**
+ * Converts HTML labels inside <foreignObject> into standard pure SVG elements (<g>, <image>, <text>, <tspan>).
+ * This completely eliminates browser XML parsing failures and canvas tainting issues when rasterizing.
+ */
+export function convertForeignObjectsToPureSvg(svgElement: Element): void {
+  const foreignObjects = Array.from(svgElement.querySelectorAll("foreignObject"));
+  for (const fo of foreignObjects) {
+    const foW = parseFloat(fo.getAttribute("width") || "0") || 160;
+    const foX = parseFloat(fo.getAttribute("x") || "0") || 0;
+    const foY = parseFloat(fo.getAttribute("y") || "0") || 0;
+
+    // 1. Extract embedded icon if present
+    const img = fo.querySelector("img");
+    const imgSrc = img ? img.getAttribute("src") : null;
+    const imgW = img ? parseFloat(img.getAttribute("width") || "22") || 22 : 0;
+    const imgH = img ? parseFloat(img.getAttribute("height") || "22") || 22 : 0;
+
+    // 2. Extract text lines
+    const containerDiv = fo.querySelector("div") || fo;
+    const clone = containerDiv.cloneNode(true) as Element;
+    clone.querySelectorAll("br").forEach((br) => br.replaceWith("\n"));
+    const rawLines = (clone.textContent || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+
+    // 3. Create pure SVG group replacement
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.setAttribute("class", "pure-svg-label");
+
+    let currentY = foY + 4;
+
+    // Append SVG <image> for icon
+    if (imgSrc) {
+      const svgImg = document.createElementNS("http://www.w3.org/2000/svg", "image");
+      const iconX = foX + (foW - imgW) / 2;
+      svgImg.setAttribute("x", iconX.toString());
+      svgImg.setAttribute("y", currentY.toString());
+      svgImg.setAttribute("width", imgW.toString());
+      svgImg.setAttribute("height", imgH.toString());
+      svgImg.setAttribute("href", imgSrc);
+      svgImg.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", imgSrc);
+      g.appendChild(svgImg);
+      currentY += imgH + 6;
+    }
+
+    // Append SVG <text> and <tspan> lines
+    if (rawLines.length > 0) {
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      const centerX = (foX + foW / 2).toString();
+      text.setAttribute("x", centerX);
+      text.setAttribute("y", currentY.toString());
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute(
+        "font-family",
+        "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+      );
+      text.setAttribute("fill", "#0f172a");
+
+      rawLines.forEach((lineText, idx) => {
+        const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+        tspan.setAttribute("x", centerX);
+        if (idx === 0) {
+          tspan.setAttribute("dy", "11");
+          tspan.setAttribute("font-size", "13");
+          tspan.setAttribute("font-weight", "600");
+          tspan.setAttribute("fill", "#0f172a");
+        } else if (lineText.includes("$") || lineText.toLowerCase().includes("/mo")) {
+          tspan.setAttribute("dy", "15");
+          tspan.setAttribute("font-size", "11.5");
+          tspan.setAttribute("font-weight", "700");
+          tspan.setAttribute("fill", "#1e293b");
+        } else {
+          tspan.setAttribute("dy", "14");
+          tspan.setAttribute("font-size", "11");
+          tspan.setAttribute("font-weight", "400");
+          tspan.setAttribute("fill", "#475569");
+        }
+        tspan.textContent = lineText;
+        text.appendChild(tspan);
+      });
+      g.appendChild(text);
+    }
+
+    // Replace the foreignObject with the pure SVG representation
+    fo.replaceWith(g);
+  }
 }
 
 /**
@@ -77,8 +211,10 @@ export function buildStandaloneExportSvg(
     includeLegend = true,
   } = options;
 
+  const sanitizedSource = sanitizeSvgForXmlCompliance(sourceSvgMarkup);
+
   // 1. Extract viewBox or dimensions from the source SVG
-  const vbMatch = sourceSvgMarkup.match(/viewBox\s*=\s*["']([^"']+)["']/i);
+  const vbMatch = sanitizedSource.match(/viewBox\s*=\s*["']([^"']+)["']/i);
   let origW = 1000;
   let origH = 650;
   let minX = 0;
@@ -93,8 +229,8 @@ export function buildStandaloneExportSvg(
       origH = Math.max(200, parts[3] || 650);
     }
   } else {
-    const wMatch = sourceSvgMarkup.match(/width\s*=\s*["']([0-9.]+)["']/i);
-    const hMatch = sourceSvgMarkup.match(/height\s*=\s*["']([0-9.]+)["']/i);
+    const wMatch = sanitizedSource.match(/width\s*=\s*["']([0-9.]+)["']/i);
+    const hMatch = sanitizedSource.match(/height\s*=\s*["']([0-9.]+)["']/i);
     if (wMatch && wMatch[1]) origW = parseFloat(wMatch[1]) || 1000;
     if (hMatch && hMatch[1]) origH = parseFloat(hMatch[1]) || 650;
   }
@@ -107,12 +243,12 @@ export function buildStandaloneExportSvg(
   const totalH = Math.round(origH + bannerHeight + legendHeight);
 
   // 2. Extract inner content of the source SVG
-  const innerContent = sourceSvgMarkup
+  const innerContent = sanitizedSource
     .replace(/^[\s\S]*?<svg\b[^>]*>/i, "")
     .replace(/<\/svg>[\s\S]*$/i, "");
 
   // Extract <style> blocks from source to preserve styling
-  const styleMatches = sourceSvgMarkup.match(/<style[\s\S]*?<\/style>/gi) || [];
+  const styleMatches = sanitizedSource.match(/<style[\s\S]*?<\/style>/gi) || [];
   const inlinedStyles = styleMatches.join("\n");
 
   const brand = PROVIDER_BRANDS[provider] || PROVIDER_BRANDS.azure;
@@ -123,7 +259,7 @@ export function buildStandaloneExportSvg(
     <!-- Top Branding Banner -->
     <g transform="translate(${paddingX}, 24)">
       <!-- Provider Logo -->
-      <image href="${brand.dataUri}" x="0" y="2" width="36" height="36" />
+      <image href="${brand.dataUri}" xlink:href="${brand.dataUri}" x="0" y="2" width="36" height="36" />
       
       <!-- Titles -->
       <text x="48" y="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="700" fill="#0f172a">
@@ -194,7 +330,6 @@ export function buildStandaloneExportSvg(
   `
     : "";
 
-  // 5. Offset the original graph by (paddingX - minX, bannerHeight - minY)
   const shiftX = paddingX - minX;
   const shiftY = bannerHeight - minY;
 
@@ -203,6 +338,7 @@ export function buildStandaloneExportSvg(
   <defs>
     ${inlinedStyles}
     <style>
+      <![CDATA[
       text {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       }
@@ -219,6 +355,7 @@ export function buildStandaloneExportSvg(
         display: inline-block;
         vertical-align: middle;
       }
+      ]]>
     </style>
   </defs>
 
@@ -270,7 +407,8 @@ export async function downloadSvg(
 }
 
 /**
- * Renders the standalone SVG onto a high-DPI canvas and returns an image Blob.
+ * Robustly renders the standalone SVG onto a high-DPI canvas and returns an image Blob.
+ * Performs browser DOM conversion of foreignObjects to pure SVG elements to prevent rasterization errors.
  */
 export async function rasterizeSvgToBlob(
   sourceSvgMarkup: string,
@@ -279,12 +417,29 @@ export async function rasterizeSvgToBlob(
   const { standaloneSvg, width, height } = buildStandaloneExportSvg(sourceSvgMarkup, options);
   const scale = options.scale || 2; // Retina 2x resolution
 
+  // In browser environments with DOMParser, convert any foreignObjects to pure SVG
+  let finalSvgString = standaloneSvg;
+  if (typeof window !== "undefined" && typeof DOMParser !== "undefined") {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(standaloneSvg, "image/svg+xml");
+      if (!doc.querySelector("parsererror")) {
+        convertForeignObjectsToPureSvg(doc.documentElement);
+        const serializer = new XMLSerializer();
+        finalSvgString = serializer.serializeToString(doc.documentElement);
+      }
+    } catch (e) {
+      console.warn("DOMParser pure SVG conversion warning:", e);
+    }
+  }
+
   return new Promise((resolve, reject) => {
-    const svgBlob = new Blob([standaloneSvg], { type: "image/svg+xml;charset=utf-8" });
+    const svgBlob = new Blob([finalSvgString], { type: "image/svg+xml;charset=utf-8" });
     const svgUrl = URL.createObjectURL(svgBlob);
     const img = new Image();
+    img.crossOrigin = "anonymous";
 
-    img.onload = () => {
+    const onImageReady = () => {
       try {
         const canvas = document.createElement("canvas");
         canvas.width = Math.round(width * scale);
@@ -297,23 +452,22 @@ export async function rasterizeSvgToBlob(
           return;
         }
 
-        // Enable high-quality image smoothing
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         ctx.scale(scale, scale);
 
-        // Fill background
+        // Fill solid background
         ctx.fillStyle = options.backgroundColor || "#ffffff";
         ctx.fillRect(0, 0, width, height);
 
-        // Draw SVG onto canvas
+        // Draw image onto canvas
         ctx.drawImage(img, 0, 0, width, height);
 
         canvas.toBlob(
           (pngBlob) => {
             URL.revokeObjectURL(svgUrl);
-            if (!pngBlob) {
-              reject(new Error("Canvas rasterization returned empty image"));
+            if (!pngBlob || pngBlob.size === 0) {
+              reject(new Error("Canvas rasterization returned empty image blob"));
               return;
             }
             resolve({ blob: pngBlob, width: canvas.width, height: canvas.height });
@@ -327,9 +481,28 @@ export async function rasterizeSvgToBlob(
       }
     };
 
+    img.onload = () => {
+      if ("decode" in img && typeof img.decode === "function") {
+        img
+          .decode()
+          .then(onImageReady)
+          .catch(() => onImageReady());
+      } else {
+        onImageReady();
+      }
+    };
+
     img.onerror = () => {
       URL.revokeObjectURL(svgUrl);
-      reject(new Error("Image element failed to load SVG markup for rasterization"));
+      console.error(
+        "SVG rasterization failed. First 500 chars of SVG payload:",
+        finalSvgString.slice(0, 500)
+      );
+      reject(
+        new Error(
+          `Image element failed to load SVG markup for rasterization (payload size: ${finalSvgString.length} bytes).`
+        )
+      );
     };
 
     img.src = svgUrl;

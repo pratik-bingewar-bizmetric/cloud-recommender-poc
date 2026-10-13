@@ -16,9 +16,10 @@ import {
 import {
   buildStandaloneExportSvg,
   generateExportFilename,
+  sanitizeSvgForXmlCompliance,
 } from '../src/lib/diagramExport';
 
-test('Provider Branding - Azure and GCP have official identities', () => {
+test('Provider Branding - Azure, GCP, and AWS have official identities', () => {
   const azureBrand = PROVIDER_BRANDS.azure;
   assert.ok(azureBrand, 'Azure brand must be defined');
   assert.equal(azureBrand.id, 'azure');
@@ -32,6 +33,13 @@ test('Provider Branding - Azure and GCP have official identities', () => {
   assert.equal(gcpBrand.name, 'Google Cloud Platform');
   assert.ok(gcpBrand.svg.includes('<svg'), 'GCP brand must have valid SVG');
   assert.ok(gcpBrand.dataUri.startsWith('data:image/svg+xml;base64,'), 'GCP brand must have dataUri');
+
+  const awsBrand = PROVIDER_BRANDS.aws;
+  assert.ok(awsBrand, 'AWS brand must be defined');
+  assert.equal(awsBrand.id, 'aws');
+  assert.equal(awsBrand.name, 'Amazon Web Services');
+  assert.ok(awsBrand.svg.includes('<svg'), 'AWS brand must have valid SVG');
+  assert.ok(awsBrand.dataUri.startsWith('data:image/svg+xml;base64,'), 'AWS brand must have dataUri');
 });
 
 test('Service Icon Mapping - Azure core services', () => {
@@ -95,6 +103,33 @@ test('Service Icon Mapping - GCP core services', () => {
   assert.equal(monIcon.id, 'gcp-cloud-monitoring');
 });
 
+test('Service Icon Mapping - AWS core services (reusable catalog)', () => {
+  const ec2Icon = getServiceIcon('aws-ec2');
+  assert.equal(ec2Icon.id, 'aws-ec2');
+  assert.equal(ec2Icon.provider, 'aws');
+
+  const lambdaIcon = getServiceIcon('AWS Lambda', 'aws');
+  assert.equal(lambdaIcon.id, 'aws-lambda');
+
+  const rdsIcon = getServiceIcon('Amazon RDS PostgreSQL', 'aws');
+  assert.equal(rdsIcon.id, 'aws-rds');
+
+  const s3Icon = getServiceIcon('Amazon S3 Bucket', 'aws');
+  assert.equal(s3Icon.id, 'aws-s3');
+
+  const cfIcon = getServiceIcon('CloudFront CDN', 'aws');
+  assert.equal(cfIcon.id, 'aws-cloudfront');
+
+  const wafIcon = getServiceIcon('AWS WAF', 'aws');
+  assert.equal(wafIcon.id, 'aws-waf');
+
+  const cwIcon = getServiceIcon('Amazon CloudWatch', 'aws');
+  assert.equal(cwIcon.id, 'aws-cloudwatch');
+
+  const vpcIcon = getServiceIcon('Amazon VPC', 'aws');
+  assert.equal(vpcIcon.id, 'aws-vpc');
+});
+
 test('Service Icon Mapping - Unknown and empty fallback', () => {
   const unknown1 = getServiceIcon('unsupported-custom-widget-1234');
   assert.equal(unknown1.id, NEUTRAL_FALLBACK_ICON.id);
@@ -110,14 +145,15 @@ test('Service Icon Mapping - Unknown and empty fallback', () => {
 test('Diagram Provider Detection', () => {
   assert.equal(detectDiagramProvider('flowchart TD\n subgraph Azure["Azure Blueprint"]', 'Topology'), 'azure');
   assert.equal(detectDiagramProvider('flowchart TD\n subgraph GCP["GCP Blueprint"]', 'Topology'), 'gcp');
+  assert.equal(detectDiagramProvider('flowchart TD\n subgraph AWS["AWS Blueprint"]', 'Topology'), 'aws');
   assert.equal(detectDiagramProvider('flowchart TD\n subgraph Azure\n end\n subgraph GCP\n end', 'Comparison'), 'multi');
   assert.equal(detectDiagramProvider('graph TD\n A --> B', 'Generic Topology'), 'neutral');
   assert.equal(detectDiagramProvider('graph TD\n A --> B', 'Generic', 'azure'), 'azure');
 });
 
-test('Mermaid DSL Enrichment with Icons', () => {
+test('Mermaid DSL Enrichment with Node and Subgraph Boundary Icons', () => {
   const dsl = `flowchart TD
-  subgraph Azure["Azure Architecture"]
+  subgraph Azure["Azure Architecture Blueprint"]
     AFD["<b>Azure Front Door</b><br/>Standard Profile<br/><b>$40.50/mo</b>"]:::netNode
     ACA["<b>Azure Container Apps</b><br/>0.5 vCPU<br/><b>$32.40/mo</b>"]:::computeNode
     APSQL[("<b>PostgreSQL Flexible Server</b><br/>Standard_D2ds_v4 HA<br/><b>$164.25/mo</b>")]:::dbNode
@@ -127,11 +163,15 @@ test('Mermaid DSL Enrichment with Icons', () => {
 
   const enriched = enrichMermaidWithIcons(dsl, 'azure');
 
-  // Verify icons were injected
-  assert.ok(enriched.includes("class='cloud-node-icon'"), 'Must contain injected icon classes');
+  // Verify node icons were injected
+  assert.ok(enriched.includes("class='cloud-node-icon'"), 'Must contain injected node icon classes');
   assert.ok(enriched.includes(CLOUD_ICON_REGISTRY['azure-front-door'].dataUri), 'Must contain Front Door icon dataUri');
   assert.ok(enriched.includes(CLOUD_ICON_REGISTRY['azure-container-apps'].dataUri), 'Must contain Container Apps icon dataUri');
   assert.ok(enriched.includes(CLOUD_ICON_REGISTRY['azure-postgresql'].dataUri), 'Must contain PostgreSQL icon dataUri');
+
+  // Verify subgraph boundary was enriched with official Azure provider icon
+  assert.ok(enriched.includes("class='cloud-provider-subgraph-icon'"), 'Must contain subgraph provider icon');
+  assert.ok(enriched.includes(PROVIDER_BRANDS.azure.dataUri), 'Must contain Azure provider logo in subgraph header');
 
   // Verify relationships and classes are fully preserved
   assert.ok(enriched.includes('AFD --> ACA'), 'Must preserve AFD --> ACA edge');
@@ -145,6 +185,18 @@ test('Mermaid DSL Enrichment with Icons', () => {
   const count1 = (enriched.match(/cloud-node-icon/g) || []).length;
   const count2 = (doubleEnriched.match(/cloud-node-icon/g) || []).length;
   assert.equal(count1, count2, 'Must not duplicate icons on subsequent passes');
+});
+
+test('XML Sanitizer - Fixes void tags for strict browser XML parsers', () => {
+  const unclosed = `<svg><foreignObject><div><img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4" width="22" height="22"><br><b>Title</b><br>Subtitle<hr></div></foreignObject></svg>`;
+  const sanitized = sanitizeSvgForXmlCompliance(unclosed);
+
+  assert.ok(sanitized.includes('<img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4" width="22" height="22"/>'), '<img> must be self-closed');
+  assert.ok(!sanitized.includes('<br>'), 'Must not have unclosed <br>');
+  assert.ok(sanitized.includes('<br/>'), 'Must replace with <br/>');
+  assert.ok(!sanitized.includes('<hr>'), 'Must not have unclosed <hr>');
+  assert.ok(sanitized.includes('<hr/>'), 'Must replace with <hr/>');
+  assert.ok(sanitized.includes('xmlns="http://www.w3.org/1999/xhtml"'), 'Must declare XHTML namespace');
 });
 
 test('Standalone Export SVG Builder - Structure & Banner & Legend', () => {
@@ -185,7 +237,7 @@ test('Standalone Export SVG Builder - Structure & Banner & Legend', () => {
   assert.ok(height > 500, 'Height must account for banner and legend');
 });
 
-test('Export Filename Generator', () => {
+test('Export Filename Generator - Azure, GCP, and AWS', () => {
   const azName = generateExportFilename('Production Azure Topology', 'azure', 'png');
   assert.ok(azName.startsWith('azure-production-azure-topology-'), 'Azure filename must include prefix and slug');
   assert.ok(azName.endsWith('.png'), 'Must have .png extension');
@@ -193,5 +245,8 @@ test('Export Filename Generator', () => {
   const gcpSvgName = generateExportFilename('GCP Project Hierarchy', 'gcp', 'svg');
   assert.ok(gcpSvgName.startsWith('gcp-project-hierarchy-'), 'GCP filename must include prefix and slug');
   assert.ok(gcpSvgName.endsWith('.svg'), 'Must have .svg extension');
-});
 
+  const awsPngName = generateExportFilename('AWS E-Commerce Blueprint', 'aws', 'png');
+  assert.ok(awsPngName.startsWith('aws-e-commerce-blueprint-'), 'AWS filename must include prefix and slug');
+  assert.ok(awsPngName.endsWith('.png'), 'Must have .png extension');
+});
