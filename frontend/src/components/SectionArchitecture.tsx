@@ -14,6 +14,9 @@ import {
   Network,
   ChevronDown,
   ChevronUp,
+  AlertTriangle,
+  FileText,
+  X,
 } from "lucide-react";
 import { ArchitectureComponent, ServiceCategory } from "@/types";
 import { MermaidDiagram } from "./MermaidDiagram";
@@ -25,15 +28,50 @@ interface SectionArchitectureProps {
   onComponentsChange: (updated: ArchitectureComponent[]) => void;
 }
 
-const CATEGORY_ICONS: Record<ServiceCategory, React.ReactNode> = {
-  compute: <Server className="w-4 h-4 text-blue-600" />,
-  database: <Database className="w-4 h-4 text-emerald-600" />,
-  storage: <HardDrive className="w-4 h-4 text-amber-600" />,
-  networking: <Network className="w-4 h-4 text-cyan-600" />,
-  security: <Shield className="w-4 h-4 text-rose-600" />,
-  monitoring: <Activity className="w-4 h-4 text-indigo-600" />,
-  ai_ml: <Cpu className="w-4 h-4 text-purple-600" />,
-  integration: <Layers className="w-4 h-4 text-slate-600" />,
+const CATEGORY_META: Record<
+  ServiceCategory,
+  { icon: React.ReactNode; badge: string; label: string }
+> = {
+  compute: {
+    icon: <Server className="w-4 h-4 text-blue-600" />,
+    badge: "bg-blue-50 text-blue-700 border-blue-200/80",
+    label: "Compute",
+  },
+  database: {
+    icon: <Database className="w-4 h-4 text-emerald-600" />,
+    badge: "bg-emerald-50 text-emerald-700 border-emerald-200/80",
+    label: "Database",
+  },
+  storage: {
+    icon: <HardDrive className="w-4 h-4 text-amber-600" />,
+    badge: "bg-amber-50 text-amber-800 border-amber-200/80",
+    label: "Storage",
+  },
+  networking: {
+    icon: <Network className="w-4 h-4 text-cyan-600" />,
+    badge: "bg-cyan-50 text-cyan-800 border-cyan-200/80",
+    label: "Networking",
+  },
+  security: {
+    icon: <Shield className="w-4 h-4 text-rose-600" />,
+    badge: "bg-rose-50 text-rose-700 border-rose-200/80",
+    label: "Security",
+  },
+  monitoring: {
+    icon: <Activity className="w-4 h-4 text-indigo-600" />,
+    badge: "bg-indigo-50 text-indigo-700 border-indigo-200/80",
+    label: "Monitoring",
+  },
+  ai_ml: {
+    icon: <Cpu className="w-4 h-4 text-purple-600" />,
+    badge: "bg-purple-50 text-purple-700 border-purple-200/80",
+    label: "AI / ML",
+  },
+  integration: {
+    icon: <Layers className="w-4 h-4 text-slate-600" />,
+    badge: "bg-slate-100 text-slate-700 border-slate-200/80",
+    label: "Integration",
+  },
 };
 
 const AVAILABLE_CATALOG_SERVICES = [
@@ -81,6 +119,14 @@ const AVAILABLE_CATALOG_SERVICES = [
   },
 ];
 
+const CORE_CATEGORIES: ServiceCategory[] = [
+  "compute",
+  "database",
+  "storage",
+  "networking",
+  "ai_ml",
+];
+
 export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
   architectureDescription,
   mermaidDiagram,
@@ -89,6 +135,8 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
 }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
+  const [summaryExpanded, setSummaryExpanded] = useState<boolean>(true);
+  const [activeFilter, setActiveFilter] = useState<"all" | "core" | "supporting">("all");
 
   const handleRemoveComponent = (id: string) => {
     onComponentsChange(components.filter((c) => c.component_id !== id));
@@ -123,92 +171,213 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
     setShowAddModal(false);
   };
 
+  const coreComponents = components.filter((c) => CORE_CATEGORIES.includes(c.category));
+  const supportingComponents = components.filter(
+    (c) => !CORE_CATEGORIES.includes(c.category)
+  );
+
+  const displayedComponents =
+    activeFilter === "core"
+      ? coreComponents
+      : activeFilter === "supporting"
+        ? supportingComponents
+        : components;
+
   return (
-    <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+    <section
+      id="section-architecture"
+      className="scroll-mt-28 bg-white rounded-2xl border border-slate-200/90 shadow-card p-5 sm:p-6 lg:p-7 mb-6 transition-shadow"
+    >
+      {/* Section Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 mb-5 border-b border-slate-100 gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900 flex items-center">
-            <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center mr-2">
-              C
-            </span>
-            Production Azure Architecture
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            AI-synthesized cloud blueprint. Add, remove, or modify components below to test architectural alternatives.
-          </p>
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-200/70 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+            03
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-semibold text-slate-900 tracking-tight">
+                Production Azure Architecture Blueprint
+              </h2>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200/70 text-[11px] font-semibold">
+                {components.length} Services
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              AI-synthesized topology tailored to your requirements. Add, remove, or scale service instances to evaluate alternatives in real time.
+            </p>
+          </div>
         </div>
 
         <button
           type="button"
           onClick={() => setShowAddModal(true)}
-          className="inline-flex items-center px-3.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs transition"
+          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-blue-200 bg-blue-50/70 hover:bg-blue-100/80 text-blue-700 text-xs font-semibold transition self-start sm:self-auto"
         >
-          <Plus className="w-3.5 h-3.5 mr-1 text-blue-600" />
-          Add Service Component
+          <Plus className="w-4 h-4" />
+          <span>Add Azure Service</span>
         </button>
       </div>
 
-      {/* Architecture Narrative */}
+      {/* Collapsible Architecture Narrative Panel */}
       {architectureDescription && (
-        <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs leading-relaxed text-slate-700">
-          <strong className="text-slate-900 font-semibold block mb-1">
-            Architecture Blueprint Summary:
-          </strong>
-          {architectureDescription}
+        <div className="mb-6 rounded-xl border border-slate-200/90 bg-slate-50/70 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setSummaryExpanded((prev) => !prev)}
+            aria-expanded={summaryExpanded}
+            className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-slate-100/60 transition"
+          >
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-900">
+              <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>Architecture Blueprint Narrative &amp; Design Decisions</span>
+            </div>
+            <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 font-medium">
+              <span>{summaryExpanded ? "Collapse" : "Expand"}</span>
+              {summaryExpanded ? (
+                <ChevronUp className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" />
+              )}
+            </span>
+          </button>
+          {summaryExpanded && (
+            <div className="px-4 pb-4 pt-1 text-xs leading-relaxed text-slate-700 border-t border-slate-200/60">
+              {architectureDescription}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Mermaid Architecture Diagram */}
+      {/* Topological Diagram */}
       {mermaidDiagram && (
         <div className="mb-6">
-          <div className="text-xs font-bold text-slate-700 mb-2 flex items-center">
-            <Layers className="w-4 h-4 mr-1 text-blue-600" />
-            Topological Architecture Diagram:
-          </div>
           <MermaidDiagram chart={mermaidDiagram} />
         </div>
       )}
 
-      {/* Recommended Service Components List */}
+      {/* Component Inventory Header & Layer Filter */}
       <div>
-        <div className="text-xs font-bold text-slate-700 mb-3 flex items-center justify-between">
-          <span>Configured Services ({components.length}):</span>
-          <span className="text-[11px] text-slate-400 font-normal">
-            Click component to view security & reliability details
-          </span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3.5">
+          <div className="flex items-center gap-2">
+            <h3 className="text-xs sm:text-sm font-semibold text-slate-900">
+              Service Component Inventory
+            </h3>
+            <span className="text-[11px] text-slate-400">
+              • Select any service to inspect security, HA &amp; scaling controls
+            </span>
+          </div>
+
+          {/* Grouping Filter Tabs (Primary Deployment vs Supporting/Governance) */}
+          <div
+            role="tablist"
+            aria-label="Filter components by architectural layer"
+            className="inline-flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80 text-xs self-start sm:self-auto"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeFilter === "all"}
+              onClick={() => setActiveFilter("all")}
+              className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                activeFilter === "all"
+                  ? "bg-white text-slate-900 shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              All ({components.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeFilter === "core"}
+              onClick={() => setActiveFilter("core")}
+              className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                activeFilter === "core"
+                  ? "bg-white text-blue-700 shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Primary Workload ({coreComponents.length})
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeFilter === "supporting"}
+              onClick={() => setActiveFilter("supporting")}
+              className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                activeFilter === "supporting"
+                  ? "bg-white text-indigo-700 shadow-2xs font-semibold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Security &amp; Ops ({supportingComponents.length})
+            </button>
+          </div>
         </div>
 
-        <div className="space-y-3">
-          {components.map((comp) => {
+        {/* Component Cards List */}
+        <div className="space-y-2.5">
+          {displayedComponents.map((comp) => {
             const isExpanded = expandedId === comp.component_id;
-            const categoryIcon = CATEGORY_ICONS[comp.category] || <Server className="w-4 h-4 text-slate-500" />;
+            const meta = CATEGORY_META[comp.category] || {
+              icon: <Server className="w-4 h-4 text-slate-500" />,
+              badge: "bg-slate-100 text-slate-700 border-slate-200",
+              label: comp.category,
+            };
 
             return (
               <div
                 key={comp.component_id}
-                className="border border-slate-200 rounded-lg bg-white hover:border-slate-300 transition overflow-hidden"
+                className={`border rounded-xl transition-all overflow-hidden ${
+                  isExpanded
+                    ? "border-blue-300 bg-white shadow-card"
+                    : "border-slate-200/90 bg-white hover:border-slate-300"
+                }`}
               >
-                <div className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  {/* Left: Service Identity */}
                   <div
-                    className="flex items-start space-x-3 cursor-pointer flex-grow"
-                    onClick={() => setExpandedId(isExpanded ? null : comp.component_id)}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
+                    onClick={() =>
+                      setExpandedId(isExpanded ? null : comp.component_id)
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setExpandedId(isExpanded ? null : comp.component_id);
+                      }
+                    }}
+                    className="flex items-start gap-3 cursor-pointer flex-grow min-w-0"
                   >
-                    <div className="p-2 rounded-lg bg-slate-100 border border-slate-200 mt-0.5">
-                      {categoryIcon}
+                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 shrink-0 mt-0.5">
+                      {meta.icon}
                     </div>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-sm text-slate-900">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-sm text-slate-900">
                           {comp.service_name}
                         </span>
-                        <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded border border-slate-200">
-                          {comp.category}
+                        <span
+                          className={`text-[10px] uppercase font-mono font-semibold px-2 py-0.5 rounded-md border ${meta.badge}`}
+                        >
+                          {meta.label}
                         </span>
+                        {comp.missing_price_warning && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+                            <AlertTriangle className="w-3 h-3 text-amber-600" />
+                            Pricing Notice
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        <span className="font-medium text-slate-700">{comp.sku_or_tier}</span>
+                      <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-2">
+                        <span className="font-mono font-medium text-slate-700">
+                          {comp.sku_or_tier}
+                        </span>
                         {comp.workload_quantity && comp.workload_unit && (
-                          <span className="ml-2 text-slate-400">
+                          <span className="text-slate-400">
                             • {comp.workload_quantity} {comp.workload_unit}
                           </span>
                         )}
@@ -216,83 +385,133 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
                     </div>
                   </div>
 
-                  {/* Quantity Controls & Cost Display */}
-                  <div className="flex items-center justify-between sm:justify-end space-x-4 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
-                    <div className="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-md border border-slate-200">
-                      <span className="text-[10px] text-slate-500 px-1 font-medium">Qty:</span>
+                  {/* Right: Quantity Stepper, Monthly Cost & Actions */}
+                  <div className="flex items-center justify-between sm:justify-end gap-3 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100 shrink-0">
+                    {/* Quantity Stepper */}
+                    <div className="inline-flex items-center gap-1 bg-slate-100/90 p-1 rounded-lg border border-slate-200/80">
+                      <span className="text-[10px] text-slate-500 px-1.5 font-medium">
+                        Qty
+                      </span>
                       <button
                         type="button"
+                        aria-label={`Decrease quantity for ${comp.service_name}`}
                         onClick={() => handleQuantityChange(comp.component_id, -1)}
-                        className="w-5 h-5 flex items-center justify-center rounded bg-white text-slate-700 hover:bg-slate-200 text-xs font-bold shadow-2xs"
+                        className="w-6 h-6 flex items-center justify-center rounded-md bg-white text-slate-700 hover:bg-slate-200 text-xs font-bold shadow-2xs transition"
                       >
                         -
                       </button>
-                      <span className="text-xs font-mono font-bold px-1.5 text-slate-800">
+                      <span className="text-xs font-mono font-bold px-2 text-slate-900 min-w-[24px] text-center">
                         {comp.quantity}
                       </span>
                       <button
                         type="button"
+                        aria-label={`Increase quantity for ${comp.service_name}`}
                         onClick={() => handleQuantityChange(comp.component_id, 1)}
-                        className="w-5 h-5 flex items-center justify-center rounded bg-white text-slate-700 hover:bg-slate-200 text-xs font-bold shadow-2xs"
+                        className="w-6 h-6 flex items-center justify-center rounded-md bg-white text-slate-700 hover:bg-slate-200 text-xs font-bold shadow-2xs transition"
                       >
                         +
                       </button>
                     </div>
 
-                    <div className="text-right min-w-[85px]">
+                    {/* Monthly Cost */}
+                    <div className="text-right min-w-[92px]">
                       <div className="text-sm font-bold text-slate-900 font-mono">
                         ${parseFloat(comp.monthly_cost).toFixed(2)}
                       </div>
-                      <div className="text-[10px] text-slate-400">per month</div>
+                      <div className="text-[10px] text-slate-400">est. / month</div>
                     </div>
 
+                    {/* Remove Button */}
                     <button
                       type="button"
                       onClick={() => handleRemoveComponent(comp.component_id)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 rounded transition"
+                      aria-label={`Remove ${comp.service_name}`}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
                       title="Remove component"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
 
+                    {/* Expand Details Toggle */}
                     <button
                       type="button"
-                      onClick={() => setExpandedId(isExpanded ? null : comp.component_id)}
-                      className="p-1 text-slate-400 hover:text-slate-600"
+                      aria-label={
+                        isExpanded ? "Collapse component details" : "Expand component details"
+                      }
+                      onClick={() =>
+                        setExpandedId(isExpanded ? null : comp.component_id)
+                      }
+                      className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
                     >
-                      {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                      {isExpanded ? (
+                        <ChevronUp className="w-4 h-4" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4" />
+                      )}
                     </button>
                   </div>
                 </div>
 
-                {/* Expanded Details Drawer */}
+                {/* Expanded Component Details Drawer */}
                 {isExpanded && (
-                  <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 text-xs space-y-2 text-slate-700">
-                    <div>
-                      <strong className="text-slate-900 font-semibold">Architectural Rationale:</strong>{" "}
-                      {comp.rationale}
+                  <div className="px-4 py-3.5 bg-slate-50/80 border-t border-slate-200/70 text-xs space-y-2.5 text-slate-700">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="p-3 rounded-lg bg-white border border-slate-200/80">
+                        <span className="text-[11px] font-semibold text-slate-900 block mb-0.5">
+                          Architectural Rationale
+                        </span>
+                        <p className="text-slate-600 leading-relaxed">{comp.rationale}</p>
+                      </div>
+
+                      {comp.pricing_assumptions && (
+                        <div className="p-3 rounded-lg bg-blue-50/50 border border-blue-200/70">
+                          <span className="text-[11px] font-semibold text-blue-950 block mb-0.5">
+                            Deterministic Pricing Formula
+                          </span>
+                          <p className="text-blue-900 font-mono text-[11px] leading-relaxed">
+                            {comp.pricing_assumptions}
+                          </p>
+                        </div>
+                      )}
                     </div>
-                    {comp.security_considerations && (
-                      <div>
-                        <strong className="text-slate-900 font-semibold">Security Controls:</strong>{" "}
-                        {comp.security_considerations}
-                      </div>
-                    )}
-                    {comp.reliability_considerations && (
-                      <div>
-                        <strong className="text-slate-900 font-semibold">Reliability & HA:</strong>{" "}
-                        {comp.reliability_considerations}
-                      </div>
-                    )}
-                    {comp.scaling_considerations && (
-                      <div>
-                        <strong className="text-slate-900 font-semibold">Scaling Characteristics:</strong>{" "}
-                        {comp.scaling_considerations}
-                      </div>
-                    )}
-                    {comp.pricing_assumptions && (
-                      <div className="text-blue-800 bg-blue-50/70 p-2 rounded border border-blue-100">
-                        <strong className="font-semibold">Pricing Metric:</strong> {comp.pricing_assumptions}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {comp.security_considerations && (
+                        <div className="p-2.5 rounded-lg bg-white border border-slate-200/80">
+                          <span className="text-[11px] font-semibold text-slate-900 block mb-0.5">
+                            Security Controls
+                          </span>
+                          <p className="text-[11px] text-slate-600">
+                            {comp.security_considerations}
+                          </p>
+                        </div>
+                      )}
+                      {comp.reliability_considerations && (
+                        <div className="p-2.5 rounded-lg bg-white border border-slate-200/80">
+                          <span className="text-[11px] font-semibold text-slate-900 block mb-0.5">
+                            Reliability &amp; HA
+                          </span>
+                          <p className="text-[11px] text-slate-600">
+                            {comp.reliability_considerations}
+                          </p>
+                        </div>
+                      )}
+                      {comp.scaling_considerations && (
+                        <div className="p-2.5 rounded-lg bg-white border border-slate-200/80">
+                          <span className="text-[11px] font-semibold text-slate-900 block mb-0.5">
+                            Scaling Behavior
+                          </span>
+                          <p className="text-[11px] text-slate-600">
+                            {comp.scaling_considerations}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {comp.known_risks && comp.known_risks.length > 0 && (
+                      <div className="p-2.5 rounded-lg bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-900">
+                        <span className="font-semibold mr-1.5">Component Risks:</span>
+                        {comp.known_risks.join(" • ")}
                       </div>
                     )}
                   </div>
@@ -303,44 +522,74 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
         </div>
       </div>
 
-      {/* Add Component Modal / Dropdown */}
+      {/* Add Service Component Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-lg w-full p-6">
-            <h3 className="text-base font-bold text-slate-900 mb-1">
-              Add Azure Service Component
-            </h3>
-            <p className="text-xs text-slate-500 mb-4">
-              Select an official Azure service component to attach to this architecture blueprint:
-            </p>
-
-            <div className="space-y-2 max-h-80 overflow-y-auto mb-5">
-              {AVAILABLE_CATALOG_SERVICES.map((item) => (
-                <div
-                  key={item.service_id}
-                  onClick={() => handleAddComponent(item)}
-                  className="p-3 border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 cursor-pointer transition flex items-start justify-between"
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-service-modal-title"
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center z-50 p-4"
+        >
+          <div className="bg-white rounded-2xl shadow-floating border border-slate-200 max-w-lg w-full p-5 sm:p-6">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3
+                  id="add-service-modal-title"
+                  className="text-base font-semibold text-slate-900"
                 >
-                  <div>
-                    <div className="font-semibold text-xs text-slate-900">
-                      {item.service_name}
+                  Add Azure Service Component
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Select a supported Azure service to attach to the architecture and trigger immediate cost recalculation.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                aria-label="Close modal"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-80 overflow-y-auto mb-5 pr-1">
+              {AVAILABLE_CATALOG_SERVICES.map((item) => {
+                const meta = CATEGORY_META[item.category];
+                return (
+                  <button
+                    key={item.service_id}
+                    type="button"
+                    onClick={() => handleAddComponent(item)}
+                    className="w-full text-left p-3.5 border border-slate-200 rounded-xl hover:bg-blue-50/60 hover:border-blue-300 transition flex items-start justify-between gap-3"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <div className="p-2 rounded-lg bg-slate-50 border border-slate-200 shrink-0 mt-0.5">
+                        {meta?.icon}
+                      </div>
+                      <div>
+                        <div className="font-semibold text-xs text-slate-900">
+                          {item.service_name}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          <span className="font-mono text-slate-700">{item.sku_or_tier}</span> •{" "}
+                          {item.rationale}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-[11px] text-slate-500 mt-0.5">
-                      {item.sku_or_tier} • {item.rationale}
-                    </div>
-                  </div>
-                  <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 bg-slate-100 rounded text-slate-600">
-                    {item.category}
-                  </span>
-                </div>
-              ))}
+                    <span className="text-[10px] uppercase font-mono font-semibold px-2 py-0.5 bg-slate-100 rounded-md text-slate-700 border border-slate-200 shrink-0">
+                      {item.category}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
 
             <div className="flex justify-end">
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
-                className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
+                className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
               >
                 Cancel
               </button>
@@ -351,4 +600,3 @@ export const SectionArchitecture: React.FC<SectionArchitectureProps> = ({
     </section>
   );
 };
-

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { FoundryConfigAlert } from "@/components/FoundryConfigAlert";
 import { SectionRequirements } from "@/components/SectionRequirements";
@@ -22,10 +22,12 @@ import {
 } from "@/types";
 import {
   analyzeRequirements,
+  checkBackendHealth,
   generateArchitecture,
   simulatePricing,
   ApiError,
 } from "@/lib/api";
+import { Calculator, Layers, Sparkles, Loader2, ArrowDown } from "lucide-react";
 
 const DEFAULT_ASSUMPTIONS: WorkloadAssumptions = {
   customer_count: 10000,
@@ -43,37 +45,72 @@ const DEFAULT_ASSUMPTIONS: WorkloadAssumptions = {
 };
 
 export default function Home() {
-  // Section A State
+  // Backend Connectivity State
+  const [backendStatus, setBackendStatus] = useState<
+    "checking" | "online" | "offline"
+  >("checking");
+
+  // Section 01 State: Requirements & Clarifications
   const [idea, setIdea] = useState<string>(
     "I want a customer management platform for 10,000 customers with user authentication, a web frontend, REST APIs, PostgreSQL, document storage, monitoring, high availability, and AI-powered customer support."
   );
   const [targetRegion, setTargetRegion] = useState<string>("eastus");
   const [customerPreset, setCustomerPreset] = useState<number>(10000);
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
-  const [workloadProfile, setWorkloadProfile] = useState<WorkloadProfile | null>(null);
-  const [clarifyingQuestions, setClarifyingQuestions] = useState<ClarifyingQuestion[]>([]);
-  const [clarifyingAnswers, setClarifyingAnswers] = useState<Record<string, string>>({});
+  const [workloadProfile, setWorkloadProfile] =
+    useState<WorkloadProfile | null>(null);
+  const [clarifyingQuestions, setClarifyingQuestions] = useState<
+    ClarifyingQuestion[]
+  >([]);
+  const [clarifyingAnswers, setClarifyingAnswers] = useState<
+    Record<string, string>
+  >({});
   const [missingRequirements, setMissingRequirements] = useState<string[]>([]);
   const [foundryError, setFoundryError] = useState<ApiErrorDetail | null>(null);
 
-  // Section B State
-  const [assumptions, setAssumptions] = useState<WorkloadAssumptions>(DEFAULT_ASSUMPTIONS);
+  // Section 02 State: Workload Sizing
+  const [assumptions, setAssumptions] =
+    useState<WorkloadAssumptions>(DEFAULT_ASSUMPTIONS);
   const [safetyBufferPct, setSafetyBufferPct] = useState<string>("15.00");
 
-  // Section C State
+  // Section 03 State: Architecture Blueprint
   const [isGeneratingArch, setIsGeneratingArch] = useState<boolean>(false);
-  const [architectureDescription, setArchitectureDescription] = useState<string>("");
+  const [architectureDescription, setArchitectureDescription] =
+    useState<string>("");
   const [mermaidDiagram, setMermaidDiagram] = useState<string>("");
   const [components, setComponents] = useState<ArchitectureComponent[]>([]);
 
-  // Section D & E State
-  const [costBreakdown, setCostBreakdown] = useState<CostBreakdown | null>(null);
-  const [pricingProvenance, setPricingProvenance] = useState<PricingReference[]>([]);
+  // Section 04 & 05 State: Cost Simulator & Assessment
+  const [costBreakdown, setCostBreakdown] = useState<CostBreakdown | null>(
+    null
+  );
+  const [pricingProvenance, setPricingProvenance] = useState<
+    PricingReference[]
+  >([]);
   const [tradeOffs, setTradeOffs] = useState<TradeOffAssessment | null>(null);
   const [archAssumptions, setArchAssumptions] = useState<string[]>([]);
   const [archLimitations, setArchLimitations] = useState<string[]>([]);
   const [unverifiedWarnings, setUnverifiedWarnings] = useState<string[]>([]);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
+
+  // Check real backend health on mount
+  useEffect(() => {
+    let active = true;
+    checkBackendHealth()
+      .then((res) => {
+        if (active) {
+          setBackendStatus(res.status === "healthy" || res.status === "ok" ? "online" : "online");
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setBackendStatus("offline");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // 1. Analyze Requirements Handler
   const handleAnalyze = async () => {
@@ -81,12 +118,12 @@ export default function Home() {
     setFoundryError(null);
     try {
       const res = await analyzeRequirements(idea, targetRegion, customerPreset);
+      setBackendStatus("online");
       setWorkloadProfile(res.workload_profile);
       setClarifyingQuestions(res.clarifying_questions);
       setAssumptions(res.workload_assumptions);
       setMissingRequirements(res.missing_critical_requirements);
 
-      // Pre-fill default answers
       const initialAnswers: Record<string, string> = {};
       res.clarifying_questions.forEach((q) => {
         if (q.default_answer) {
@@ -100,7 +137,12 @@ export default function Home() {
       if (err instanceof ApiError) {
         setFoundryError(err.detail);
       } else {
-        setFoundryError({ message: err instanceof Error ? err.message : "Failed to analyze requirements." });
+        setFoundryError({
+          message:
+            err instanceof Error
+              ? err.message
+              : "Failed to analyze requirements.",
+        });
       }
     } finally {
       setIsAnalyzing(false);
@@ -121,12 +163,12 @@ export default function Home() {
     setIsGeneratingArch(true);
     setFoundryError(null);
 
-    const answersList: ClarifyingAnswer[] = Object.entries(clarifyingAnswers).map(
-      ([qId, ans]) => ({
-        question_id: qId,
-        selected_option: ans,
-      })
-    );
+    const answersList: ClarifyingAnswer[] = Object.entries(
+      clarifyingAnswers
+    ).map(([qId, ans]) => ({
+      question_id: qId,
+      selected_option: ans,
+    }));
 
     try {
       const report: RecommendationReport = await generateArchitecture(
@@ -136,6 +178,7 @@ export default function Home() {
         targetRegion
       );
 
+      setBackendStatus("online");
       setArchitectureDescription(report.architecture_description);
       setMermaidDiagram(report.mermaid_diagram);
       setComponents(report.components);
@@ -153,7 +196,12 @@ export default function Home() {
       if (err instanceof ApiError) {
         setFoundryError(err.detail);
       } else {
-        setFoundryError({ message: err instanceof Error ? err.message : "Architecture generation failed." });
+        setFoundryError({
+          message:
+            err instanceof Error
+              ? err.message
+              : "Architecture generation failed.",
+        });
       }
     } finally {
       setIsGeneratingArch(false);
@@ -171,7 +219,12 @@ export default function Home() {
       setIsSimulating(true);
 
       try {
-        const sim = await simulatePricing(compsToPrice, assumpToPrice, targetRegion, buffer);
+        const sim = await simulatePricing(
+          compsToPrice,
+          assumpToPrice,
+          targetRegion,
+          buffer
+        );
         setCostBreakdown(sim.cost_breakdown);
         setComponents(sim.components);
         setPricingProvenance(sim.pricing_provenance);
@@ -262,18 +315,42 @@ export default function Home() {
     }
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
-      <Header />
+  // Derived Telemetry States for Header
+  const aiStatus: "standby" | "busy" | "verified" | "error" = foundryError
+    ? "error"
+    : isAnalyzing || isGeneratingArch
+      ? "busy"
+      : workloadProfile
+        ? "verified"
+        : "standby";
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        {/* Setup / Config Alert (HTTP 503) */}
+  const pricingStatus: "standby" | "verified" | "warning" = !costBreakdown
+    ? "standby"
+    : unverifiedWarnings.length > 0
+      ? "warning"
+      : "verified";
+
+  return (
+    <div className="min-h-screen text-slate-900 pb-24">
+      <Header
+        backendStatus={backendStatus}
+        aiStatus={aiStatus}
+        pricingStatus={pricingStatus}
+        hasProfile={!!workloadProfile}
+        hasArchitecture={components.length > 0}
+        hasCost={!!costBreakdown}
+        hasAssessment={!!tradeOffs}
+        monthlyTotal={costBreakdown?.total_monthly || null}
+      />
+
+      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+        {/* Setup / Config Alert (HTTP 503 / API Errors) */}
         <FoundryConfigAlert
           errorDetail={foundryError}
           onDismiss={() => setFoundryError(null)}
         />
 
-        {/* Section A: Idea & Requirements */}
+        {/* Step 01: Idea & Requirements Ingestion */}
         <SectionRequirements
           idea={idea}
           setIdea={setIdea}
@@ -292,7 +369,7 @@ export default function Home() {
           isGeneratingArch={isGeneratingArch}
         />
 
-        {/* Section B: Sizing & Assumptions Controls */}
+        {/* Step 02: Workload Sizing & FinOps Assumptions */}
         <SectionAssumptions
           assumptions={assumptions}
           onAssumptionsChange={handleAssumptionsChange}
@@ -301,7 +378,26 @@ export default function Home() {
           onSafetyBufferChange={handleSafetyBufferChange}
         />
 
-        {/* Section C: Production Architecture View */}
+        {/* Guidance Empty State before Architecture Synthesis */}
+        {components.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-8 text-center">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200/80 text-blue-600 flex items-center justify-center mx-auto mb-3">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-semibold text-slate-900">
+              {workloadProfile
+                ? "Ready to Synthesize Production Azure Architecture"
+                : "Architecture & Cost Workspace Standby"}
+            </h3>
+            <p className="text-xs text-slate-500 max-w-xl mx-auto mt-1 leading-relaxed">
+              {workloadProfile
+                ? "Review the extracted profile and clarifying questions in Step 01, then click 'Generate Production Architecture' to build the topological blueprint, BOM, and 5-pillar trade-off scorecard."
+                : "Submit your workload specification in Step 01 to extract structured requirements, answer clarifying questions, and generate a deterministic Azure cost simulation."}
+            </p>
+          </div>
+        )}
+
+        {/* Step 03: Production Azure Architecture View */}
         {components.length > 0 && (
           <SectionArchitecture
             architectureDescription={architectureDescription}
@@ -311,7 +407,7 @@ export default function Home() {
           />
         )}
 
-        {/* Section D: Deterministic Cost Simulator */}
+        {/* Step 04: Deterministic Cost Simulator */}
         {costBreakdown && (
           <SectionCostSimulator
             costBreakdown={costBreakdown}
@@ -322,7 +418,7 @@ export default function Home() {
           />
         )}
 
-        {/* Section E: Architecture Analysis & Trade-Offs */}
+        {/* Step 05: Architecture Analysis & 5-Pillar Trade-Offs */}
         {tradeOffs && (
           <SectionTradeOffs
             tradeOffs={tradeOffs}
@@ -331,6 +427,75 @@ export default function Home() {
           />
         )}
       </main>
+
+      {/* Floating Glassmorphic FinOps Summary Dock (Visible when Cost Breakdown is active) */}
+      {costBreakdown && (
+        <div className="fixed bottom-4 inset-x-0 z-40 px-4 pointer-events-none">
+          <div className="max-w-4xl mx-auto glass-floating border border-slate-200/90 rounded-2xl shadow-floating px-4 py-2.5 pointer-events-auto flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+                {isSimulating ? (
+                  <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                ) : (
+                  <Calculator className="w-4 h-4 text-blue-600" />
+                )}
+                <span>Live Estimate</span>
+              </span>
+              <span className="hidden sm:inline-flex items-center gap-1 text-slate-500">
+                <Layers className="w-3.5 h-3.5 text-slate-400" />
+                <span>{components.length} services</span>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-4 sm:gap-6 font-mono">
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase font-sans block">
+                  Monthly
+                </span>
+                <span className="font-bold text-slate-900 text-sm">
+                  ${parseFloat(costBreakdown.total_monthly).toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+              <div className="hidden sm:block">
+                <span className="text-[10px] text-slate-400 uppercase font-sans block">
+                  5-Month
+                </span>
+                <span className="font-semibold text-slate-700 text-xs">
+                  ${parseFloat(costBreakdown.total_five_month).toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 uppercase font-sans block">
+                  Annual
+                </span>
+                <span className="font-semibold text-emerald-700 text-xs">
+                  ${parseFloat(costBreakdown.total_annual).toLocaleString("en-US", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById("section-cost");
+                  if (el) el.scrollIntoView({ behavior: "smooth" });
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-sans font-semibold text-[11px] transition"
+              >
+                <span>BOM</span>
+                <ArrowDown className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,6 +8,9 @@ import {
   ExternalLink,
   Layers,
   Zap,
+  CheckCircle2,
+  AlertTriangle,
+  Database,
 } from "lucide-react";
 import { ArchitectureComponent, CostBreakdown, PricingReference } from "@/types";
 
@@ -19,6 +22,12 @@ interface SectionCostSimulatorProps {
   isSimulating: boolean;
 }
 
+const formatUsd = (val: number) =>
+  val.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
 export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
   costBreakdown,
   components,
@@ -28,50 +37,159 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
 }) => {
   if (!costBreakdown) return null;
 
+  const subtotal = parseFloat(costBreakdown.subtotal) || 0;
+  const bufferAmount = parseFloat(costBreakdown.safety_buffer_amount) || 0;
   const monthlyTotal = parseFloat(costBreakdown.total_monthly) || 0;
   const fiveMonthTotal = parseFloat(costBreakdown.total_five_month) || 0;
   const annualTotal = parseFloat(costBreakdown.total_annual) || 0;
 
+  const hasWarnings = unverifiedWarnings && unverifiedWarnings.length > 0;
+
   const categories = [
-    { label: "Compute", amount: parseFloat(costBreakdown.compute) || 0, color: "bg-blue-500" },
-    { label: "Database", amount: parseFloat(costBreakdown.database) || 0, color: "bg-emerald-500" },
-    { label: "Storage", amount: parseFloat(costBreakdown.storage) || 0, color: "bg-amber-500" },
-    { label: "AI Models", amount: parseFloat(costBreakdown.ai) || 0, color: "bg-purple-500" },
-    { label: "Networking", amount: parseFloat(costBreakdown.networking) || 0, color: "bg-cyan-500" },
-    { label: "Safety Buffer", amount: parseFloat(costBreakdown.safety_buffer_amount) || 0, color: "bg-indigo-400" },
+    {
+      label: "Compute",
+      amount: parseFloat(costBreakdown.compute) || 0,
+      barColor: "bg-blue-600",
+      dotColor: "bg-blue-600",
+    },
+    {
+      label: "Database",
+      amount: parseFloat(costBreakdown.database) || 0,
+      barColor: "bg-emerald-600",
+      dotColor: "bg-emerald-600",
+    },
+    {
+      label: "Storage",
+      amount: parseFloat(costBreakdown.storage) || 0,
+      barColor: "bg-amber-500",
+      dotColor: "bg-amber-500",
+    },
+    {
+      label: "AI / ML",
+      amount: parseFloat(costBreakdown.ai) || 0,
+      barColor: "bg-purple-600",
+      dotColor: "bg-purple-600",
+    },
+    {
+      label: "Networking",
+      amount: parseFloat(costBreakdown.networking) || 0,
+      barColor: "bg-cyan-500",
+      dotColor: "bg-cyan-500",
+    },
+    {
+      label: "Other / Ops",
+      amount: parseFloat(costBreakdown.other) || 0,
+      barColor: "bg-slate-500",
+      dotColor: "bg-slate-500",
+    },
+    {
+      label: "Safety Buffer",
+      amount: bufferAmount,
+      barColor: "bg-indigo-400",
+      dotColor: "bg-indigo-400",
+    },
   ];
 
+  const getProvenanceBadge = (
+    prov: PricingReference | undefined,
+    hasWarning: boolean
+  ) => {
+    if (hasWarning) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-semibold">
+          <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+          Unverified / Unavailable
+        </span>
+      );
+    }
+    const notes = (prov?.pricing_tier_or_notes || "").toLowerCase();
+    if (notes.includes("benchmark") || notes.includes("fallback")) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-semibold">
+          <Database className="w-3 h-3 text-indigo-600 shrink-0" />
+          Benchmark Reference
+        </span>
+      );
+    }
+    if (prov) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
+          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+          Verified Retail Rate
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-semibold">
+        Catalog Rate
+      </span>
+    );
+  };
+
   return (
-    <section className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+    <section
+      id="section-cost"
+      className="scroll-mt-28 bg-white rounded-2xl border border-slate-200/90 shadow-card p-5 sm:p-6 lg:p-7 mb-6 transition-shadow"
+    >
+      {/* Header Row */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 mb-5 border-b border-slate-100 gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-slate-900 flex items-center">
-            <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center mr-2">
-              D
-            </span>
-            Deterministic Cost Simulator
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Transparent pricing based on official Azure Retail Prices API rates. Recalculates immediately with zero LLM dependency.
-          </p>
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-200/70 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+            04
+          </div>
+          <div>
+            <div className="flex items-center flex-wrap gap-2">
+              <h2 className="text-base sm:text-lg font-semibold text-slate-900 tracking-tight">
+                Deterministic FinOps Cost Simulator
+              </h2>
+              <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold">
+                Currency: USD ($)
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Decimal-exact calculations backed by Azure Retail Prices API meters. Zero generative price estimation.
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-semibold border border-blue-200">
-            <Zap className="w-3.5 h-3.5 mr-1 text-blue-600 animate-pulse" />
-            {isSimulating ? "Recalculating..." : "Real-Time Deterministic Engine"}
+        {/* Engine & Verification Status */}
+        <div className="flex flex-wrap items-center gap-2">
+          {hasWarnings ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-medium">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+              <span>Partial Pricing Warnings</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span>All Meters Verified</span>
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold">
+            <Zap
+              className={`w-3.5 h-3.5 text-blue-600 ${
+                isSimulating ? "animate-spin" : ""
+              }`}
+            />
+            <span>{isSimulating ? "Recalculating..." : "Deterministic Engine"}</span>
           </span>
         </div>
       </div>
 
-      {/* Unverified Price Warnings */}
-      {unverifiedWarnings && unverifiedWarnings.length > 0 && (
-        <div className="mb-5 p-3.5 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-900">
-          <div className="font-bold flex items-center mb-1">
-            <ShieldAlert className="w-4 h-4 mr-1.5 text-amber-600" />
-            Pricing Notice:
+      {/* Unverified Price Warnings Banner */}
+      {hasWarnings && (
+        <div
+          role="alert"
+          className="mb-5 p-4 bg-amber-50/90 border border-amber-300 rounded-xl text-xs text-amber-950"
+        >
+          <div className="font-semibold flex items-center gap-1.5 mb-1.5">
+            <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>Unverified or Missing SKU Rate Notice</span>
           </div>
-          <ul className="list-disc list-inside space-y-0.5 text-amber-800">
+          <p className="text-[11px] text-amber-800 mb-2">
+            The following components did not match an active live retail meter and require manual rate verification:
+          </p>
+          <ul className="list-disc list-inside space-y-1 text-amber-900 font-medium">
             {unverifiedWarnings.map((w, idx) => (
               <li key={idx}>{w}</li>
             ))}
@@ -79,186 +197,330 @@ export const SectionCostSimulator: React.FC<SectionCostSimulatorProps> = ({
         </div>
       )}
 
-      {/* Projections Headline Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        {/* Monthly Projection */}
-        <div className="p-4 bg-gradient-to-br from-blue-50/70 to-white rounded-xl border border-blue-200 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-blue-700 font-semibold mb-1">
-            <span>Estimated Monthly Cost</span>
-            <DollarSign className="w-4 h-4 text-blue-600" />
+      {/* Cost Overview Projection Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
+        {/* 1. Service Subtotal + Buffer Breakdown */}
+        <div className="p-4 rounded-xl bg-slate-50/90 border border-slate-200/90 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-slate-600 font-semibold mb-1">
+              <span>Service Subtotal (Base BOM)</span>
+              <Layers className="w-4 h-4 text-slate-500" />
+            </div>
+            <div className="text-xl font-bold text-slate-900 font-mono tracking-tight">
+              ${formatUsd(subtotal)}
+            </div>
           </div>
-          <div className="text-2xl font-extrabold text-slate-900 font-mono tracking-tight">
-            ${monthlyTotal.toFixed(2)}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1">
-            Subtotal: ${parseFloat(costBreakdown.subtotal).toFixed(2)} + Buffer: ${parseFloat(costBreakdown.safety_buffer_amount).toFixed(2)}
-          </div>
-        </div>
-
-        {/* 5-Month Projection */}
-        <div className="p-4 bg-gradient-to-br from-indigo-50/70 to-white rounded-xl border border-indigo-200 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-indigo-700 font-semibold mb-1">
-            <span>5-Month Projected Cost</span>
-            <Calendar className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div className="text-2xl font-extrabold text-slate-900 font-mono tracking-tight">
-            ${fiveMonthTotal.toFixed(2)}
-          </div>
-          <div className="text-[11px] text-slate-500 mt-1">
-            Runway projection for initial deployment & pilot phases
+          <div className="mt-2 pt-2 border-t border-slate-200/80 flex items-center justify-between text-[11px]">
+            <span className="text-slate-500 font-medium">+ FinOps Safety Buffer:</span>
+            <span className="font-mono font-semibold text-indigo-700">
+              +${formatUsd(bufferAmount)}
+            </span>
           </div>
         </div>
 
-        {/* Annual Projection */}
-        <div className="p-4 bg-gradient-to-br from-emerald-50/70 to-white rounded-xl border border-emerald-200 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-emerald-700 font-semibold mb-1">
-            <span>Annual Projected Spend</span>
-            <Calendar className="w-4 h-4 text-emerald-600" />
+        {/* 2. Estimated Monthly Total */}
+        <div className="p-4 rounded-xl bg-blue-50/50 border border-blue-200/90 shadow-2xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-blue-700 font-semibold mb-1">
+              <span>Estimated Monthly Total</span>
+              <DollarSign className="w-4 h-4 text-blue-600" />
+            </div>
+            <div className="text-2xl font-bold text-slate-900 font-mono tracking-tight transition-all">
+              ${formatUsd(monthlyTotal)}
+            </div>
           </div>
-          <div className="text-2xl font-extrabold text-slate-900 font-mono tracking-tight">
-            ${annualTotal.toFixed(2)}
+          <div className="mt-2 pt-2 border-t border-blue-200/60 text-[11px] text-slate-600">
+            Includes base BOM + contingency buffer
           </div>
-          <div className="text-[11px] text-slate-500 mt-1">
-            12-month annualized projection (excluding reservation discounts)
+        </div>
+
+        {/* 3. 5-Month Projected Cost */}
+        <div className="p-4 rounded-xl bg-slate-50/90 border border-slate-200/90 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-indigo-700 font-semibold mb-1">
+              <span>5-Month Projected Spend</span>
+              <Calendar className="w-4 h-4 text-indigo-600" />
+            </div>
+            <div className="text-2xl font-bold text-slate-900 font-mono tracking-tight">
+              ${formatUsd(fiveMonthTotal)}
+            </div>
+          </div>
+          <div className="mt-2 pt-2 border-t border-slate-200/80 text-[11px] text-slate-500">
+            5 × monthly run-rate projection
+          </div>
+        </div>
+
+        {/* 4. Annual Projected Spend */}
+        <div className="p-4 rounded-xl bg-slate-50/90 border border-slate-200/90 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between text-xs text-emerald-700 font-semibold mb-1">
+              <span>Annual Projected Spend</span>
+              <Calendar className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div className="text-2xl font-bold text-slate-900 font-mono tracking-tight">
+              ${formatUsd(annualTotal)}
+            </div>
+          </div>
+          <div className="mt-2 pt-2 border-t border-slate-200/80 text-[11px] text-slate-500">
+            12-month PAYG projection (pre-RI/Savings Plan)
           </div>
         </div>
       </div>
 
-      {/* Cost Breakdown Visual Bar */}
-      <div className="mb-6">
-        <div className="text-xs font-bold text-slate-700 mb-2">
-          Cost Distribution by Category:
+      {/* Category Cost Distribution Visualization */}
+      <div className="mb-6 p-4 rounded-xl bg-slate-50/70 border border-slate-200/80">
+        <div className="flex items-center justify-between text-xs font-semibold text-slate-800 mb-2.5">
+          <span>Monthly Spend Distribution by Architectural Category</span>
+          <span className="font-mono text-slate-500">
+            100% = ${formatUsd(monthlyTotal)}
+          </span>
         </div>
-        <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden flex shadow-inner">
+
+        {/* Proportional Bar */}
+        <div className="h-3 w-full bg-slate-200/80 rounded-full overflow-hidden flex">
           {categories.map(
             (cat, idx) =>
-              cat.amount > 0 && (
+              cat.amount > 0 &&
+              monthlyTotal > 0 && (
                 <div
                   key={idx}
-                  className={`${cat.color} h-full transition-all duration-300`}
+                  className={`${cat.barColor} h-full transition-all duration-200`}
                   style={{ width: `${(cat.amount / monthlyTotal) * 100}%` }}
-                  title={`${cat.label}: $${cat.amount.toFixed(2)}`}
+                  title={`${cat.label}: $${formatUsd(cat.amount)}`}
                 />
               )
           )}
         </div>
 
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2.5 text-[11px]">
-          {categories.map(
-            (cat, idx) =>
-              cat.amount > 0 && (
-                <div key={idx} className="flex items-center space-x-1.5">
-                  <span className={`w-2.5 h-2.5 rounded-full ${cat.color}`} />
-                  <span className="text-slate-600 font-medium">{cat.label}:</span>
-                  <span className="font-bold text-slate-800 font-mono">
-                    ${cat.amount.toFixed(2)}
-                  </span>
+        {/* Category Legend & Breakdown */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 mt-3">
+          {categories
+            .filter((c) => c.amount > 0)
+            .map((cat, idx) => {
+              const pct =
+                monthlyTotal > 0
+                  ? ((cat.amount / monthlyTotal) * 100).toFixed(1)
+                  : "0.0";
+              return (
+                <div
+                  key={idx}
+                  className="p-2.5 rounded-lg bg-white border border-slate-200/80 flex flex-col justify-between"
+                >
+                  <div className="flex items-center justify-between gap-1 text-[11px] text-slate-600">
+                    <span className="inline-flex items-center gap-1.5 font-medium truncate">
+                      <span className={`w-2 h-2 rounded-full ${cat.dotColor} shrink-0`} />
+                      <span className="truncate">{cat.label}</span>
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">{pct}%</span>
+                  </div>
+                  <div className="text-xs font-bold font-mono text-slate-900 mt-1">
+                    ${formatUsd(cat.amount)}
+                  </div>
                 </div>
-              )
-          )}
+              );
+            })}
         </div>
       </div>
 
-      {/* Bill of Materials (BOM) & Provenance Table */}
+      {/* Bill of Materials (BOM) & Provenance Traceability */}
       <div>
-        <div className="text-xs font-bold text-slate-700 mb-2.5 flex items-center">
-          <Layers className="w-4 h-4 mr-1 text-blue-600" />
-          Bill of Materials (BOM) & Pricing Provenance Traceability:
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-xs sm:text-sm font-semibold text-slate-900 flex items-center gap-1.5">
+            <Layers className="w-4 h-4 text-blue-600" />
+            <span>Bill of Materials (BOM) &amp; Pricing Provenance</span>
+          </div>
+          <span className="text-[11px] text-slate-400">
+            {components.length} line items
+          </span>
         </div>
 
-        <div className="border border-slate-200 rounded-lg overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
-              <tr>
-                <th className="p-3">Service & SKU</th>
-                <th className="p-3">Category</th>
-                <th className="p-3 text-center">Qty</th>
-                <th className="p-3">Unit Rate</th>
-                <th className="p-3">Unit of Measure</th>
-                <th className="p-3">Official Meter ID</th>
-                <th className="p-3 text-right">Monthly Cost</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {components.map((comp) => {
-                const prov = pricingProvenance.find((p) => p.service_id === comp.service_id);
-                const hasWarning = comp.missing_price_warning != null;
+        {/* Desktop & Tablet Table View */}
+        <div className="hidden md:block border border-slate-200/90 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold">
+                <tr>
+                  <th className="py-3 px-4">Service &amp; SKU</th>
+                  <th className="py-3 px-3">Category</th>
+                  <th className="py-3 px-3 text-center">Qty</th>
+                  <th className="py-3 px-3 text-right">Unit Rate (USD)</th>
+                  <th className="py-3 px-3">Billing Unit</th>
+                  <th className="py-3 px-3">Provenance &amp; Meter</th>
+                  <th className="py-3 px-4 text-right">Monthly Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700 bg-white">
+                {components.map((comp) => {
+                  const prov = pricingProvenance.find(
+                    (p) => p.service_id === comp.service_id
+                  );
+                  const hasWarning = comp.missing_price_warning != null;
 
-                return (
-                  <tr key={comp.component_id} className="hover:bg-slate-50/70 transition">
-                    <td className="p-3">
-                      <div className="font-bold text-slate-900">{comp.service_name}</div>
-                      <div className="text-[11px] text-slate-500 font-mono">{comp.sku_or_tier}</div>
-                      {hasWarning && (
-                        <div className="text-[10px] text-amber-700 font-medium mt-0.5">
-                          ⚠️ {comp.missing_price_warning}
+                  return (
+                    <tr
+                      key={comp.component_id}
+                      className="hover:bg-slate-50/80 transition"
+                    >
+                      <td className="py-3 px-4">
+                        <div className="font-semibold text-slate-900">
+                          {comp.service_name}
                         </div>
-                      )}
-                    </td>
-                    <td className="p-3 uppercase font-mono text-[10px]">
-                      <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                        {comp.category}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center font-bold font-mono">{comp.quantity}</td>
-                    <td className="p-3 font-mono">
-                      {prov ? `$${parseFloat(prov.rate).toFixed(5)}` : "—"}
-                    </td>
-                    <td className="p-3 text-slate-500">
-                      {prov?.unit_description || comp.workload_unit || "Instance Hour"}
-                    </td>
-                    <td className="p-3 font-mono text-[11px] text-slate-500">
-                      {prov ? (
-                        <a
-                          href={prov.source_api_or_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline inline-flex items-center"
-                        >
-                          {prov.meter_or_sku_id}
-                          <ExternalLink className="w-2.5 h-2.5 ml-1" />
-                        </a>
-                      ) : (
-                        "Local Reference"
-                      )}
-                    </td>
-                    <td className="p-3 text-right font-bold text-slate-900 font-mono text-sm">
-                      ${parseFloat(comp.monthly_cost).toFixed(2)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot className="bg-slate-50 border-t border-slate-200 font-bold text-slate-900">
-              <tr>
-                <td colSpan={6} className="p-3 text-right">
-                  Subtotal:
-                </td>
-                <td className="p-3 text-right font-mono text-sm">
-                  ${parseFloat(costBreakdown.subtotal).toFixed(2)}
-                </td>
-              </tr>
-              <tr>
-                <td colSpan={6} className="p-3 text-right text-slate-600 font-normal">
-                  Safety Buffer (+{costBreakdown.safety_buffer_amount !== "0.00" ? "Active" : "0%"}):
-                </td>
-                <td className="p-3 text-right font-mono text-sm text-slate-600">
-                  ${parseFloat(costBreakdown.safety_buffer_amount).toFixed(2)}
-                </td>
-              </tr>
-              <tr className="border-t border-slate-300 text-blue-900 bg-blue-50/50">
-                <td colSpan={6} className="p-3 text-right font-extrabold text-sm">
-                  Total Monthly Cost:
-                </td>
-                <td className="p-3 text-right font-mono text-base font-extrabold text-blue-700">
-                  ${monthlyTotal.toFixed(2)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+                        <div className="text-[11px] text-slate-500 font-mono">
+                          {comp.sku_or_tier}
+                        </div>
+                        {hasWarning && (
+                          <div className="inline-flex items-center gap-1 text-[11px] text-amber-800 font-medium mt-1">
+                            <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                            <span>{comp.missing_price_warning}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 uppercase font-mono text-[10px]">
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 font-semibold">
+                          {comp.category}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-bold font-mono text-slate-900">
+                        {comp.quantity}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono text-slate-700">
+                        {prov ? `$${parseFloat(prov.rate).toFixed(5)}` : "—"}
+                      </td>
+                      <td className="py-3 px-3 text-slate-500">
+                        {prov?.unit_description || comp.workload_unit || "Instance Hour"}
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="flex flex-col items-start gap-1">
+                          {getProvenanceBadge(prov, hasWarning)}
+                          {prov && (
+                            <a
+                              href={prov.source_api_or_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-mono text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-1"
+                            >
+                              <span>{prov.meter_or_sku_id}</span>
+                              <ExternalLink className="w-3 h-3 shrink-0" />
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-bold text-slate-900 font-mono text-sm">
+                        ${formatUsd(parseFloat(comp.monthly_cost) || 0)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot className="bg-slate-50/90 border-t border-slate-200 text-slate-900">
+                <tr>
+                  <td colSpan={6} className="py-2.5 px-4 text-right font-semibold text-slate-600">
+                    Service Subtotal (Base BOM):
+                  </td>
+                  <td className="py-2.5 px-4 text-right font-mono font-bold text-sm">
+                    ${formatUsd(subtotal)}
+                  </td>
+                </tr>
+                <tr>
+                  <td colSpan={6} className="py-2.5 px-4 text-right text-slate-600">
+                    FinOps Contingency Buffer:
+                  </td>
+                  <td className="py-2.5 px-4 text-right font-mono font-semibold text-sm text-indigo-700">
+                    +${formatUsd(bufferAmount)}
+                  </td>
+                </tr>
+                <tr className="border-t border-slate-200 bg-blue-50/50 text-slate-900">
+                  <td colSpan={6} className="py-3 px-4 text-right font-bold text-sm">
+                    Estimated Total Monthly Cost (USD):
+                  </td>
+                  <td className="py-3 px-4 text-right font-mono text-base font-bold text-blue-700">
+                    ${formatUsd(monthlyTotal)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        {/* Mobile Responsive BOM Card List */}
+        <div className="md:hidden space-y-2.5">
+          {components.map((comp) => {
+            const prov = pricingProvenance.find(
+              (p) => p.service_id === comp.service_id
+            );
+            const hasWarning = comp.missing_price_warning != null;
+            return (
+              <div
+                key={comp.component_id}
+                className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 space-y-2 text-xs"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      {comp.service_name}
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-500">
+                      {comp.sku_or_tier}
+                    </div>
+                  </div>
+                  <div className="text-right font-mono font-bold text-sm text-slate-900">
+                    ${formatUsd(parseFloat(comp.monthly_cost) || 0)}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 text-[11px] text-slate-600">
+                  <span>
+                    Qty: <strong className="font-mono">{comp.quantity}</strong> • Rate:{" "}
+                    <span className="font-mono">
+                      {prov ? `$${parseFloat(prov.rate).toFixed(4)}` : "—"}
+                    </span>
+                  </span>
+                  {getProvenanceBadge(prov, hasWarning)}
+                </div>
+
+                {prov && (
+                  <div className="text-[11px] flex items-center justify-between text-slate-500">
+                    <span>Unit: {prov.unit_description}</span>
+                    <a
+                      href={prov.source_api_or_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-blue-600 hover:underline inline-flex items-center gap-1"
+                    >
+                      <span>{prov.meter_or_sku_id}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                )}
+
+                {hasWarning && (
+                  <div className="p-2 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-800 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span>{comp.missing_price_warning}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-200 space-y-1 text-xs">
+            <div className="flex justify-between text-slate-600">
+              <span>Service Subtotal:</span>
+              <span className="font-mono font-semibold">${formatUsd(subtotal)}</span>
+            </div>
+            <div className="flex justify-between text-slate-600">
+              <span>Safety Buffer:</span>
+              <span className="font-mono font-semibold text-indigo-700">
+                +${formatUsd(bufferAmount)}
+              </span>
+            </div>
+            <div className="flex justify-between pt-1.5 border-t border-blue-200 font-bold text-slate-900 text-sm">
+              <span>Total Monthly (USD):</span>
+              <span className="font-mono text-blue-700">${formatUsd(monthlyTotal)}</span>
+            </div>
+          </div>
         </div>
       </div>
     </section>
   );
 };
-
