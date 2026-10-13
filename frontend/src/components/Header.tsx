@@ -24,6 +24,8 @@ export interface HeaderProps {
   hasCost?: boolean;
   hasAssessment?: boolean;
   monthlyTotal?: string | null;
+  activeViewMode?: "architect" | "inventory" | "compare";
+  onViewModeChange?: (mode: "architect" | "inventory" | "compare") => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,6 +37,8 @@ export const Header: React.FC<HeaderProps> = ({
   hasCost = false,
   hasAssessment = false,
   monthlyTotal = null,
+  activeViewMode = "architect",
+  onViewModeChange,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -228,48 +232,92 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Secondary Row: Compact Workspace Stepper (Desktop & Tablet) */}
+        {/* Secondary Row: Mode Switcher & Stepper */}
         <nav
-          aria-label="Workspace workflow steps"
-          className="hidden md:flex items-center justify-between py-2 border-t border-slate-200/60 text-xs"
+          aria-label="Workspace workflow modes and steps"
+          className="hidden md:flex items-center justify-between py-2 border-t border-slate-200/60 text-xs gap-4"
         >
-          <ol className="flex items-center gap-1.5 lg:gap-2 overflow-x-auto">
-            {navSteps.map((item, idx) => (
-              <li key={item.id} className="flex items-center">
-                <button
-                  type="button"
-                  disabled={!item.available}
-                  onClick={() => scrollToSection(item.id, item.available)}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-medium transition ${
-                    item.complete
-                      ? "text-slate-900 bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200/70"
-                      : item.available
-                        ? "text-slate-700 hover:text-blue-700 hover:bg-slate-100/80 border border-transparent"
-                        : "text-slate-400 cursor-not-allowed opacity-70"
-                  }`}
-                >
-                  {item.complete ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  ) : item.available ? (
-                    <CircleDot className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                  ) : (
-                    <span className="w-4 h-4 rounded-full bg-slate-200/80 text-slate-500 text-[10px] font-bold flex items-center justify-center shrink-0">
-                      {item.step}
+          {/* Main Mode Switcher */}
+          <div className="flex items-center gap-1.5 p-0.5 bg-slate-100 rounded-lg border border-slate-200/80 shrink-0">
+            <button
+              type="button"
+              onClick={() => onViewModeChange?.("architect")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition ${
+                activeViewMode === "architect"
+                  ? "bg-white text-blue-700 shadow-xs border border-slate-200/60"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              AI Architect &amp; Simulator
+            </button>
+            <button
+              type="button"
+              onClick={() => onViewModeChange?.("inventory")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition ${
+                activeViewMode === "inventory"
+                  ? "bg-white text-blue-700 shadow-xs border border-slate-200/60"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Subscription Hierarchy
+            </button>
+            <button
+              type="button"
+              onClick={() => onViewModeChange?.("compare")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition ${
+                activeViewMode === "compare"
+                  ? "bg-white text-indigo-700 shadow-xs border border-slate-200/60"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Azure vs. GCP Compare
+            </button>
+          </div>
+
+          {/* Stepper only active when in Architect view */}
+          {activeViewMode === "architect" && (
+            <ol className="flex items-center gap-1.5 overflow-x-auto">
+              {navSteps.map((item, idx) => (
+                <li key={item.id} className="flex items-center">
+                  <button
+                    type="button"
+                    disabled={!item.available}
+                    onClick={() => scrollToSection(item.id, item.available)}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-medium text-[11px] transition ${
+                      item.complete
+                        ? "text-slate-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200"
+                        : item.available
+                          ? "text-slate-700 hover:text-blue-700 hover:bg-slate-100"
+                          : "text-slate-400 cursor-not-allowed opacity-70"
+                    }`}
+                  >
+                    {item.complete ? (
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                    ) : item.available ? (
+                      <CircleDot className="w-3 h-3 text-blue-600 shrink-0" />
+                    ) : (
+                      <span className="w-3.5 h-3.5 rounded-full bg-slate-200 text-slate-500 text-[9px] font-bold flex items-center justify-center shrink-0">
+                        {item.step}
+                      </span>
+                    )}
+                    <span>{item.label}</span>
+                  </button>
+                  {idx < navSteps.length - 1 && (
+                    <span className="mx-0.5 text-slate-300 select-none" aria-hidden="true">
+                      /
                     </span>
                   )}
-                  <span>{item.label}</span>
-                </button>
-                {idx < navSteps.length - 1 && (
-                  <span className="mx-1 text-slate-300 select-none" aria-hidden="true">
-                    /
-                  </span>
-                )}
-              </li>
-            ))}
-          </ol>
+                </li>
+              ))}
+            </ol>
+          )}
 
-          <div className="text-[11px] text-slate-400 font-medium hidden xl:block">
-            Target Cloud: <span className="text-slate-700 font-semibold">Microsoft Azure</span>
+          <div className="text-[11px] text-slate-400 font-medium hidden xl:block shrink-0">
+            {activeViewMode === "compare" ? (
+              <span>Comparing: <strong className="text-slate-700">Azure vs. GCP</strong></span>
+            ) : (
+              <span>Target Cloud: <strong className="text-slate-700">Microsoft Azure &amp; GCP</strong></span>
+            )}
           </div>
         </nav>
 

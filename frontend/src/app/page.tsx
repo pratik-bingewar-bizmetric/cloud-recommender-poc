@@ -8,6 +8,8 @@ import { SectionAssumptions } from "@/components/SectionAssumptions";
 import { SectionArchitecture } from "@/components/SectionArchitecture";
 import { SectionCostSimulator } from "@/components/SectionCostSimulator";
 import { SectionTradeOffs } from "@/components/SectionTradeOffs";
+import { SectionCloudScopeInventory } from "@/components/SectionCloudScopeInventory";
+import { SectionMultiCloudCompare } from "@/components/SectionMultiCloudCompare";
 import {
   ApiErrorDetail,
   ArchitectureComponent,
@@ -49,6 +51,11 @@ export default function Home() {
   const [backendStatus, setBackendStatus] = useState<
     "checking" | "online" | "offline"
   >("checking");
+
+  // Top-Level View Mode: Architect (Phase A) | Subscription Hierarchy (Phase B) | Multi-Cloud Compare
+  const [activeViewMode, setActiveViewMode] = useState<
+    "architect" | "inventory" | "compare"
+  >("architect");
 
   // Section 01 State: Requirements & Clarifications
   const [idea, setIdea] = useState<string>(
@@ -359,6 +366,8 @@ export default function Home() {
         hasCost={!!costBreakdown}
         hasAssessment={!!tradeOffs}
         monthlyTotal={costBreakdown?.total_monthly || null}
+        activeViewMode={activeViewMode}
+        onViewModeChange={setActiveViewMode}
       />
 
       <main className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
@@ -368,86 +377,102 @@ export default function Home() {
           onDismiss={() => setFoundryError(null)}
         />
 
-        {/* Step 01: Idea & Requirements Ingestion */}
-        <SectionRequirements
-          idea={idea}
-          setIdea={setIdea}
-          targetRegion={targetRegion}
-          setTargetRegion={handleTargetRegionChange}
-          customerPreset={customerPreset}
-          setCustomerPreset={setCustomerPreset}
-          onAnalyze={handleAnalyze}
-          isAnalyzing={isAnalyzing}
-          workloadProfile={workloadProfile}
-          clarifyingQuestions={clarifyingQuestions}
-          clarifyingAnswers={clarifyingAnswers}
-          onAnswerChange={handleClarifyingAnswer}
-          missingRequirements={missingRequirements}
-          onGenerateArchitecture={handleGenerateArchitecture}
-          isGeneratingArch={isGeneratingArch}
-        />
+        {/* View Mode 1: AI Cloud Architect & Simulator (Phase A) */}
+        {activeViewMode === "architect" && (
+          <>
+            {/* Step 01: Idea & Requirements Ingestion */}
+            <SectionRequirements
+              idea={idea}
+              setIdea={setIdea}
+              targetRegion={targetRegion}
+              setTargetRegion={handleTargetRegionChange}
+              customerPreset={customerPreset}
+              setCustomerPreset={setCustomerPreset}
+              onAnalyze={handleAnalyze}
+              isAnalyzing={isAnalyzing}
+              workloadProfile={workloadProfile}
+              clarifyingQuestions={clarifyingQuestions}
+              clarifyingAnswers={clarifyingAnswers}
+              onAnswerChange={handleClarifyingAnswer}
+              missingRequirements={missingRequirements}
+              onGenerateArchitecture={handleGenerateArchitecture}
+              isGeneratingArch={isGeneratingArch}
+            />
 
-        {/* Step 02: Workload Sizing & FinOps Assumptions */}
-        <SectionAssumptions
-          assumptions={assumptions}
-          onAssumptionsChange={handleAssumptionsChange}
-          onPresetSelect={handlePresetSelect}
-          safetyBufferPct={safetyBufferPct}
-          onSafetyBufferChange={handleSafetyBufferChange}
-        />
+            {/* Step 02: Workload Sizing & FinOps Assumptions */}
+            <SectionAssumptions
+              assumptions={assumptions}
+              onAssumptionsChange={handleAssumptionsChange}
+              onPresetSelect={handlePresetSelect}
+              safetyBufferPct={safetyBufferPct}
+              onSafetyBufferChange={handleSafetyBufferChange}
+            />
 
-        {/* Guidance Empty State before Architecture Synthesis */}
-        {components.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-8 text-center">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200/80 text-blue-600 flex items-center justify-center mx-auto mb-3">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <h3 className="text-sm font-semibold text-slate-900">
-              {workloadProfile
-                ? "Ready to Synthesize Production Azure Architecture"
-                : "Architecture & Cost Workspace Standby"}
-            </h3>
-            <p className="text-xs text-slate-500 max-w-xl mx-auto mt-1 leading-relaxed">
-              {workloadProfile
-                ? "Review the extracted profile and clarifying questions in Step 01, then click 'Generate Production Architecture' to build the topological blueprint, BOM, and 5-pillar trade-off scorecard."
-                : "Submit your workload specification in Step 01 to extract structured requirements, answer clarifying questions, and generate a deterministic Azure cost simulation."}
-            </p>
-          </div>
+            {/* Guidance Empty State before Architecture Synthesis */}
+            {components.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-8 text-center">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200/80 text-blue-600 flex items-center justify-center mx-auto mb-3">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  {workloadProfile
+                    ? "Ready to Synthesize Production Azure Architecture"
+                    : "Architecture & Cost Workspace Standby"}
+                </h3>
+                <p className="text-xs text-slate-500 max-w-xl mx-auto mt-1 leading-relaxed">
+                  {workloadProfile
+                    ? "Review the extracted profile and clarifying questions in Step 01, then click 'Generate Production Architecture' to build the topological blueprint, BOM, and 5-pillar trade-off scorecard."
+                    : "Submit your workload specification in Step 01 to extract structured requirements, answer clarifying questions, and generate a deterministic Azure cost simulation."}
+                </p>
+              </div>
+            )}
+
+            {/* Step 03: Production Azure Architecture View */}
+            {components.length > 0 && (
+              <SectionArchitecture
+                architectureDescription={architectureDescription}
+                mermaidDiagram={mermaidDiagram}
+                components={components}
+                onComponentsChange={handleComponentsChange}
+              />
+            )}
+
+            {/* Step 04: Deterministic Cost Simulator */}
+            {costBreakdown && (
+              <SectionCostSimulator
+                costBreakdown={costBreakdown}
+                components={components}
+                pricingProvenance={pricingProvenance}
+                unverifiedWarnings={unverifiedWarnings}
+                isSimulating={isSimulating}
+              />
+            )}
+
+            {/* Step 05: Architecture Analysis & 5-Pillar Trade-Offs */}
+            {tradeOffs && (
+              <SectionTradeOffs
+                tradeOffs={tradeOffs}
+                assumptions={archAssumptions}
+                limitations={archLimitations}
+              />
+            )}
+          </>
         )}
 
-        {/* Step 03: Production Azure Architecture View */}
-        {components.length > 0 && (
-          <SectionArchitecture
-            architectureDescription={architectureDescription}
-            mermaidDiagram={mermaidDiagram}
-            components={components}
-            onComponentsChange={handleComponentsChange}
-          />
-        )}
+        {/* View Mode 2: Subscription & Project Hierarchy Intelligence (Phase B) */}
+        {activeViewMode === "inventory" && <SectionCloudScopeInventory />}
 
-        {/* Step 04: Deterministic Cost Simulator */}
-        {costBreakdown && (
-          <SectionCostSimulator
-            costBreakdown={costBreakdown}
-            components={components}
-            pricingProvenance={pricingProvenance}
-            unverifiedWarnings={unverifiedWarnings}
-            isSimulating={isSimulating}
-          />
-        )}
-
-        {/* Step 05: Architecture Analysis & 5-Pillar Trade-Offs */}
-        {tradeOffs && (
-          <SectionTradeOffs
-            tradeOffs={tradeOffs}
-            assumptions={archAssumptions}
-            limitations={archLimitations}
+        {/* View Mode 3: Multi-Cloud Comparison (Azure vs. GCP) */}
+        {activeViewMode === "compare" && (
+          <SectionMultiCloudCompare
+            currentAssumptions={assumptions}
+            currentBufferPct={safetyBufferPct}
           />
         )}
       </main>
 
-      {/* Floating Glassmorphic FinOps Summary Dock (Visible when Cost Breakdown is active) */}
-      {costBreakdown && (
+      {/* Floating Glassmorphic FinOps Summary Dock (Visible when Cost Breakdown is active in Architect view) */}
+      {activeViewMode === "architect" && costBreakdown && (
         <div className="fixed bottom-4 inset-x-0 z-40 px-4 pointer-events-none">
           <div className="max-w-4xl mx-auto glass-floating border border-slate-200/90 rounded-2xl shadow-floating px-4 py-2.5 pointer-events-auto flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-3">

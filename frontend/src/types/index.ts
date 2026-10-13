@@ -188,3 +188,191 @@ export interface ApiErrorDetail {
   guidance?: string;
 }
 
+// Subscription & Project Hierarchy Types (Azure & GCP)
+export interface HierarchyNode {
+  node_id: string;
+  name: string;
+  node_type:
+    | "azure_tenant"
+    | "azure_management_group"
+    | "azure_subscription"
+    | "azure_resource_group"
+    | "gcp_organization"
+    | "gcp_folder"
+    | "gcp_project";
+  parent_id?: string | null;
+  state_or_status: string;
+  location?: string | null;
+}
+
+export interface ResourceRelationship {
+  source_resource_id: string;
+  target_resource_id: string;
+  target_resource_name: string;
+  relationship_type:
+    | "verified_arm_hierarchy"
+    | "verified_property_reference"
+    | "verified_hosting_plan"
+    | "inferred_co_located";
+  is_verified: boolean;
+  direction: "parent_to_child" | "hosted_on" | "depends_on" | "secures" | "co_located";
+  evidence: string;
+}
+
+export interface DiscoveredResource {
+  provider: CloudProvider;
+  resource_id: string;
+  resource_name: string;
+  native_resource_type: string;
+  canonical_service_id: string;
+  service_category: ServiceCategory;
+  region: string;
+  sku_or_tier?: string | null;
+  kind?: string | null;
+  parent_scope_id: string;
+  subscription_id?: string | null;
+  resource_group?: string | null; // Strictly null for GCP
+  project_id?: string | null; // Strictly null for Azure
+  folder_id?: string | null;
+  organization_id?: string | null;
+  tags_or_labels: Record<string, string>;
+  configuration: Record<string, unknown>;
+  relationships: ResourceRelationship[];
+  origin: "discovered" | "ai_proposed" | "mock_fixture";
+  pricing_status: ComponentPricingStatus;
+  estimated_monthly_cost: string;
+  actual_monthly_spend?: string | null;
+  workload_quantity?: string | null;
+  workload_unit?: string | null;
+  calculation_explanation: string;
+  missing_price_warning?: string | null;
+  pricing_reference?: PricingReference | null;
+  discovery_timestamp: string;
+}
+
+export interface ScopeCostGroup {
+  group_id: string;
+  group_name: string;
+  group_type: "azure_resource_group" | "gcp_service_domain" | "gcp_folder";
+  location: string;
+  resource_count: number;
+  verified_monthly_subtotal: string;
+  total_monthly: string;
+  total_five_month: string;
+  total_annual: string;
+  unpriced_resource_count: number;
+  is_complete: boolean;
+  resources: DiscoveredResource[];
+}
+
+export interface SubscriptionRecommendation {
+  id: string;
+  category:
+    | "right_sizing"
+    | "redundancy_consolidation"
+    | "cost_optimization"
+    | "resilience_security_observability"
+    | "architecture_modernization";
+  title: string;
+  target_resource_ids: string[];
+  target_resource_names: string[];
+  evidence: string;
+  rationale: string;
+  estimated_monthly_impact: string;
+  impact_type: "monthly_savings" | "cost_neutral" | "resilience_investment";
+  assumptions: string[];
+  limitations: string[];
+}
+
+export interface ProviderConnectionStatus {
+  provider: CloudProvider;
+  inventory_auth_ready: boolean;
+  inventory_auth_method: string;
+  pricing_api_ready: boolean;
+  pricing_api_source: string;
+  authorized_scopes_count: number;
+  status_message: string;
+  access_limitations: string[];
+}
+
+export interface CloudScopeSummary {
+  provider: CloudProvider;
+  scope_id: string;
+  display_name: string;
+  tenant_or_org_id?: string | null;
+  parent_scope_id?: string | null;
+  state: string;
+  data_source: "live_authenticated" | "mock_fixture";
+}
+
+export interface SubscriptionOrProjectAnalysis {
+  provider: CloudProvider;
+  scope_id: string;
+  scope_name: string;
+  scope_type: "azure_subscription" | "gcp_project";
+  tenant_or_org_id?: string | null;
+  hierarchy_nodes: HierarchyNode[];
+  data_source: "live_authenticated" | "ai_proposed" | "mock_fixture";
+  spend_label: "estimated_public_list_pricing" | "actual_billed_spend" | "hybrid";
+  actual_billed_monthly_spend?: string | null;
+  resource_count: number;
+  group_count: number;
+  groups: ScopeCostGroup[];
+  resources: DiscoveredResource[];
+  cost_breakdown: CostBreakdown;
+  pricing_provenance: PricingReference[];
+  architecture_mermaid: string;
+  recommendations: SubscriptionRecommendation[];
+  access_limitations: string[];
+  assumptions: string[];
+  completeness_warning?: string | null;
+  analyzed_at: string;
+}
+
+export interface CrossCloudServiceMapping {
+  capability: string;
+  category: ServiceCategory;
+  azure_service_id: string;
+  azure_service_name: string;
+  azure_sku: string;
+  azure_monthly_cost: string;
+  azure_pricing_status: string;
+  gcp_service_id: string;
+  gcp_service_name: string;
+  gcp_sku: string;
+  gcp_monthly_cost: string;
+  gcp_pricing_status: string;
+  monthly_delta_gcp_minus_azure: string;
+  notes: string;
+}
+
+export interface MultiCloudComparisonRequest {
+  workload_profile: {
+    name: string;
+    description: string;
+    category: WorkloadCategory;
+    target_traffic_rps: number;
+    monthly_active_users: number;
+    primary_region: string;
+    cost_buffer_percentage?: string;
+  };
+  workload_assumptions: WorkloadAssumptions;
+  clarifications?: ClarifyingAnswer[];
+  azure_region?: string;
+  gcp_region?: string;
+}
+
+export interface MultiCloudComparisonResponse {
+  azure_report: RecommendationReport;
+  gcp_report: RecommendationReport;
+  service_mappings: CrossCloudServiceMapping[];
+  azure_total_monthly: string;
+  gcp_total_monthly: string;
+  monthly_delta_gcp_minus_azure: string;
+  annual_delta_gcp_minus_azure: string;
+  cheaper_provider?: CloudProvider | null;
+  comparison_assumptions: string[];
+  trade_off_summary: string;
+  generated_at: string;
+}
+

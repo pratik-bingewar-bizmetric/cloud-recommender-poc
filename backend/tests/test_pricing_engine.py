@@ -656,7 +656,7 @@ async def test_pricing_engine_never_selects_arbitrary_first_result_and_handles_m
     mock_client.query_prices.return_value = non_matching_items
 
     # Simulate empty benchmark to verify missing-rate behavior when live match fails
-    cache.get_benchmark_pricing = lambda _sid: {}  # type: ignore[method-assign]
+    cache.get_benchmark_pricing = lambda _sid: {}  # type: ignore[assignment,method-assign]
     engine = AzurePricingEngine(settings=settings, client=mock_client, cache=cache)
 
     comp = ArchitectureComponent(

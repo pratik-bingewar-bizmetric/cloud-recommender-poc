@@ -839,8 +839,11 @@ class AzurePricingEngine:
 
         # 2. Azure App Service
         if "app-service" in service_id:
-            # Sizing: Basic B1 if small, Premium P1v3 if large
-            if assumptions.customer_count > 50 or comp.sku_or_tier and "P1" in comp.sku_or_tier:
+            sku_lower = (comp.sku_or_tier or "").lower()
+            if comp.sku_or_tier and ("b1" in sku_lower or "basic" in sku_lower):
+                hourly = rate if rate > 0 else Decimal("0.018")  # ~$13.14/mo
+                sku = "B1 Basic"
+            elif assumptions.customer_count > 50 or (comp.sku_or_tier and "p1" in sku_lower):
                 hourly = Decimal("0.109")  # ~$79.57/mo
                 sku = "P1v3 Premium"
             else:
@@ -865,6 +868,9 @@ class AzurePricingEngine:
             ):
                 compute_hourly = rate if rate > 0 else Decimal("0.184")
                 sku = "General Purpose D2ds_v5"
+            elif comp.sku_or_tier and "b2s" in comp.sku_or_tier.lower():
+                compute_hourly = Decimal("0.0728")
+                sku = "Burstable Standard_B2s"
             elif comp.sku_or_tier and "b1ms" in comp.sku_or_tier.lower():
                 compute_hourly = Decimal("0.020")
                 sku = "Burstable B1ms"

@@ -60,7 +60,7 @@ select = [
     "UP",  # pyupgrade
     "ARG", # flake8-unused-arguments
 ]
-ignore = ["B008"]
+ignore = ["B008", "E501"]
 
 [tool.mypy]
 python_version = "3.12"
