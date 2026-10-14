@@ -43,6 +43,7 @@ from cloud_recommender.schemas.recommendation import (
     ArchitectureComponent,
     CostBreakdown,
 )
+from cloud_recommender.services.inventory.waste_debt_engine import WasteAndTechnicalDebtEngine
 from cloud_recommender.services.pricing.gcp_engine import GcpPricingEngine
 
 logger = structlog.get_logger(__name__)
@@ -835,6 +836,28 @@ class GcpInventoryService:
                 "sku": "Control Plane Identity",
                 "region": "global",
             },
+            {
+                "domain": "Data & Persistence Layer",
+                "resource_id": f"//compute.googleapis.com/projects/{target_project}/zones/{region}-a/disks/smart-expense-disk-temp-orphaned",
+                "name": "smart-expense-disk-temp-orphaned",
+                "native_type": "compute.googleapis.com/Disk",
+                "canonical_id": "gcp-storage-generic",
+                "service_name": "Google Compute Engine Persistent Disk",
+                "category": ServiceCategory.STORAGE,
+                "sku": "Standard Persistent Disk 200 GiB (Unattached)",
+                "region": region,
+            },
+            {
+                "domain": "Edge Networking & Security",
+                "resource_id": f"//compute.googleapis.com/projects/{target_project}/regions/{region}/addresses/smart-expense-static-ip-unattached",
+                "name": "smart-expense-static-ip-unattached",
+                "native_type": "compute.googleapis.com/Address",
+                "canonical_id": "gcp-generic-service",
+                "service_name": "Google Cloud External Static IP",
+                "category": ServiceCategory.NETWORKING,
+                "sku": "Unused Reserved External IP",
+                "region": region,
+            },
         ]
 
         arch_comps = [
@@ -874,6 +897,25 @@ class GcpInventoryService:
             if dom not in domain_map:
                 domain_map[dom] = []
 
+            tags = {"env": "production", "managed-by": "terraform"}
+            extra_cfg: dict[str, Any] = {"project": target_project, "region": item["region"]}
+            if item["name"] == "smart-expense-disk-temp-orphaned":
+                extra_cfg["users"] = []
+                tags = {}
+            elif item["name"] == "smart-expense-static-ip-unattached":
+                extra_cfg["users"] = []
+                extra_cfg["status"] = "RESERVED"
+                tags = {}
+            elif item["name"] == "psql-smart-expense-gcp":
+                tags = {"env": "dev"}
+                extra_cfg["settings"] = {
+                    "availabilityType": "REGIONAL",
+                    "backupConfiguration": {"enabled": True},
+                }
+            elif item["name"] == "smart-expense-docs-bucket":
+                tags = {"env": "production"}
+                extra_cfg["iamConfiguration"] = {"uniformBucketLevelAccess": {"enabled": False}}
+
             d_res = DiscoveredResource(
                 provider=CloudProvider.GCP,
                 resource_id=item["resource_id"],
@@ -890,8 +932,8 @@ class GcpInventoryService:
                 project_id=target_project,
                 folder_id=folder_id,
                 organization_id=org_id,
-                tags_or_labels={"env": "production", "managed-by": "terraform"},
-                configuration={"project": target_project, "region": item["region"]},
+                tags_or_labels=tags,
+                configuration=extra_cfg,
                 relationships=[],
                 origin="mock_fixture",
                 pricing_status=p_comp.pricing_status,  # type: ignore[arg-type]
@@ -977,6 +1019,15 @@ class GcpInventoryService:
                 )
             )
 
+        waste_engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
+        (
+            waste_findings,
+            tech_debt_items,
+            tot_monthly_savings,
+            tot_annual_savings,
+            coverage_summary,
+        ) = waste_engine.evaluate_scope(CloudProvider.GCP, target_project, all_discovered, groups)
+
         mermaid = self._build_mermaid_diagram(
             "bizmetric-cloud-org.com",
             "Engineering & AI Workloads",
@@ -1038,6 +1089,11 @@ class GcpInventoryService:
             pricing_provenance=provenance,
             architecture_mermaid=mermaid,
             recommendations=recs,
+            total_potential_monthly_savings=tot_monthly_savings,
+            total_potential_annual_savings=tot_annual_savings,
+            waste_findings=waste_findings,
+            technical_debt_items=tech_debt_items,
+            telemetry_coverage=coverage_summary,
             access_limitations=access_limits,
             assumptions=[
                 f"GCP Region: {region}",
@@ -1054,6 +1110,7 @@ class GcpInventoryService:
         auth_method: str,
         assumptions: WorkloadAssumptions,
         buffer_percentage: Decimal,
+        metric_window_days: int = 30,
     ) -> SubscriptionOrProjectAnalysis:
         """Perform authenticated read-only discovery of live GCP hierarchy and asset inventory."""
         region = (
@@ -1155,6 +1212,17 @@ class GcpInventoryService:
             discovered_resources,
         )
 
+        waste_engine = WasteAndTechnicalDebtEngine(metric_window_days=metric_window_days)
+        (
+            waste_findings,
+            tech_debt_items,
+            tot_monthly_savings,
+            tot_annual_savings,
+            coverage_summary,
+        ) = waste_engine.evaluate_scope(
+            CloudProvider.GCP, target_project, discovered_resources, groups
+        )
+
         return SubscriptionOrProjectAnalysis(
             provider=CloudProvider.GCP,
             scope_id=target_project,
@@ -1173,6 +1241,11 @@ class GcpInventoryService:
             pricing_provenance=provenance,
             architecture_mermaid=mermaid,
             recommendations=[],
+            total_potential_monthly_savings=tot_monthly_savings,
+            total_potential_annual_savings=tot_annual_savings,
+            waste_findings=waste_findings,
+            technical_debt_items=tech_debt_items,
+            telemetry_coverage=coverage_summary,
             access_limitations=[
                 "GCP hierarchy models Organization -> Folders -> Projects -> Resources (no Azure-style Resource Groups).",
                 f"Live GCP asset discovery authenticated via {auth_method}.",
@@ -1191,6 +1264,7 @@ class GcpInventoryService:
         project_id: str | None = None,
         assumptions: WorkloadAssumptions | None = None,
         buffer_percentage: Decimal = Decimal("0.00"),
+        metric_window_days: int = 30,
     ) -> SubscriptionOrProjectAnalysis:
         """Analyze GCP Project hierarchy and price resources deterministically via GcpPricingEngine."""
         assumptions = assumptions or WorkloadAssumptions(target_region="us-central1")
@@ -1223,4 +1297,5 @@ class GcpInventoryService:
             auth_method=auth_method,
             assumptions=assumptions,
             buffer_percentage=buffer_percentage,
+            metric_window_days=metric_window_days,
         )

@@ -219,6 +219,75 @@ export interface ResourceRelationship {
   evidence: string;
 }
 
+export interface ResourceWasteFinding {
+  id: string;
+  resource_id: string;
+  resource_name: string;
+  native_resource_type: string;
+  provider: CloudProvider;
+  scope_id: string;
+  group_name: string;
+  category:
+    | "idle_compute"
+    | "oversized_compute"
+    | "stopped_compute"
+    | "unattached_storage"
+    | "stale_snapshot"
+    | "unattached_ip"
+    | "idle_database"
+    | "overprovisioned_database"
+    | "redundant_network"
+    | "unutilized_service";
+  severity: "critical" | "high" | "medium" | "low";
+  title: string;
+  description: string;
+  evidence: string;
+  metric_observed?: string | null;
+  current_monthly_spend: string;
+  potential_monthly_savings: string;
+  spend_basis: "observed_billing" | "catalog_estimate" | "unpriced";
+  confidence: "high" | "medium" | "provisional";
+  remediation_recommendation: string;
+  pre_remediation_considerations: string[];
+  double_counting_prevention_note?: string | null;
+}
+
+export interface TechnicalDebtItem {
+  id: string;
+  resource_id: string;
+  resource_name: string;
+  native_resource_type: string;
+  provider: CloudProvider;
+  scope_id: string;
+  group_name: string;
+  debt_category:
+    | "missing_monitoring"
+    | "missing_backup"
+    | "missing_tagging"
+    | "legacy_runtime_or_os"
+    | "legacy_sku"
+    | "unrestricted_network"
+    | "single_point_of_failure";
+  severity: "critical" | "high" | "medium" | "low";
+  title: string;
+  description: string;
+  evidence: string;
+  remediation_steps: string[];
+  architectural_risk: string;
+}
+
+export interface TelemetryCoverageSummary {
+  metric_window_days: number;
+  telemetry_source: string;
+  monitored_resources_count: number;
+  unmonitored_resources_count: number;
+  coverage_percentage: string;
+  last_telemetry_sync: string;
+  is_cached: boolean;
+  confidence_score: string;
+  limitations_and_gaps: string[];
+}
+
 export interface DiscoveredResource {
   provider: CloudProvider;
   resource_id: string;
@@ -248,6 +317,8 @@ export interface DiscoveredResource {
   missing_price_warning?: string | null;
   pricing_reference?: PricingReference | null;
   discovery_timestamp: string;
+  waste_findings?: ResourceWasteFinding[];
+  technical_debt_items?: TechnicalDebtItem[];
 }
 
 export interface ScopeCostGroup {
@@ -262,6 +333,13 @@ export interface ScopeCostGroup {
   total_annual: string;
   unpriced_resource_count: number;
   is_complete: boolean;
+  potential_monthly_savings?: string;
+  waste_findings_count?: number;
+  technical_debt_count?: number;
+  critical_findings_count?: number;
+  high_findings_count?: number;
+  medium_findings_count?: number;
+  low_findings_count?: number;
   resources: DiscoveredResource[];
 }
 
@@ -323,6 +401,11 @@ export interface SubscriptionOrProjectAnalysis {
   pricing_provenance: PricingReference[];
   architecture_mermaid: string;
   recommendations: SubscriptionRecommendation[];
+  total_potential_monthly_savings?: string;
+  total_potential_annual_savings?: string;
+  waste_findings?: ResourceWasteFinding[];
+  technical_debt_items?: TechnicalDebtItem[];
+  telemetry_coverage?: TelemetryCoverageSummary | null;
   access_limitations: string[];
   assumptions: string[];
   completeness_warning?: string | null;

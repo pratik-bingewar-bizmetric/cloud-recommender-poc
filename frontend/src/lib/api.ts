@@ -141,6 +141,8 @@ export async function analyzeAzureSubscription(payload: {
   resource_group_filter?: string | null;
   workload_assumptions?: WorkloadAssumptions;
   safety_buffer_percentage?: string;
+  metric_window_days?: number;
+  refresh_telemetry?: boolean;
 }): Promise<SubscriptionOrProjectAnalysis> {
   const res = await fetch(`${API_BASE_URL}/inventory/azure/analyze`, {
     method: "POST",
@@ -150,6 +152,8 @@ export async function analyzeAzureSubscription(payload: {
       resource_group_filter: payload.resource_group_filter || null,
       workload_assumptions: payload.workload_assumptions,
       safety_buffer_percentage: payload.safety_buffer_percentage || "0.00",
+      metric_window_days: payload.metric_window_days ?? 30,
+      refresh_telemetry: payload.refresh_telemetry ?? false,
     }),
   });
   return handleResponse<SubscriptionOrProjectAnalysis>(res);
@@ -164,6 +168,8 @@ export async function analyzeGcpProject(payload: {
   scope_id?: string | null;
   workload_assumptions?: WorkloadAssumptions;
   safety_buffer_percentage?: string;
+  metric_window_days?: number;
+  refresh_telemetry?: boolean;
 }): Promise<SubscriptionOrProjectAnalysis> {
   const res = await fetch(`${API_BASE_URL}/inventory/gcp/analyze`, {
     method: "POST",
@@ -172,6 +178,8 @@ export async function analyzeGcpProject(payload: {
       scope_id: payload.scope_id || null,
       workload_assumptions: payload.workload_assumptions,
       safety_buffer_percentage: payload.safety_buffer_percentage || "0.00",
+      metric_window_days: payload.metric_window_days ?? 30,
+      refresh_telemetry: payload.refresh_telemetry ?? false,
     }),
   });
   return handleResponse<SubscriptionOrProjectAnalysis>(res);

@@ -86,6 +86,7 @@ async def analyze_azure_subscription(
         resource_group_filter=request.resource_group_filter,
         assumptions=request.workload_assumptions,
         buffer_percentage=request.safety_buffer_percentage,
+        metric_window_days=request.metric_window_days,
     )
 
 
@@ -117,6 +118,7 @@ async def analyze_gcp_project(
         project_id=request.scope_id,
         assumptions=request.workload_assumptions,
         buffer_percentage=request.safety_buffer_percentage,
+        metric_window_days=request.metric_window_days,
     )
 
 

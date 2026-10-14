@@ -60,6 +60,104 @@ class ResourceRelationship(BaseModel):
     )
 
 
+class ResourceWasteFinding(BaseModel):
+    """Evidence-backed cloud waste finding with quantified financial impact."""
+
+    id: str = Field(..., description="Unique finding identifier.")
+    resource_id: str = Field(..., description="Provider native resource ID.")
+    resource_name: str = Field(..., description="Resource display name.")
+    native_resource_type: str = Field(..., description="Native provider resource type.")
+    provider: CloudProvider = Field(..., description="Target cloud provider.")
+    scope_id: str = Field(..., description="Parent subscription or project ID.")
+    group_name: str = Field(..., description="Resource group or service domain name.")
+    category: Literal[
+        "idle_compute",
+        "oversized_compute",
+        "stopped_compute",
+        "unattached_storage",
+        "stale_snapshot",
+        "unattached_ip",
+        "idle_database",
+        "overprovisioned_database",
+        "redundant_network",
+        "unutilized_service",
+    ] = Field(..., description="Standardized waste category.")
+    severity: Literal["critical", "high", "medium", "low"] = Field(
+        ..., description="FinOps severity rating."
+    )
+    title: str = Field(..., description="Concise finding headline.")
+    description: str = Field(..., description="Detailed description of the inefficiency.")
+    evidence: str = Field(
+        ..., description="Observable telemetry metric, state, or property evidence."
+    )
+    metric_observed: str | None = Field(
+        default=None, description="Key metric value (e.g. 'CPU avg: 1.8% over 30d')."
+    )
+    current_monthly_spend: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
+        default=Decimal("0.00"),
+        ge=Decimal("0.0"),
+        description="Current monthly cost for this resource.",
+    )
+    potential_monthly_savings: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
+        default=Decimal("0.00"), ge=Decimal("0.0"), description="Net achievable monthly savings."
+    )
+    spend_basis: Literal["observed_billing", "catalog_estimate", "unpriced"] = Field(
+        default="catalog_estimate", description="Pricing provenance basis."
+    )
+    confidence: Literal["high", "medium", "provisional"] = Field(
+        default="high", description="Confidence level based on telemetry completeness."
+    )
+    remediation_recommendation: str = Field(
+        ..., description="Actionable advisory remediation step."
+    )
+    pre_remediation_considerations: list[str] = Field(
+        default_factory=list,
+        description="Dependency, downtime, data retention, or compliance considerations.",
+    )
+    double_counting_prevention_note: str | None = Field(
+        default=None,
+        description="Verification that savings do not duplicate associated resource savings.",
+    )
+
+
+class TechnicalDebtItem(BaseModel):
+    """Evaluated architectural, security, or maintainability technical debt item."""
+
+    id: str = Field(..., description="Unique technical debt item identifier.")
+    resource_id: str = Field(..., description="Provider native resource ID.")
+    resource_name: str = Field(..., description="Resource display name.")
+    native_resource_type: str = Field(..., description="Native provider resource type.")
+    provider: CloudProvider = Field(..., description="Target cloud provider.")
+    scope_id: str = Field(..., description="Parent subscription or project ID.")
+    group_name: str = Field(..., description="Resource group or service domain name.")
+    debt_category: Literal[
+        "missing_monitoring",
+        "missing_backup",
+        "missing_tagging",
+        "legacy_runtime_or_os",
+        "legacy_sku",
+        "unrestricted_network",
+        "single_point_of_failure",
+    ] = Field(..., description="Standardized technical debt category.")
+    severity: Literal["critical", "high", "medium", "low"] = Field(
+        ..., description="Risk severity rating."
+    )
+    title: str = Field(..., description="Headline describing the technical debt.")
+    description: str = Field(
+        ..., description="Detailed explanation of the technical debt and its impact."
+    )
+    evidence: str = Field(
+        ..., description="Specific configuration, property, or missing setting observed."
+    )
+    remediation_steps: list[str] = Field(
+        default_factory=list, description="Concrete modernization and remediation steps."
+    )
+    architectural_risk: str = Field(
+        ...,
+        description="Consequences if unaddressed (e.g. data loss, breach risk, operational outage).",
+    )
+
+
 class DiscoveredResource(BaseModel):
     """Normalized cloud resource record preserving native hierarchy and pricing provenance."""
 
@@ -145,6 +243,12 @@ class DiscoveredResource(BaseModel):
         default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the resource was discovered.",
     )
+    waste_findings: list[ResourceWasteFinding] = Field(
+        default_factory=list, description="Detected waste findings specific to this resource."
+    )
+    technical_debt_items: list[TechnicalDebtItem] = Field(
+        default_factory=list, description="Detected technical debt items specific to this resource."
+    )
 
 
 class ScopeCostGroup(BaseModel):
@@ -173,6 +277,17 @@ class ScopeCostGroup(BaseModel):
     )
     unpriced_resource_count: int = Field(default=0, ge=0)
     is_complete: bool = Field(default=True)
+    potential_monthly_savings: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = Field(
+        default=Decimal("0.00"),
+        ge=Decimal("0.0"),
+        description="Aggregate potential monthly savings in this group.",
+    )
+    waste_findings_count: int = Field(default=0, ge=0)
+    technical_debt_count: int = Field(default=0, ge=0)
+    critical_findings_count: int = Field(default=0, ge=0)
+    high_findings_count: int = Field(default=0, ge=0)
+    medium_findings_count: int = Field(default=0, ge=0)
+    low_findings_count: int = Field(default=0, ge=0)
     resources: list[DiscoveredResource] = Field(default_factory=list)
 
 
@@ -266,6 +381,36 @@ class ScopeAnalysisRequest(BaseModel):
         default=True,
         description="If live inventory auth is unavailable (e.g. GCP ADC not configured), return an explicitly labeled mock_fixture project hierarchy priced with live API rates.",
     )
+    metric_window_days: int = Field(
+        default=30,
+        ge=7,
+        le=90,
+        description="Historical telemetry evaluation window in days (default: 30).",
+    )
+    refresh_telemetry: bool = Field(
+        default=False,
+        description="Whether to refresh live telemetry from cloud provider rather than using cached metrics.",
+    )
+
+
+class TelemetryCoverageSummary(BaseModel):
+    """Summary of telemetry availability, metric sampling window, and evaluation confidence."""
+
+    metric_window_days: int = Field(
+        default=30, description="Evaluation observation window in days."
+    )
+    telemetry_source: str = Field(..., description="Primary telemetry and monitoring provider.")
+    monitored_resources_count: int = Field(default=0, ge=0)
+    unmonitored_resources_count: int = Field(default=0, ge=0)
+    coverage_percentage: Annotated[Decimal, Field(max_digits=5, decimal_places=2)] = Field(
+        default=Decimal("100.00")
+    )
+    last_telemetry_sync: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    is_cached: bool = Field(default=True)
+    confidence_score: Annotated[Decimal, Field(max_digits=4, decimal_places=2)] = Field(
+        default=Decimal("0.90"), ge=Decimal("0.0"), le=Decimal("1.0")
+    )
+    limitations_and_gaps: list[str] = Field(default_factory=list)
 
 
 class SubscriptionOrProjectAnalysis(BaseModel):
@@ -299,6 +444,30 @@ class SubscriptionOrProjectAnalysis(BaseModel):
         description="Renderable Mermaid diagram generated from discovered hierarchy and relationships.",
     )
     recommendations: list[SubscriptionRecommendation] = Field(default_factory=list)
+    total_potential_monthly_savings: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = (
+        Field(
+            default=Decimal("0.00"),
+            ge=Decimal("0.0"),
+            description="Total non-double-counted potential monthly savings across scope.",
+        )
+    )
+    total_potential_annual_savings: Annotated[Decimal, Field(max_digits=12, decimal_places=2)] = (
+        Field(
+            default=Decimal("0.00"),
+            ge=Decimal("0.0"),
+            description="Annualized projected savings.",
+        )
+    )
+    waste_findings: list[ResourceWasteFinding] = Field(
+        default_factory=list, description="All itemized resource waste findings across scope."
+    )
+    technical_debt_items: list[TechnicalDebtItem] = Field(
+        default_factory=list, description="All itemized technical debt items across scope."
+    )
+    telemetry_coverage: TelemetryCoverageSummary | None = Field(
+        default=None,
+        description="Summary of telemetry observation window, monitored ratio, and confidence.",
+    )
     access_limitations: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     completeness_warning: str | None = None

@@ -38,6 +38,7 @@ from cloud_recommender.schemas.recommendation import (
     CostBreakdown,
     PricingReference,
 )
+from cloud_recommender.services.inventory.waste_debt_engine import WasteAndTechnicalDebtEngine
 from cloud_recommender.services.pricing.engine import AzurePricingEngine
 
 logger = structlog.get_logger(__name__)
@@ -846,11 +847,11 @@ class AzureInventoryService:
                 group_name="rg-smart-expense",
                 group_type="azure_resource_group",
                 location="eastus",
-                resource_count=5,
-                verified_monthly_subtotal=Decimal("25.00"),
-                total_monthly=Decimal("25.00"),
-                total_five_month=Decimal("125.00"),
-                total_annual=Decimal("300.00"),
+                resource_count=6,
+                verified_monthly_subtotal=Decimal("84.86"),
+                total_monthly=Decimal("84.86"),
+                total_five_month=Decimal("424.30"),
+                total_annual=Decimal("1018.32"),
                 resources=[
                     DiscoveredResource(
                         provider=CloudProvider.AZURE,
@@ -869,6 +870,7 @@ class AzureInventoryService:
                         pricing_status="provisional",
                         estimated_monthly_cost=Decimal("25.00"),
                         calculation_explanation="S0 Pay-as-you-go Azure OpenAI inference tokens.",
+                        tags_or_labels={"Environment": "Production", "Owner": "AI-Team"},
                     ),
                     DiscoveredResource(
                         provider=CloudProvider.AZURE,
@@ -887,6 +889,7 @@ class AzureInventoryService:
                         pricing_status="verified",
                         estimated_monthly_cost=Decimal("0.00"),
                         calculation_explanation="Azure Document Intelligence Free Tier (F0): $0.00/mo.",
+                        tags_or_labels={"Environment": "Production", "Owner": "AI-Team"},
                     ),
                     DiscoveredResource(
                         provider=CloudProvider.AZURE,
@@ -905,29 +908,186 @@ class AzureInventoryService:
                         pricing_status="verified",
                         estimated_monthly_cost=Decimal("0.00"),
                         calculation_explanation="Azure Speech Services Free Tier (F0): $0.00/mo.",
+                        tags_or_labels={"Environment": "Production", "Owner": "AI-Team"},
+                    ),
+                    DiscoveredResource(
+                        provider=CloudProvider.AZURE,
+                        resource_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense/providers/Microsoft.Compute/disks/disk-analytics-legacy-temp",
+                        resource_name="disk-analytics-legacy-temp",
+                        native_resource_type="Microsoft.Compute/disks",
+                        canonical_service_id="azure-managed-disk",
+                        service_category=ServiceCategory.STORAGE,
+                        region="eastus",
+                        sku_or_tier="Premium_LRS P10 (128 GiB)",
+                        kind="Managed",
+                        parent_scope_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense",
+                        subscription_id=sub_id,
+                        resource_group="rg-smart-expense",
+                        origin="mock_fixture",
+                        pricing_status="verified",
+                        estimated_monthly_cost=Decimal("19.71"),
+                        calculation_explanation="Standard retail price for Premium SSD P10 128 GiB: $19.71/mo.",
+                        configuration={
+                            "diskState": "Unattached",
+                            "managedBy": None,
+                            "diskSizeBytes": 137438953472,
+                        },
+                        tags_or_labels={},
+                    ),
+                    DiscoveredResource(
+                        provider=CloudProvider.AZURE,
+                        resource_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense/providers/Microsoft.Compute/virtualMachines/vm-staging-processor",
+                        resource_name="vm-staging-processor",
+                        native_resource_type="Microsoft.Compute/virtualMachines",
+                        canonical_service_id="azure-virtual-machine",
+                        service_category=ServiceCategory.COMPUTE,
+                        region="eastus",
+                        sku_or_tier="Standard_B2s (2 vCPU, 4 GiB RAM)",
+                        kind="IaaS",
+                        parent_scope_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense",
+                        subscription_id=sub_id,
+                        resource_group="rg-smart-expense",
+                        origin="mock_fixture",
+                        pricing_status="verified",
+                        estimated_monthly_cost=Decimal("36.50"),
+                        calculation_explanation="Pay-as-you-go Standard_B2s Linux VM: $36.50/mo.",
+                        configuration={
+                            "powerState": "PowerState/deallocated",
+                            "avg_cpu_percent": 0.0,
+                        },
+                        tags_or_labels={"env": "staging"},
+                    ),
+                    DiscoveredResource(
+                        provider=CloudProvider.AZURE,
+                        resource_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense/providers/Microsoft.Network/publicIPAddresses/pip-smart-expense-legacy",
+                        resource_name="pip-smart-expense-legacy",
+                        native_resource_type="Microsoft.Network/publicIPAddresses",
+                        canonical_service_id="azure-public-ip",
+                        service_category=ServiceCategory.NETWORKING,
+                        region="eastus",
+                        sku_or_tier="Standard Static",
+                        kind="Static",
+                        parent_scope_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense",
+                        subscription_id=sub_id,
+                        resource_group="rg-smart-expense",
+                        origin="mock_fixture",
+                        pricing_status="verified",
+                        estimated_monthly_cost=Decimal("3.65"),
+                        calculation_explanation="Standard Static Public IP Address reservation: $3.65/mo.",
+                        configuration={"ipConfiguration": None},
+                        tags_or_labels={},
                     ),
                 ],
-            )
+            ),
+            ScopeCostGroup(
+                group_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense-data",
+                group_name="rg-smart-expense-data",
+                group_type="azure_resource_group",
+                location="eastus",
+                resource_count=3,
+                verified_monthly_subtotal=Decimal("140.25"),
+                total_monthly=Decimal("140.25"),
+                total_five_month=Decimal("701.25"),
+                total_annual=Decimal("1683.00"),
+                resources=[
+                    DiscoveredResource(
+                        provider=CloudProvider.AZURE,
+                        resource_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense-data/providers/Microsoft.DBforPostgreSQL/flexibleServers/psql-smart-expense-dev",
+                        resource_name="psql-smart-expense-dev",
+                        native_resource_type="Microsoft.DBforPostgreSQL/flexibleServers",
+                        canonical_service_id="azure-postgres-flexible",
+                        service_category=ServiceCategory.DATABASE,
+                        region="eastus",
+                        sku_or_tier="Standard_B2s Burstable (Zone-Redundant HA)",
+                        kind="GeneralPurpose",
+                        parent_scope_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense-data",
+                        subscription_id=sub_id,
+                        resource_group="rg-smart-expense-data",
+                        origin="mock_fixture",
+                        pricing_status="verified",
+                        estimated_monthly_cost=Decimal("73.00"),
+                        calculation_explanation="PostgreSQL Flexible Server B2s with Zone-Redundant standby: $73.00/mo.",
+                        configuration={
+                            "highAvailability": {"mode": "ZoneRedundant"},
+                            "backup": {"backupRetentionDays": 7},
+                        },
+                        tags_or_labels={"env": "dev"},
+                    ),
+                    DiscoveredResource(
+                        provider=CloudProvider.AZURE,
+                        resource_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense-data/providers/Microsoft.Storage/storageAccounts/stgsmartbackup",
+                        resource_name="stgsmartbackup",
+                        native_resource_type="Microsoft.Storage/storageAccounts",
+                        canonical_service_id="azure-blob-storage",
+                        service_category=ServiceCategory.STORAGE,
+                        region="eastus",
+                        sku_or_tier="Standard_LRS Hot (500 GiB)",
+                        kind="StorageV2",
+                        parent_scope_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense-data",
+                        subscription_id=sub_id,
+                        resource_group="rg-smart-expense-data",
+                        origin="mock_fixture",
+                        pricing_status="verified",
+                        estimated_monthly_cost=Decimal("12.50"),
+                        calculation_explanation="Standard LRS Hot Blob Storage 500 GiB: $12.50/mo.",
+                        configuration={
+                            "publicNetworkAccess": "Enabled",
+                            "networkAcls": {"defaultAction": "Allow"},
+                        },
+                        tags_or_labels={"env": "dev"},
+                    ),
+                    DiscoveredResource(
+                        provider=CloudProvider.AZURE,
+                        resource_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense-data/providers/Microsoft.Web/serverfarms/asp-smart-expense",
+                        resource_name="asp-smart-expense",
+                        native_resource_type="Microsoft.Web/serverfarms",
+                        canonical_service_id="azure-app-service",
+                        service_category=ServiceCategory.COMPUTE,
+                        region="eastus",
+                        sku_or_tier="B2 Basic (2 vCPU, 3.5 GiB RAM)",
+                        kind="Linux",
+                        parent_scope_id=f"/subscriptions/{sub_id}/resourceGroups/rg-smart-expense-data",
+                        subscription_id=sub_id,
+                        resource_group="rg-smart-expense-data",
+                        origin="mock_fixture",
+                        pricing_status="verified",
+                        estimated_monthly_cost=Decimal("54.75"),
+                        calculation_explanation="Azure App Service Plan Basic B2: $54.75/mo.",
+                        configuration={"avg_cpu_percent": 3.8},
+                        tags_or_labels={"env": "dev"},
+                    ),
+                ],
+            ),
         ]
 
+        all_resources = [r for g in groups for r in g.resources]
+
+        waste_engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
+        (
+            waste_findings,
+            tech_debt_items,
+            tot_monthly_savings,
+            tot_annual_savings,
+            coverage_summary,
+        ) = waste_engine.evaluate_scope(CloudProvider.AZURE, sub_id, all_resources, groups)
+
         cost_breakdown = CostBreakdown(
-            compute=Decimal("0.00"),
-            database=Decimal("0.00"),
-            storage=Decimal("0.00"),
-            networking=Decimal("0.00"),
+            compute=Decimal("91.25"),
+            database=Decimal("73.00"),
+            storage=Decimal("32.21"),
+            networking=Decimal("3.65"),
             ai=Decimal("25.00"),
             other=Decimal("0.00"),
-            subtotal=Decimal("25.00"),
-            verified_subtotal=Decimal("25.00"),
+            subtotal=Decimal("225.11"),
+            verified_subtotal=Decimal("225.11"),
             safety_buffer_amount=Decimal("0.00"),
-            total_monthly=Decimal("25.00"),
-            total_five_month=Decimal("125.00"),
-            total_annual=Decimal("300.00"),
+            total_monthly=Decimal("225.11"),
+            total_five_month=Decimal("1125.55"),
+            total_annual=Decimal("2701.32"),
             is_complete=True,
             estimate_status="complete",
         )
 
-        all_resources = [r for g in groups for r in g.resources]
         mermaid = self._build_mermaid_diagram(
             "Azure subscription 1 (Fixture)", groups, all_resources
         )
@@ -956,6 +1116,11 @@ class AzureInventoryService:
             pricing_provenance=[],
             architecture_mermaid=mermaid,
             recommendations=[],
+            total_potential_monthly_savings=tot_monthly_savings,
+            total_potential_annual_savings=tot_annual_savings,
+            waste_findings=waste_findings,
+            technical_debt_items=tech_debt_items,
+            telemetry_coverage=coverage_summary,
             access_limitations=[
                 "Loaded from labeled mock fixture because ARM authentication was unavailable."
             ],
@@ -968,6 +1133,7 @@ class AzureInventoryService:
         resource_group_filter: str | None = None,
         assumptions: WorkloadAssumptions | None = None,
         buffer_percentage: Decimal = Decimal("0.00"),
+        metric_window_days: int = 30,
     ) -> SubscriptionOrProjectAnalysis:
         """Discover live Azure subscription resources, build graph, and aggregate costs."""
         assumptions = assumptions or WorkloadAssumptions()
@@ -1288,6 +1454,17 @@ class AzureInventoryService:
         mermaid_diag = self._build_mermaid_diagram(sub_name, cost_groups, discovered_resources)
         recs = self._generate_subscription_recommendations(discovered_resources, cost_groups)
 
+        waste_engine = WasteAndTechnicalDebtEngine(metric_window_days=metric_window_days)
+        (
+            waste_findings,
+            tech_debt_items,
+            tot_monthly_savings,
+            tot_annual_savings,
+            coverage_summary,
+        ) = waste_engine.evaluate_scope(
+            CloudProvider.AZURE, sub_id, discovered_resources, cost_groups
+        )
+
         access_limits = [
             f"Authenticated via {auth_method} with read-only ARM permissions.",
             "All resource operations strictly read-only; no infrastructure changes performed.",
@@ -1315,6 +1492,11 @@ class AzureInventoryService:
             pricing_provenance=all_provenance,
             architecture_mermaid=mermaid_diag,
             recommendations=recs,
+            total_potential_monthly_savings=tot_monthly_savings,
+            total_potential_annual_savings=tot_annual_savings,
+            waste_findings=waste_findings,
+            technical_debt_items=tech_debt_items,
+            telemetry_coverage=coverage_summary,
             access_limitations=access_limits,
             assumptions=[
                 "Pricing calculated deterministically from official Azure Retail Prices API rates and verified benchmark cache.",
