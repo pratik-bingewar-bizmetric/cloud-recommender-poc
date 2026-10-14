@@ -97,32 +97,67 @@ Review these foundational specifications before modifying or implementing code:
 ```bash
 cp .env.example .env
 ```
-*(By default, `.env.example` is configured with `LLM_PROVIDER=mock`, `OFFLINE_PRICING_MODE=true`, and `FABRIC_ENABLED=false`, allowing full offline testing without cloud credentials).*
+*(By default, `.env.example` includes Azure AI Foundry and Azure Retail Prices settings. If Azure AI Foundry credentials are not configured, `/api/v1/analysis/requirements` and `/api/v1/architecture/generate` safely return HTTP 503 with actionable remediation instructions).*
 
 ### 2. Backend Setup
 ```bash
 cd backend
-python -m venv .venv
 
-# Activate virtual environment
-# Windows (PowerShell):
-.venv\Scripts\Activate.ps1
-# macOS/Linux:
-source .venv/bin/activate
+# Link mode for Windows / OneDrive
+$env:UV_LINK_MODE="copy"
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies via uv
+uv sync
 
-# Run verification test suite
-pytest tests/ -v
+# Run verification test suite (92 tests, 91% coverage)
+uv run pytest -v --cov=cloud_recommender
+
+# Start FastAPI server (http://localhost:8000)
+uv run uvicorn cloud_recommender.main:app --reload --port 8000
 ```
 
 ### 3. Frontend Setup
 ```bash
 cd frontend
+
+# Install dependencies
 npm install
+
+# Run typecheck and lint
+npm run typecheck
+npm run lint
+
+# Start Next.js development server (http://localhost:3000)
 npm run dev
 ```
+
+---
+
+## ⚡ Phase A: Functional AI Cloud Architect & Cost Simulator
+
+Phase A delivers an end-to-end advisory and cost simulation workflow:
+
+1. **Section A — Requirements Ingestion & Clarifying Questions Loop:**
+   - Ingests natural language application ideas or verified scale presets (21, 51, 10,000 customers).
+   - Uses **Azure AI Foundry** (`gpt-4o` deployment) to extract structured requirements into `WorkloadProfile`.
+   - Generates targeted `ClarifyingQuestion` inquiries for missing critical attributes.
+   - If Azure AI Foundry credentials are unconfigured, returns structured HTTP 503 (`AZURE_AI_FOUNDRY_NOT_CONFIGURED`) with explicit variable guidance—strictly preventing silent mock hallucination.
+2. **Section B — Sizing & Assumptions Controls:**
+   - Interactive customer presets: **21 (Pilot)**, **51 (SME Growth)**, **10,000 (Scale/Enterprise)**.
+   - Granular controls for MAU, requests/user/day, peak RPS, PostgreSQL storage, Blob storage, outbound egress, and AI support tokens.
+   - Zone-redundant High Availability toggle and FinOps safety buffer slider (0% to 40%).
+3. **Section C — Production Azure Architecture:**
+   - Generates production-grade Azure service topology with Mermaid.js diagram.
+   - Service components with SKU/tier, rationale, security considerations, and reliability configurations.
+   - Interactive component controls: add catalog services, remove components, or adjust replica counts.
+4. **Section D — Deterministic Cost Simulator:**
+   - Real-time recalculation using the official **Azure Retail Prices API** (`https://prices.azure.com/api/retail/prices`) and 24h cache.
+   - Recalculates immediately with zero LLM latency and zero token cost.
+   - Displays **Monthly**, **5-Month**, and **Annual** projections.
+   - Traceable Bill of Materials (BOM) linking each line item to its official meter ID and Azure documentation.
+5. **Section E — 5-Pillar Architecture Analysis & Trade-Offs:**
+   - Multi-dimensional scoring across Cost Efficiency, Security & Compliance, Reliability & Resilience, Scalability & Performance, and Operational Complexity.
+   - Explicit architectural assumptions and known limitations.
 
 ---
 

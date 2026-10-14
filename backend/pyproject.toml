@@ -42,6 +42,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cloud_recommender"]
 
+[tool.uv]
+link-mode = "copy"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
@@ -57,7 +60,7 @@ select = [
     "UP",  # pyupgrade
     "ARG", # flake8-unused-arguments
 ]
-ignore = ["B008"]
+ignore = ["B008", "E501"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -1,5 +1,12 @@
-"""Pydantic v2 domain schemas package for Cloud Recommender POC."""
-
+from cloud_recommender.schemas.analysis import (
+    ClarifyingAnswer,
+    ClarifyingQuestion,
+    CostSimulationRequest,
+    CostSimulationResponse,
+    RequirementsAnalysisRequest,
+    RequirementsAnalysisResponse,
+    WorkloadAssumptions,
+)
 from cloud_recommender.schemas.catalog import (
     CatalogService,
     CatalogServiceBase,
@@ -64,4 +71,11 @@ __all__ = [
     "CatalogService",
     "CatalogServiceFilter",
     "CatalogServiceListResponse",
+    "ClarifyingQuestion",
+    "WorkloadAssumptions",
+    "ClarifyingAnswer",
+    "RequirementsAnalysisRequest",
+    "RequirementsAnalysisResponse",
+    "CostSimulationRequest",
+    "CostSimulationResponse",
 ]

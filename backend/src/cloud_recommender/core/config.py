@@ -54,14 +54,66 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=4096, ge=256, le=32768)
     llm_request_timeout_seconds: int = Field(default=45, ge=5, le=300)
 
+    # Azure AI Foundry Configuration (Phase A AI Architect)
+    azure_ai_foundry_endpoint: str | None = Field(
+        default=None,
+        description="Azure AI Foundry / Azure OpenAI inference endpoint URL.",
+    )
+    azure_ai_foundry_api_key: str | None = Field(
+        default=None,
+        description="API key for authenticating with Azure AI Foundry model deployment.",
+    )
+    azure_ai_foundry_deployment_name: str | None = Field(
+        default=None,
+        description="Model deployment name in Azure AI Foundry (e.g. 'gpt-4o' or 'gpt-4o-mini').",
+    )
+    azure_ai_foundry_api_version: str = Field(
+        default="2024-05-01-preview",
+        description="API version for Azure AI Foundry model inference.",
+    )
+    azure_ai_foundry_auth_type: Literal["api_key", "bearer_token"] = Field(
+        default="api_key",
+        description="Authentication method for Azure AI Foundry.",
+    )
+    azure_retail_prices_api_url: str = Field(
+        default="https://prices.azure.com/api/retail/prices",
+        description="Official public Azure Retail Prices API endpoint.",
+    )
+
     # Azure Integration (Phase B - Strictly Read-Only)
-    azure_auth_method: Literal["service_principal", "default_azure_credential"] = Field(
-        default="service_principal"
+    azure_auth_method: Literal["service_principal", "default_azure_credential", "azure_cli"] = (
+        Field(default="service_principal")
     )
     azure_tenant_id: str | None = Field(default=None)
     azure_client_id: str | None = Field(default=None)
     azure_client_secret: str | None = Field(default=None)
     azure_subscription_id: str | None = Field(default=None)
+    azure_arm_base_url: str = Field(
+        default="https://management.azure.com",
+        description="Azure Resource Manager read-only endpoint.",
+    )
+
+    # GCP Integration (Public Pricing vs. Read-Only Project/Resource Inventory)
+    gcp_cloud_api_key: str | None = Field(
+        default=None,
+        description="Public Google Cloud Billing Catalog API key (strictly for SKU pricing, never for inventory).",
+    )
+    gcp_billing_catalog_api_url: str = Field(
+        default="https://cloudbilling.googleapis.com/v1",
+        description="Official Google Cloud Billing Catalog API v1 endpoint.",
+    )
+    gcp_project_id: str | None = Field(
+        default=None,
+        description="Default GCP Project ID for read-only resource discovery.",
+    )
+    gcp_access_token: str | None = Field(
+        default=None,
+        description="Optional short-lived OAuth2 access token for read-only GCP inventory discovery.",
+    )
+    google_application_credentials: str | None = Field(
+        default=None,
+        description="Path to read-only Google Cloud service account JSON or ADC file.",
+    )
 
     # Microsoft Fabric Analytics (Phase B - Lakehouse)
     fabric_enabled: bool = Field(
@@ -112,7 +164,7 @@ class Settings(BaseSettings):
         return v
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "backend/.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
