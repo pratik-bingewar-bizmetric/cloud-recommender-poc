@@ -10,10 +10,14 @@ jobs:
   backend-quality:
     name: Backend Lint, Type Check & Test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     env:
       LLM_PROVIDER: mock
       APP_ENV: testing
       PYTHONUNBUFFERED: "1"
+      VIRTUAL_ENV: ""
 
     steps:
       - name: Checkout Source Code
@@ -26,31 +30,22 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: "backend/uv.lock"
+          activate-environment: false
 
       - name: Install Backend Dependencies via uv
-        run: |
-          cd backend
-          uv sync --all-groups
+        run: uv sync --all-groups
 
       - name: Run Ruff Linter
-        run: |
-          cd backend
-          uv run ruff check .
+        run: uv run ruff check .
 
       - name: Run Ruff Format Check
-        run: |
-          cd backend
-          uv run ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Run Mypy Type Checker
-        run: |
-          cd backend
-          uv run mypy src tests
+        run: uv run mypy src tests
 
       - name: Run Pytest Test Suite
-        run: |
-          cd backend
-          uv run pytest -v --cov=cloud_recommender --cov-report=xml --cov-report=term
+        run: uv run pytest -v --cov=cloud_recommender --cov-report=xml --cov-report=term
 
   frontend-quality:
     name: Frontend Lint, Type Check & Build

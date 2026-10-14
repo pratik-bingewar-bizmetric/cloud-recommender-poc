@@ -174,23 +174,26 @@ class AzureInventoryService:
         current_url: str | None = url
         current_params = params
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            while current_url:
-                resp = await client.get(current_url, headers=headers, params=current_params)
-                current_params = None  # Params are encoded into nextLink URL
-                if resp.status_code != 200:
-                    logger.warning(
-                        "arm_query_failed",
-                        url=current_url,
-                        status_code=resp.status_code,
-                        detail=resp.text[:300],
-                    )
-                    break
-                data = resp.json()
-                items = data.get("value", [])
-                if isinstance(items, list):
-                    all_items.extend(items)
-                current_url = data.get("nextLink")
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                while current_url:
+                    resp = await client.get(current_url, headers=headers, params=current_params)
+                    current_params = None  # Params are encoded into nextLink URL
+                    if resp.status_code != 200:
+                        logger.warning(
+                            "arm_query_failed",
+                            url=current_url,
+                            status_code=resp.status_code,
+                            detail=resp.text[:300],
+                        )
+                        break
+                    data = resp.json()
+                    items = data.get("value", [])
+                    if isinstance(items, list):
+                        all_items.extend(items)
+                    current_url = data.get("nextLink")
+        except (httpx.TimeoutException, httpx.RequestError) as err:
+            logger.warning("arm_network_error", url=current_url, error=str(err))
 
         return all_items
 

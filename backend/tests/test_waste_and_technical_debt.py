@@ -11,10 +11,11 @@ from cloud_recommender.schemas.inventory import (
     DiscoveredResource,
     ScopeCostGroup,
 )
+from cloud_recommender.services.inventory.azure_inventory import AzureInventoryService
 from cloud_recommender.services.inventory.waste_debt_engine import WasteAndTechnicalDebtEngine
 
 
-def test_waste_engine_unattached_disk_detection():
+def test_waste_engine_unattached_disk_detection() -> None:
     """Verify unattached managed disks are identified with 100% savings and high severity."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     disk = DiscoveredResource(
@@ -61,7 +62,7 @@ def test_waste_engine_unattached_disk_detection():
     assert group.high_findings_count >= 1
 
 
-def test_waste_engine_stopped_vm_and_non_double_counting():
+def test_waste_engine_stopped_vm_and_non_double_counting() -> None:
     """Verify deallocated VM only counts compute portion and prevents double counting."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     vm = DiscoveredResource(
@@ -100,10 +101,11 @@ def test_waste_engine_stopped_vm_and_non_double_counting():
     assert waste[0].potential_monthly_savings == Decimal("31.03")  # 85% of compute
     assert tot_monthly == Decimal("31.03")
     assert "compute billing is suspended" in waste[0].description.lower()
+    assert waste[0].double_counting_prevention_note is not None
     assert "disk" in waste[0].double_counting_prevention_note.lower()
 
 
-def test_waste_engine_dev_database_high_availability_waste():
+def test_waste_engine_dev_database_high_availability_waste() -> None:
     """Verify non-production database with Zone-Redundant / Regional HA is flagged with 50% savings."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     db = DiscoveredResource(
@@ -143,7 +145,7 @@ def test_waste_engine_dev_database_high_availability_waste():
     assert "non-production" in w.title.lower()
 
 
-def test_waste_engine_gcp_unattached_ip_and_orphaned_disk():
+def test_waste_engine_gcp_unattached_ip_and_orphaned_disk() -> None:
     """Verify GCP unattached static IP penalty and orphaned persistent disk detection."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     ip_res = DiscoveredResource(
@@ -197,7 +199,7 @@ def test_waste_engine_gcp_unattached_ip_and_orphaned_disk():
     assert tot_annual == Decimal("183.60")
 
 
-def test_technical_debt_governance_tags_and_security_exposure():
+def test_technical_debt_governance_tags_and_security_exposure() -> None:
     """Verify detection of missing enterprise governance tags and public storage access."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     stg = DiscoveredResource(
@@ -242,11 +244,10 @@ def test_technical_debt_governance_tags_and_security_exposure():
 @pytest.mark.asyncio
 async def test_api_azure_analyze_returns_waste_and_technical_debt_rollups(
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """Integration test verifying /api/v1/inventory/azure/analyze includes waste & tech debt rollups."""
-    from cloud_recommender.services.inventory.azure_inventory import AzureInventoryService
 
-    async def mock_no_token(_self):
+    async def mock_no_token(_self: AzureInventoryService) -> tuple[str | None, str]:
         return None, "unauthenticated"
 
     monkeypatch.setattr(AzureInventoryService, "get_access_token", mock_no_token)
@@ -288,7 +289,7 @@ async def test_api_azure_analyze_returns_waste_and_technical_debt_rollups(
 
 
 @pytest.mark.asyncio
-async def test_api_gcp_analyze_returns_waste_and_technical_debt_rollups():
+async def test_api_gcp_analyze_returns_waste_and_technical_debt_rollups() -> None:
     """Integration test verifying /api/v1/inventory/gcp/analyze includes waste & tech debt rollups."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -319,7 +320,7 @@ async def test_api_gcp_analyze_returns_waste_and_technical_debt_rollups():
             assert "technical_debt_count" in grp
 
 
-def test_waste_engine_false_positive_dr_standby_exempt():
+def test_waste_engine_false_positive_dr_standby_exempt() -> None:
     """Verify disaster-recovery / standby VM is exempted from stopped compute waste."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     dr_vm = DiscoveredResource(
@@ -360,7 +361,7 @@ def test_waste_engine_false_positive_dr_standby_exempt():
     assert tot_monthly == Decimal("0.00")
 
 
-def test_waste_engine_false_positive_batch_workload():
+def test_waste_engine_false_positive_batch_workload() -> None:
     """Verify scheduled batch / worker host is identified with batch_scheduling advice rather than SKU downsizing."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     batch_vm = DiscoveredResource(
@@ -401,7 +402,7 @@ def test_waste_engine_false_positive_batch_workload():
     assert "runbooks" in w.remediation_recommendation.lower()
 
 
-def test_waste_engine_compliance_hold_disk_provisional():
+def test_waste_engine_compliance_hold_disk_provisional() -> None:
     """Verify unattached disk with compliance/retention hold has provisional confidence and $0 automated savings."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     retained_disk = DiscoveredResource(
@@ -444,7 +445,7 @@ def test_waste_engine_compliance_hold_disk_provisional():
     assert tot_monthly == Decimal("0.00")
 
 
-def test_waste_engine_reservation_commitment_zero_savings():
+def test_waste_engine_reservation_commitment_zero_savings() -> None:
     """Verify active reservation on deallocated VM prevents claiming phantom compute savings."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     reserved_vm = DiscoveredResource(
@@ -482,11 +483,12 @@ def test_waste_engine_reservation_commitment_zero_savings():
     assert len(waste) == 1
     w = waste[0]
     assert w.potential_monthly_savings == Decimal("0.00")
+    assert w.double_counting_prevention_note is not None
     assert "reservation" in w.double_counting_prevention_note.lower()
     assert tot_monthly == Decimal("0.00")
 
 
-def test_waste_engine_unmonitored_cognitive_and_app_service_not_flagged_waste():
+def test_waste_engine_unmonitored_cognitive_and_app_service_not_flagged_waste() -> None:
     """Verify unmonitored resources without metrics are NOT flagged as waste, but categorized as Technical Debt."""
     engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
     ai_acc = DiscoveredResource(
