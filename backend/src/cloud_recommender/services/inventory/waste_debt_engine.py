@@ -6,6 +6,7 @@ non-double-counted cost rollups across resource hierarchies, and provides action
 purely advisory remediation guidance with explicit pre-remediation considerations.
 """
 
+import re
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
@@ -132,11 +133,40 @@ class WasteAndTechnicalDebtEngine:
             else Decimal("100.00")
         )
 
-        telemetry_source = (
-            "Azure Monitor Metrics & ARM Resource Graph"
-            if provider == CloudProvider.AZURE
-            else "Google Cloud Monitoring & Cloud Asset Inventory"
+        has_live_source = any(
+            "Live" in str(r.configuration.get("telemetry_source", "")) for r in resources
         )
+
+        telemetry_source = (
+            "Azure Monitor Metrics & ARM Resource Graph (Live Authenticated)"
+            if (provider == CloudProvider.AZURE and has_live_source)
+            else (
+                "Azure Monitor Metrics & ARM Resource Graph"
+                if provider == CloudProvider.AZURE
+                else "Google Cloud Monitoring & Cloud Asset Inventory"
+            )
+        )
+
+        unmonitored_resources = [
+            r
+            for r in resources
+            if r.configuration.get("has_metrics") is False
+            or "avg_cpu_percent" not in r.configuration
+        ]
+        limitations = [
+            "Metrics reflect the observed historical window; transient off-peak periods may not capture periodic batch spikes.",
+            "Advisory FinOps analysis only; strictly non-mutating with zero automated cloud resource modifications.",
+        ]
+        if unmonitored_resources:
+            unmon_sample = ", ".join(r.resource_name for r in unmonitored_resources[:3])
+            suffix = (
+                f" (+{len(unmonitored_resources) - 3} more)"
+                if len(unmonitored_resources) > 3
+                else ""
+            )
+            limitations.append(
+                f"{len(unmonitored_resources)} resource(s) lack runtime performance metrics ({unmon_sample}{suffix}). Incomplete coverage noted; no idle waste inferred without telemetry."
+            )
 
         coverage_summary = TelemetryCoverageSummary(
             metric_window_days=self.metric_window_days,
@@ -145,12 +175,9 @@ class WasteAndTechnicalDebtEngine:
             unmonitored_resources_count=unmonitored_count,
             coverage_percentage=coverage_pct,
             last_telemetry_sync=datetime.now(UTC),
-            is_cached=True,
+            is_cached=not has_live_source,
             confidence_score=Decimal("0.90") if coverage_pct >= 80 else Decimal("0.75"),
-            limitations_and_gaps=[
-                "Metrics reflect the observed historical window; transient off-peak periods may not capture periodic batch spikes.",
-                "Advisory analysis only; does not perform automated decommissioning or mutation.",
-            ],
+            limitations_and_gaps=limitations,
         )
 
         return (
@@ -163,6 +190,75 @@ class WasteAndTechnicalDebtEngine:
 
     def _get_group_name(self, res: DiscoveredResource) -> str:
         return res.resource_group or res.project_id or "DefaultScope"
+
+    def _is_dr_or_standby(self, res: DiscoveredResource) -> bool:
+        """Identify intentional disaster recovery, standby, or passive failover resources."""
+        name_lower = res.resource_name.lower()
+        parts = re.split(r"[-_./]", name_lower)
+        if any(p in ("dr", "standby", "failover", "passive", "secondary") for p in parts):
+            return True
+        for k, v in res.tags_or_labels.items():
+            k_low = k.lower()
+            v_low = str(v).lower()
+            if k_low in (
+                "dr",
+                "disaster-recovery",
+                "standby",
+                "role",
+                "purpose",
+                "environment",
+                "env",
+            ):
+                if any(kw in v_low for kw in ("dr", "standby", "failover", "secondary", "passive")):
+                    return True
+        return False
+
+    def _is_batch_or_scheduled(self, res: DiscoveredResource) -> bool:
+        """Identify intermittent batch, cron, worker, or scheduled pipeline workloads."""
+        name_lower = res.resource_name.lower()
+        parts = re.split(r"[-_./]", name_lower)
+        if any(
+            p in ("batch", "cron", "scheduled", "etl", "pipeline", "job", "worker") for p in parts
+        ):
+            return True
+        for k, v in res.tags_or_labels.items():
+            k_low = k.lower()
+            v_low = str(v).lower()
+            if any(kw in k_low for kw in ("batch", "schedule", "workload-type", "frequency")):
+                return True
+            if any(kw in v_low for kw in ("batch", "cron", "scheduled", "etl", "pipeline")):
+                return True
+        return False
+
+    def _has_compliance_or_retention_hold(self, res: DiscoveredResource) -> bool:
+        """Check if storage resource has explicit compliance or archival retention tags."""
+        for k, v in res.tags_or_labels.items():
+            k_low = k.lower()
+            v_low = str(v).lower()
+            if any(
+                kw in k_low for kw in ("retention", "compliance", "legal-hold", "archive", "audit")
+            ):
+                return True
+            if any(
+                kw in v_low for kw in ("retention", "compliance", "legal-hold", "archive", "audit")
+            ):
+                return True
+        name_lower = res.resource_name.lower()
+        return any(kw in name_lower for kw in ("retention", "archive", "legal-hold", "audit"))
+
+    def _has_active_reservation(self, res: DiscoveredResource) -> bool:
+        """Check if resource is associated with an upfront reservation or savings plan."""
+        cfg = res.configuration
+        if cfg.get("reservation_id") or cfg.get("savings_plan_id"):
+            return True
+        for k, v in res.tags_or_labels.items():
+            k_low = k.lower()
+            v_low = str(v).lower()
+            if any(kw in k_low for kw in ("reservation", "savings-plan", "commitment")):
+                return True
+            if any(kw in v_low for kw in ("reserved", "savings-plan")):
+                return True
+        return False
 
     def _evaluate_resource_waste(
         self, provider: CloudProvider, scope_id: str, res: DiscoveredResource
@@ -190,6 +286,19 @@ class WasteAndTechnicalDebtEngine:
                     or "unattached" in res.resource_name.lower()
                 )
                 if is_unattached:
+                    has_retention = self._has_compliance_or_retention_hold(res)
+                    conf: Literal["high", "medium", "provisional"] = (
+                        "provisional" if has_retention else "high"
+                    )
+                    sev: Literal["critical", "high", "medium", "low"] = (
+                        "medium" if has_retention else "high"
+                    )
+                    rec = (
+                        "Explicit compliance/retention tag detected. Retain disk pursuant to statutory data retention policy or archive to cold tier; do not delete without compliance authorization."
+                        if has_retention
+                        else "Take a point-in-time snapshot for recovery if required, then decommission the unattached disk."
+                    )
+                    savings = Decimal("0.00") if has_retention else cost
                     findings.append(
                         ResourceWasteFinding(
                             id=f"waste-unattached-disk-{res.resource_name}",
@@ -200,21 +309,29 @@ class WasteAndTechnicalDebtEngine:
                             scope_id=scope_id,
                             group_name=group_name,
                             category="unattached_storage",
-                            severity="high",
-                            title=f"Unattached Managed Disk '{res.resource_name}'",
-                            description="Managed disk is not attached to any virtual machine, incurring ongoing storage fees with zero I/O utilization.",
-                            evidence=f"Disk state is '{disk_state or 'Unattached'}'; managedBy property is null; 0 read/write IOPS recorded.",
+                            severity=sev,
+                            title=f"{'Archived / Retained' if has_retention else 'Unattached'} Managed Disk '{res.resource_name}'",
+                            description=(
+                                "Managed disk is unattached but marked with retention/compliance hold. Incurring ongoing storage charges with zero active I/O."
+                                if has_retention
+                                else "Managed disk is not attached to any virtual machine, incurring ongoing storage fees with zero I/O utilization."
+                            ),
+                            evidence=f"Disk state is '{disk_state or 'Unattached'}'; managedBy is null; compliance hold: {has_retention}.",
                             metric_observed="0 IOPS over observation window",
                             current_monthly_spend=cost,
-                            potential_monthly_savings=cost,
+                            potential_monthly_savings=savings,
                             spend_basis=basis,
-                            confidence="high",
-                            remediation_recommendation="Take a point-in-time snapshot for recovery if required, then decommission the unattached disk.",
+                            confidence=conf,
+                            remediation_recommendation=rec,
                             pre_remediation_considerations=[
-                                "Confirm with team whether disk contains forensic logs or orphaned database state.",
+                                "Confirm with team whether disk contains statutory archival records, forensic logs, or orphaned database state.",
                                 "Create a backup snapshot prior to deletion.",
                             ],
-                            double_counting_prevention_note="Full disk cost reclaimed; no compute savings overlap.",
+                            double_counting_prevention_note=(
+                                "No automated savings assumed due to compliance retention hold."
+                                if has_retention
+                                else "Full disk cost reclaimed; no compute savings overlap."
+                            ),
                         )
                     )
 
@@ -226,69 +343,129 @@ class WasteAndTechnicalDebtEngine:
                     or "stopped" in power_state.lower()
                     or "deallocated" in res.resource_name.lower()
                 )
+                is_dr = self._is_dr_or_standby(res)
+                has_reservation = self._has_active_reservation(res)
                 if is_deallocated:
-                    # Note: Deallocated VMs only pause compute; disks are still billed.
-                    # We compute pure compute savings (e.g. 85% of total VM bundle, assuming 15% is disk).
-                    compute_portion = _quantize(cost * Decimal("0.85"))
-                    findings.append(
-                        ResourceWasteFinding(
-                            id=f"waste-stopped-vm-{res.resource_name}",
-                            resource_id=res.resource_id,
-                            resource_name=res.resource_name,
-                            native_resource_type=res.native_resource_type,
-                            provider=provider,
-                            scope_id=scope_id,
-                            group_name=group_name,
-                            category="stopped_compute",
-                            severity="medium",
-                            title=f"Deallocated Virtual Machine '{res.resource_name}'",
-                            description="Virtual machine has been deallocated for over 14 days. Compute billing is suspended, but attached OS/data disks continue incurring storage charges.",
-                            evidence=f"PowerState is '{power_state or 'PowerState/deallocated'}'; zero CPU cycles used in observation window.",
-                            metric_observed="0% CPU (PowerState/deallocated)",
-                            current_monthly_spend=cost,
-                            potential_monthly_savings=compute_portion,
-                            spend_basis=basis,
-                            confidence="high",
-                            remediation_recommendation="If this VM was temporary or superseded, snapshot attached OS disks and delete the VM and network interfaces.",
-                            pre_remediation_considerations=[
-                                "Check if scheduled batch cron or seasonal disaster recovery procedures utilize this host.",
-                                "Verify internal DNS records or static IP reservations.",
-                            ],
-                            double_counting_prevention_note="Only VM compute allocation counted; attached disk charges handled independently.",
+                    if not is_dr:
+                        # Deallocated VM paused compute; disks still billed.
+                        compute_portion = (
+                            Decimal("0.00")
+                            if has_reservation
+                            else _quantize(cost * Decimal("0.85"))
                         )
-                    )
-                else:
-                    # Check for sustained low CPU (idle compute)
-                    avg_cpu = cfg.get("avg_cpu_percent")
-                    if avg_cpu is not None and float(avg_cpu) < 5.0:
-                        savings = _quantize(cost * Decimal("0.60"))  # Right-size or stop savings
                         findings.append(
                             ResourceWasteFinding(
-                                id=f"waste-idle-vm-{res.resource_name}",
+                                id=f"waste-stopped-vm-{res.resource_name}",
                                 resource_id=res.resource_id,
                                 resource_name=res.resource_name,
                                 native_resource_type=res.native_resource_type,
                                 provider=provider,
                                 scope_id=scope_id,
                                 group_name=group_name,
-                                category="idle_compute",
-                                severity="high",
-                                title=f"Sustained Low CPU VM '{res.resource_name}'",
-                                description=f"Virtual machine has sustained low CPU utilization averaging {avg_cpu}% over the past {self.metric_window_days} days.",
-                                evidence=f"Azure Monitor average CPU: {avg_cpu}%, peak P95: {cfg.get('p95_cpu_percent', avg_cpu)}%.",
-                                metric_observed=f"Avg CPU {avg_cpu}% (window: {self.metric_window_days}d)",
+                                category="stopped_compute",
+                                severity="medium",
+                                title=f"Deallocated Virtual Machine '{res.resource_name}'",
+                                description=(
+                                    "Virtual machine has been deallocated for over 14 days under an active reservation commitment."
+                                    if has_reservation
+                                    else "Virtual machine has been deallocated for over 14 days. Compute billing is suspended, but attached OS/data disks continue incurring storage charges."
+                                ),
+                                evidence=f"PowerState is '{power_state or 'PowerState/deallocated'}'; active reservation commitment: {has_reservation}.",
+                                metric_observed="0% CPU (PowerState/deallocated)",
                                 current_monthly_spend=cost,
-                                potential_monthly_savings=savings,
+                                potential_monthly_savings=compute_portion,
                                 spend_basis=basis,
                                 confidence="high",
-                                remediation_recommendation="Right-size to a burstable B-series SKU (e.g. Standard_B1s) or automate scheduled shutdown outside business hours.",
+                                remediation_recommendation=(
+                                    "VM is covered by an active reservation. Decommissioning does not reduce committed spend; reassign or exchange reservation."
+                                    if has_reservation
+                                    else "If this VM was temporary or superseded, snapshot attached OS disks and delete the VM and network interfaces."
+                                ),
                                 pre_remediation_considerations=[
-                                    "Confirm memory utilization is also low before downsizing compute.",
-                                    "Ensure downtime window scheduled for VM resize.",
+                                    "Check if scheduled batch cron or seasonal disaster recovery procedures utilize this host.",
+                                    "Verify internal DNS records or static IP reservations.",
                                 ],
-                                double_counting_prevention_note="Reflects right-sizing delta; not full decommission.",
+                                double_counting_prevention_note=(
+                                    "Committed reservation; $0 ongoing compute savings."
+                                    if has_reservation
+                                    else "Only VM compute allocation counted; attached disk charges handled independently."
+                                ),
                             )
                         )
+                else:
+                    # Check for sustained low CPU (idle compute)
+                    avg_cpu = cfg.get("avg_cpu_percent")
+                    is_batch = self._is_batch_or_scheduled(res)
+                    if avg_cpu is not None and float(avg_cpu) < 5.0:
+                        if is_batch:
+                            # Intermittent batch workload: low avg CPU is characteristic, not idle waste
+                            findings.append(
+                                ResourceWasteFinding(
+                                    id=f"waste-batch-vm-{res.resource_name}",
+                                    resource_id=res.resource_id,
+                                    resource_name=res.resource_name,
+                                    native_resource_type=res.native_resource_type,
+                                    provider=provider,
+                                    scope_id=scope_id,
+                                    group_name=group_name,
+                                    category="idle_compute",
+                                    severity="low",
+                                    title=f"Intermittent Batch Workload on Dedicated VM '{res.resource_name}'",
+                                    description=f"Batch/worker VM exhibits low average monthly CPU ({avg_cpu}%), characteristic of intermittent task execution. Rather than permanently downsizing SKU, automate start/stop schedules or migrate to Azure Container Apps / Batch.",
+                                    evidence=f"Identified as batch workload; average CPU {avg_cpu}% over {self.metric_window_days} days.",
+                                    metric_observed=f"Avg CPU {avg_cpu}% (intermittent schedule)",
+                                    current_monthly_spend=cost,
+                                    potential_monthly_savings=_quantize(cost * Decimal("0.35")),
+                                    spend_basis=basis,
+                                    confidence="medium",
+                                    remediation_recommendation="Implement Azure Automation runbooks to shut down VM outside execution windows, or containerize task into Azure Batch.",
+                                    pre_remediation_considerations=[
+                                        "Do not downsize CPU if batch workloads require burst capacity during execution windows.",
+                                    ],
+                                    double_counting_prevention_note="Automated shutoff scheduling savings estimate.",
+                                )
+                            )
+                        elif not is_dr:
+                            savings = (
+                                Decimal("0.00")
+                                if has_reservation
+                                else _quantize(cost * Decimal("0.60"))
+                            )
+                            findings.append(
+                                ResourceWasteFinding(
+                                    id=f"waste-idle-vm-{res.resource_name}",
+                                    resource_id=res.resource_id,
+                                    resource_name=res.resource_name,
+                                    native_resource_type=res.native_resource_type,
+                                    provider=provider,
+                                    scope_id=scope_id,
+                                    group_name=group_name,
+                                    category="idle_compute",
+                                    severity="high",
+                                    title=f"Sustained Low CPU VM '{res.resource_name}'",
+                                    description=f"Virtual machine has sustained low CPU utilization averaging {avg_cpu}% over the past {self.metric_window_days} days.",
+                                    evidence=f"Azure Monitor average CPU: {avg_cpu}%, peak P95: {cfg.get('p95_cpu_percent', avg_cpu)}%.",
+                                    metric_observed=f"Avg CPU {avg_cpu}% (window: {self.metric_window_days}d)",
+                                    current_monthly_spend=cost,
+                                    potential_monthly_savings=savings,
+                                    spend_basis=basis,
+                                    confidence="high",
+                                    remediation_recommendation=(
+                                        "Active reservation detected; evaluate exchanging reservation SKU before downsizing compute."
+                                        if has_reservation
+                                        else "Right-size to a burstable B-series SKU (e.g. Standard_B1s) or automate scheduled shutdown outside business hours."
+                                    ),
+                                    pre_remediation_considerations=[
+                                        "Confirm memory utilization is also low before downsizing compute.",
+                                        "Ensure downtime window scheduled for VM resize.",
+                                    ],
+                                    double_counting_prevention_note=(
+                                        "Committed reservation prevents monthly compute savings."
+                                        if has_reservation
+                                        else "Reflects right-sizing delta; not full decommission."
+                                    ),
+                                )
+                            )
 
             # 3. Unassociated Static Public IP
             if res.native_resource_type.lower() == "microsoft.network/publicipaddresses":
@@ -331,8 +508,12 @@ class WasteAndTechnicalDebtEngine:
             if res.native_resource_type.lower() == "microsoft.web/serverfarms":
                 sku = (res.sku_or_tier or "").lower()
                 avg_cpu = cfg.get("avg_cpu_percent")
-                if ("b2" in sku or "p1v3" in sku or "p2v3" in sku or "s2" in sku) and (
-                    avg_cpu is None or float(avg_cpu) < 10.0
+                is_dr = self._is_dr_or_standby(res)
+                # CRITICAL: avg_cpu must be present and verified low. Unmonitored plans belong in Technical Debt.
+                if (
+                    not is_dr
+                    and ("b2" in sku or "p1v3" in sku or "p2v3" in sku or "s2" in sku)
+                    and (avg_cpu is not None and float(avg_cpu) < 10.0)
                 ):
                     downsize_savings = _quantize(cost * Decimal("0.50"))
                     findings.append(
@@ -347,9 +528,9 @@ class WasteAndTechnicalDebtEngine:
                             category="oversized_compute",
                             severity="medium",
                             title=f"Oversized App Service Plan '{res.resource_name}' ({res.sku_or_tier})",
-                            description=f"App Service Plan is provisioned with high compute capacity ({res.sku_or_tier}) but experiences sustained low CPU and memory utilization.",
-                            evidence=f"Average CPU utilization is {avg_cpu or '3.8'}%; minimal HTTP request traffic across hosted sites.",
-                            metric_observed=f"Avg CPU {avg_cpu or '3.8'}% over 30d",
+                            description=f"App Service Plan is provisioned with high compute capacity ({res.sku_or_tier}) but experiences sustained low CPU utilization ({avg_cpu}%).",
+                            evidence=f"Azure Monitor average CPU is {avg_cpu}%; peak P95: {cfg.get('p95_cpu_percent', avg_cpu)}%.",
+                            metric_observed=f"Avg CPU {avg_cpu}% over {self.metric_window_days}d",
                             current_monthly_spend=cost,
                             potential_monthly_savings=downsize_savings,
                             spend_basis=basis,
@@ -378,7 +559,8 @@ class WasteAndTechnicalDebtEngine:
                     in ("zoneredundant", "samezone")
                     or "ha" in res.resource_name.lower()
                 )
-                if is_non_prod and ha_enabled:
+                is_dr = self._is_dr_or_standby(res)
+                if not is_dr and is_non_prod and ha_enabled:
                     ha_savings = _quantize(cost * Decimal("0.50"))
                     findings.append(
                         ResourceWasteFinding(
@@ -413,8 +595,11 @@ class WasteAndTechnicalDebtEngine:
                 and res.native_resource_type.lower() == "microsoft.cognitiveservices/accounts"
             ):
                 sku = (res.sku_or_tier or "").upper()
-                if sku.startswith("S0") and (
-                    cfg.get("token_usage", 0) == 0 or cfg.get("avg_tpm_utilization", 0) < 5.0
+                has_token_metrics = "token_usage" in cfg or "avg_tpm_utilization" in cfg
+                if (
+                    sku.startswith("S0")
+                    and has_token_metrics
+                    and (cfg.get("token_usage", 0) == 0 or cfg.get("avg_tpm_utilization", 0) < 5.0)
                 ):
                     ai_savings = _quantize(cost if cost > 0 else Decimal("25.00"))
                     findings.append(
@@ -430,8 +615,8 @@ class WasteAndTechnicalDebtEngine:
                             severity="medium",
                             title=f"Unutilized Azure AI / OpenAI Account '{res.resource_name}'",
                             description="Azure AI Services account is provisioned on standard S0 tier with near-zero token consumption over the observation window.",
-                            evidence=f"SKU is {res.sku_or_tier or 'S0'}; 0 TPM inference utilization recorded over {self.metric_window_days} days.",
-                            metric_observed="0 TPM utilization over 30d",
+                            evidence=f"SKU is {res.sku_or_tier or 'S0'}; verified token metrics confirm {cfg.get('token_usage', 0)} tokens / {cfg.get('avg_tpm_utilization', 0)} TPM.",
+                            metric_observed=f"{cfg.get('avg_tpm_utilization', 0)} TPM utilization over {self.metric_window_days}d",
                             current_monthly_spend=cost if cost > 0 else Decimal("25.00"),
                             potential_monthly_savings=ai_savings,
                             spend_basis=basis,
@@ -459,6 +644,19 @@ class WasteAndTechnicalDebtEngine:
                 )
                 if is_unattached:
                     disk_cost = _quantize(cost if cost > 0 else Decimal("8.00"))
+                    has_retention = self._has_compliance_or_retention_hold(res)
+                    gcp_conf: Literal["high", "medium", "provisional"] = (
+                        "provisional" if has_retention else "high"
+                    )
+                    gcp_sev: Literal["critical", "high", "medium", "low"] = (
+                        "medium" if has_retention else "high"
+                    )
+                    rec = (
+                        "Explicit compliance/retention tag detected. Retain disk pursuant to data retention policy or archive to cold storage bucket; do not delete without compliance authorization."
+                        if has_retention
+                        else "Create a persistent disk snapshot if data retention is required, then delete the unattached disk."
+                    )
+                    savings = Decimal("0.00") if has_retention else disk_cost
                     findings.append(
                         ResourceWasteFinding(
                             id=f"waste-unattached-gcp-disk-{res.resource_name}",
@@ -469,20 +667,28 @@ class WasteAndTechnicalDebtEngine:
                             scope_id=scope_id,
                             group_name=group_name,
                             category="unattached_storage",
-                            severity="high",
-                            title=f"Unattached Persistent Disk '{res.resource_name}'",
-                            description="GCP Persistent Disk is not attached to any Compute Engine VM instance, continuing to incur monthly GiB storage allocation fees.",
-                            evidence="GCP Asset configuration 'users' list is empty; 0 read/write IOPS recorded in Cloud Monitoring.",
+                            severity=gcp_sev,
+                            title=f"{'Archived / Retained' if has_retention else 'Unattached'} Persistent Disk '{res.resource_name}'",
+                            description=(
+                                "GCP Persistent Disk is unattached but marked with retention/compliance hold. Incurring ongoing storage charges."
+                                if has_retention
+                                else "GCP Persistent Disk is not attached to any Compute Engine VM instance, continuing to incur monthly GiB storage allocation fees."
+                            ),
+                            evidence=f"GCP Asset configuration 'users' list is empty; compliance hold: {has_retention}.",
                             metric_observed="0 read/write IOPS over 30d",
                             current_monthly_spend=disk_cost,
-                            potential_monthly_savings=disk_cost,
+                            potential_monthly_savings=savings,
                             spend_basis=basis,
-                            confidence="high",
-                            remediation_recommendation="Create a persistent disk snapshot if data retention is required, then delete the unattached disk.",
+                            confidence=gcp_conf,
+                            remediation_recommendation=rec,
                             pre_remediation_considerations=[
                                 "Confirm whether disk contains historical database backups or logs before decommissioning.",
                             ],
-                            double_counting_prevention_note="Full disk cost reclaimed.",
+                            double_counting_prevention_note=(
+                                "Compliance hold prevents automated deletion."
+                                if has_retention
+                                else "Full disk cost reclaimed."
+                            ),
                         )
                     )
 
@@ -539,8 +745,14 @@ class WasteAndTechnicalDebtEngine:
                     or res.tags_or_labels.get("env", "").lower() in ("dev", "test")
                 )
                 availability = cfg.get("settings", {}).get("availabilityType", "REGIONAL")
-                if is_non_prod and (
-                    availability.upper() == "REGIONAL" or "prod" not in res.resource_name.lower()
+                is_dr = self._is_dr_or_standby(res)
+                if (
+                    not is_dr
+                    and is_non_prod
+                    and (
+                        availability.upper() == "REGIONAL"
+                        or "prod" not in res.resource_name.lower()
+                    )
                 ):
                     ha_savings = _quantize(cost * Decimal("0.50"))
                     findings.append(
@@ -579,7 +791,14 @@ class WasteAndTechnicalDebtEngine:
                 is_dev = (
                     "dev" in res.resource_name.lower() or res.tags_or_labels.get("env") == "dev"
                 )
-                if is_dev and (min_instances > 0 or "api" in res.resource_name.lower()):
+                is_dr = self._is_dr_or_standby(res)
+                is_batch = self._is_batch_or_scheduled(res)
+                if (
+                    is_dev
+                    and not is_dr
+                    and not is_batch
+                    and (min_instances > 0 or "api" in res.resource_name.lower())
+                ):
                     min_savings = _quantize(cost * Decimal("0.40"))
                     findings.append(
                         ResourceWasteFinding(
@@ -665,7 +884,12 @@ class WasteAndTechnicalDebtEngine:
             diag_configured = cfg.get("diagnosticSettings") or "log" in res.canonical_service_id
             if (
                 res.service_category
-                in (ServiceCategory.COMPUTE, ServiceCategory.DATABASE, ServiceCategory.SECURITY)
+                in (
+                    ServiceCategory.COMPUTE,
+                    ServiceCategory.DATABASE,
+                    ServiceCategory.SECURITY,
+                    ServiceCategory.AI_ML,
+                )
                 and not diag_configured
                 and res.canonical_service_id != "azure-monitor"
             ):

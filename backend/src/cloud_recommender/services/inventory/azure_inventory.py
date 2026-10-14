@@ -282,6 +282,72 @@ class AzureInventoryService:
             )
         return await self._arm_get_all(url, token)
 
+    async def _fetch_live_resource_metrics(
+        self,
+        arm_id: str,
+        native_type: str,
+        token: str,
+        metric_window_days: int = 30,
+    ) -> dict[str, Any]:
+        """Query Azure Monitor metrics for a discovered resource if supported."""
+        type_lower = native_type.lower()
+        metric_names: list[str] = []
+        if "serverfarms" in type_lower or "virtualmachines" in type_lower:
+            metric_names = ["CpuPercentage"]
+        elif "dbforpostgresql" in type_lower:
+            metric_names = ["cpu_percent", "active_connections"]
+        elif "storageaccounts" in type_lower:
+            metric_names = ["UsedCapacity", "Transactions"]
+
+        if not metric_names:
+            return {"has_metrics": False, "telemetry_source": "none"}
+
+        url = (
+            f"{self.settings.azure_arm_base_url.rstrip('/')}{arm_id}/providers/"
+            f"microsoft.insights/metrics?api-version=2018-01-01"
+            f"&metricnames={','.join(metric_names)}"
+            f"&aggregation=Average"
+            f"&interval=PT1H"
+            f"&timespan=P{metric_window_days}D"
+        )
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    metrics_result: dict[str, Any] = {
+                        "has_metrics": True,
+                        "telemetry_source": "Azure Monitor Metrics API (Live)",
+                        "metric_window_days": metric_window_days,
+                    }
+                    found_any_data = False
+                    for metric_item in data.get("value", []):
+                        m_name = metric_item.get("name", {}).get("value")
+                        ts_list = metric_item.get("timeseries", [])
+                        if ts_list:
+                            data_points = ts_list[0].get("data", [])
+                            avg_vals = [
+                                pt.get("average")
+                                for pt in data_points
+                                if pt.get("average") is not None
+                            ]
+                            if avg_vals:
+                                found_any_data = True
+                                mean_val = sum(avg_vals) / len(avg_vals)
+                                max_val = max(avg_vals)
+                                if m_name in ("CpuPercentage", "cpu_percent"):
+                                    metrics_result["avg_cpu_percent"] = round(mean_val, 2)
+                                    metrics_result["p95_cpu_percent"] = round(max_val, 2)
+                                elif m_name == "active_connections":
+                                    metrics_result["avg_connections"] = round(mean_val, 2)
+                    if found_any_data:
+                        return metrics_result
+        except Exception as exc:
+            logger.debug("azure_monitor_metrics_fetch_skipped", arm_id=arm_id, error=str(exc))
+
+        return {"has_metrics": False, "telemetry_source": "none"}
+
     def _normalize_resource_metadata(
         self, raw: dict[str, Any]
     ) -> tuple[str, str, ServiceCategory, str | None, str | None, str]:
@@ -1287,6 +1353,13 @@ class AzureInventoryService:
 
                 rg_subtotal += monthly
 
+                res_config = dict(raw_res.get("properties") or {})
+                if token:
+                    live_metrics = await self._fetch_live_resource_metrics(
+                        arm_id, native_type, token, metric_window_days
+                    )
+                    res_config.update(live_metrics)
+
                 d_res = DiscoveredResource(
                     provider=CloudProvider.AZURE,
                     resource_id=arm_id,
@@ -1303,7 +1376,7 @@ class AzureInventoryService:
                     subscription_id=sub_id,
                     resource_group=rg_name,
                     tags_or_labels=tags,
-                    configuration=raw_res.get("properties") or {},
+                    configuration=res_config,
                     relationships=[],
                     origin="discovered",
                     pricing_status=status,  # type: ignore[arg-type]

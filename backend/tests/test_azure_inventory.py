@@ -284,3 +284,41 @@ async def test_azure_inventory_live_token_simulation_and_rollups(
         rec_ids = [rec.id for rec in result.recommendations]
         assert any("cross-region" in rid for rid in rec_ids)  # Canadacentral DB vs Centralindia App
         assert any("empty-rg" in rid for rid in rec_ids)  # DefaultResourceGroup-CID
+
+
+@pytest.mark.asyncio
+async def test_fetch_live_resource_metrics(mock_azure_service: AzureInventoryService) -> None:
+    """Verify _fetch_live_resource_metrics correctly parses Azure Monitor metric timeseries."""
+    mock_metrics_payload = {
+        "value": [
+            {
+                "name": {"value": "CpuPercentage"},
+                "timeseries": [
+                    {
+                        "data": [
+                            {"average": 15.4},
+                            {"average": 22.8},
+                            {"average": 18.2},
+                        ]
+                    }
+                ],
+            }
+        ]
+    }
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.json = lambda: mock_metrics_payload
+
+    with patch("httpx.AsyncClient.get", return_value=mock_resp):
+        metrics = await mock_azure_service._fetch_live_resource_metrics(
+            arm_id="/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Web/serverfarms/asp-test",
+            native_type="Microsoft.Web/serverfarms",
+            token="test-token",
+            metric_window_days=14,
+        )
+        assert metrics["has_metrics"] is True
+        assert metrics["telemetry_source"] == "Azure Monitor Metrics API (Live)"
+        assert metrics["avg_cpu_percent"] == 18.8
+        assert metrics["p95_cpu_percent"] == 22.8
+        assert metrics["metric_window_days"] == 14

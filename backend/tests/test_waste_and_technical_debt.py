@@ -317,3 +317,236 @@ async def test_api_gcp_analyze_returns_waste_and_technical_debt_rollups():
             assert "potential_monthly_savings" in grp
             assert "waste_findings_count" in grp
             assert "technical_debt_count" in grp
+
+
+def test_waste_engine_false_positive_dr_standby_exempt():
+    """Verify disaster-recovery / standby VM is exempted from stopped compute waste."""
+    engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
+    dr_vm = DiscoveredResource(
+        provider=CloudProvider.AZURE,
+        resource_id="/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm-prod-secondary-dr",
+        resource_name="vm-prod-secondary-dr",
+        native_resource_type="Microsoft.Compute/virtualMachines",
+        canonical_service_id="azure-virtual-machine",
+        service_category=ServiceCategory.COMPUTE,
+        region="eastus",
+        sku_or_tier="Standard_D4s_v5",
+        parent_scope_id="/subscriptions/sub1/resourceGroups/rg1",
+        resource_group="rg1",
+        tags_or_labels={"role": "disaster-recovery", "env": "prod"},
+        configuration={"powerState": "PowerState/deallocated"},
+        estimated_monthly_cost=Decimal("150.00"),
+    )
+    group = ScopeCostGroup(
+        group_id="/subscriptions/sub1/resourceGroups/rg1",
+        group_name="rg1",
+        group_type="azure_resource_group",
+        location="eastus",
+        resource_count=1,
+        verified_monthly_subtotal=Decimal("150.00"),
+        total_monthly=Decimal("150.00"),
+        total_five_month=Decimal("750.00"),
+        total_annual=Decimal("1800.00"),
+        resources=[dr_vm],
+    )
+
+    waste, _, tot_monthly, _, _ = engine.evaluate_scope(
+        CloudProvider.AZURE, "sub1", [dr_vm], [group]
+    )
+
+    # Standby DR VM should NOT be flagged as waste
+    stopped_waste = [w for w in waste if w.category == "stopped_compute"]
+    assert len(stopped_waste) == 0
+    assert tot_monthly == Decimal("0.00")
+
+
+def test_waste_engine_false_positive_batch_workload():
+    """Verify scheduled batch / worker host is identified with batch_scheduling advice rather than SKU downsizing."""
+    engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
+    batch_vm = DiscoveredResource(
+        provider=CloudProvider.AZURE,
+        resource_id="/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm-etl-pipeline-worker",
+        resource_name="vm-etl-pipeline-worker",
+        native_resource_type="Microsoft.Compute/virtualMachines",
+        canonical_service_id="azure-virtual-machine",
+        service_category=ServiceCategory.COMPUTE,
+        region="eastus",
+        sku_or_tier="Standard_F4s_v2",
+        parent_scope_id="/subscriptions/sub1/resourceGroups/rg1",
+        resource_group="rg1",
+        tags_or_labels={"workload-type": "batch-nightly"},
+        configuration={"powerState": "PowerState/running", "avg_cpu_percent": 3.4},
+        estimated_monthly_cost=Decimal("120.00"),
+    )
+    group = ScopeCostGroup(
+        group_id="/subscriptions/sub1/resourceGroups/rg1",
+        group_name="rg1",
+        group_type="azure_resource_group",
+        location="eastus",
+        resource_count=1,
+        verified_monthly_subtotal=Decimal("120.00"),
+        total_monthly=Decimal("120.00"),
+        total_five_month=Decimal("600.00"),
+        total_annual=Decimal("1440.00"),
+        resources=[batch_vm],
+    )
+
+    waste, _, _, _, _ = engine.evaluate_scope(CloudProvider.AZURE, "sub1", [batch_vm], [group])
+
+    assert len(waste) == 1
+    w = waste[0]
+    assert w.category == "idle_compute"
+    assert w.severity == "low"
+    assert "batch" in w.title.lower()
+    assert "runbooks" in w.remediation_recommendation.lower()
+
+
+def test_waste_engine_compliance_hold_disk_provisional():
+    """Verify unattached disk with compliance/retention hold has provisional confidence and $0 automated savings."""
+    engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
+    retained_disk = DiscoveredResource(
+        provider=CloudProvider.AZURE,
+        resource_id="/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/disks/disk-audit-archive-2025",
+        resource_name="disk-audit-archive-2025",
+        native_resource_type="Microsoft.Compute/disks",
+        canonical_service_id="azure-managed-disk",
+        service_category=ServiceCategory.STORAGE,
+        region="eastus",
+        sku_or_tier="Standard_LRS (512 GiB)",
+        parent_scope_id="/subscriptions/sub1/resourceGroups/rg1",
+        resource_group="rg1",
+        tags_or_labels={"retention": "7-years-compliance", "legal-hold": "true"},
+        configuration={"diskState": "Unattached", "managedBy": None},
+        estimated_monthly_cost=Decimal("20.48"),
+    )
+    group = ScopeCostGroup(
+        group_id="/subscriptions/sub1/resourceGroups/rg1",
+        group_name="rg1",
+        group_type="azure_resource_group",
+        location="eastus",
+        resource_count=1,
+        verified_monthly_subtotal=Decimal("20.48"),
+        total_monthly=Decimal("20.48"),
+        total_five_month=Decimal("102.40"),
+        total_annual=Decimal("245.76"),
+        resources=[retained_disk],
+    )
+
+    waste, _, tot_monthly, _, _ = engine.evaluate_scope(
+        CloudProvider.AZURE, "sub1", [retained_disk], [group]
+    )
+
+    assert len(waste) == 1
+    w = waste[0]
+    assert w.confidence == "provisional"
+    assert w.potential_monthly_savings == Decimal("0.00")
+    assert "retention" in w.title.lower() or "archived" in w.title.lower()
+    assert tot_monthly == Decimal("0.00")
+
+
+def test_waste_engine_reservation_commitment_zero_savings():
+    """Verify active reservation on deallocated VM prevents claiming phantom compute savings."""
+    engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
+    reserved_vm = DiscoveredResource(
+        provider=CloudProvider.AZURE,
+        resource_id="/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Compute/virtualMachines/vm-prepaid-db",
+        resource_name="vm-prepaid-db",
+        native_resource_type="Microsoft.Compute/virtualMachines",
+        canonical_service_id="azure-virtual-machine",
+        service_category=ServiceCategory.COMPUTE,
+        region="eastus",
+        sku_or_tier="Standard_D2s_v5",
+        parent_scope_id="/subscriptions/sub1/resourceGroups/rg1",
+        resource_group="rg1",
+        tags_or_labels={"env": "prod"},
+        configuration={"powerState": "PowerState/deallocated", "reservation_id": "res-998811"},
+        estimated_monthly_cost=Decimal("70.00"),
+    )
+    group = ScopeCostGroup(
+        group_id="/subscriptions/sub1/resourceGroups/rg1",
+        group_name="rg1",
+        group_type="azure_resource_group",
+        location="eastus",
+        resource_count=1,
+        verified_monthly_subtotal=Decimal("70.00"),
+        total_monthly=Decimal("70.00"),
+        total_five_month=Decimal("350.00"),
+        total_annual=Decimal("840.00"),
+        resources=[reserved_vm],
+    )
+
+    waste, _, tot_monthly, _, _ = engine.evaluate_scope(
+        CloudProvider.AZURE, "sub1", [reserved_vm], [group]
+    )
+
+    assert len(waste) == 1
+    w = waste[0]
+    assert w.potential_monthly_savings == Decimal("0.00")
+    assert "reservation" in w.double_counting_prevention_note.lower()
+    assert tot_monthly == Decimal("0.00")
+
+
+def test_waste_engine_unmonitored_cognitive_and_app_service_not_flagged_waste():
+    """Verify unmonitored resources without metrics are NOT flagged as waste, but categorized as Technical Debt."""
+    engine = WasteAndTechnicalDebtEngine(metric_window_days=30)
+    ai_acc = DiscoveredResource(
+        provider=CloudProvider.AZURE,
+        resource_id="/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.CognitiveServices/accounts/cog-doc-intelligence",
+        resource_name="cog-doc-intelligence",
+        native_resource_type="Microsoft.CognitiveServices/accounts",
+        canonical_service_id="azure-openai-foundry",
+        service_category=ServiceCategory.AI_ML,
+        region="eastus",
+        sku_or_tier="S0",
+        parent_scope_id="/subscriptions/sub1/resourceGroups/rg1",
+        resource_group="rg1",
+        tags_or_labels={"env": "prod", "owner": "ai-team"},
+        configuration={
+            "customSubDomainName": "cog-doc"
+        },  # Note: NO token_usage or avg_tpm_utilization
+        estimated_monthly_cost=Decimal("25.00"),
+    )
+    asp = DiscoveredResource(
+        provider=CloudProvider.AZURE,
+        resource_id="/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.Web/serverfarms/asp-core-service",
+        resource_name="asp-core-service",
+        native_resource_type="Microsoft.Web/serverfarms",
+        canonical_service_id="azure-app-service",
+        service_category=ServiceCategory.COMPUTE,
+        region="eastus",
+        sku_or_tier="P1v3",
+        parent_scope_id="/subscriptions/sub1/resourceGroups/rg1",
+        resource_group="rg1",
+        tags_or_labels={"env": "prod", "owner": "platform"},
+        configuration={"has_metrics": False},  # Note: avg_cpu_percent is None
+        estimated_monthly_cost=Decimal("80.00"),
+    )
+    group = ScopeCostGroup(
+        group_id="/subscriptions/sub1/resourceGroups/rg1",
+        group_name="rg1",
+        group_type="azure_resource_group",
+        location="eastus",
+        resource_count=2,
+        verified_monthly_subtotal=Decimal("105.00"),
+        total_monthly=Decimal("105.00"),
+        total_five_month=Decimal("525.00"),
+        total_annual=Decimal("1260.00"),
+        resources=[ai_acc, asp],
+    )
+
+    waste, debt, tot_monthly, _, coverage = engine.evaluate_scope(
+        CloudProvider.AZURE, "sub1", [ai_acc, asp], [group]
+    )
+
+    # Neither should be flagged as financial waste because metrics were absent
+    assert len(waste) == 0
+    assert tot_monthly == Decimal("0.00")
+
+    # Both should be flagged under Technical Debt for missing diagnostic settings
+    missing_diag_debts = [d for d in debt if d.debt_category == "missing_monitoring"]
+    assert len(missing_diag_debts) == 2
+    assert any("cog-doc-intelligence" in d.title for d in missing_diag_debts)
+    assert any("asp-core-service" in d.title for d in missing_diag_debts)
+
+    # Coverage summary should explicitly record unmonitored resources in limitations
+    assert any("lack runtime performance metrics" in lim for lim in coverage.limitations_and_gaps)
