@@ -459,3 +459,238 @@ export interface MultiCloudComparisonResponse {
   generated_at: string;
 }
 
+// ----------------------------------------------------------------------------
+// Centralized Monitoring, Telemetry & Historical Log Intelligence Types
+// ----------------------------------------------------------------------------
+
+export type TimeWindowPreset = "1h" | "24h" | "7d" | "30d" | "90d" | "custom";
+export type MetricInterval = "1m" | "5m" | "15m" | "1h" | "1d";
+export type LogSeverity = "critical" | "error" | "warning" | "informational" | "verbose";
+export type AlertSeverity = "critical" | "high" | "medium" | "low" | "info";
+export type ResourceHealthState = "healthy" | "degraded" | "failing" | "unmonitored" | "stopped";
+
+export interface MonitoringQueryRequest {
+  provider: CloudProvider;
+  scope_id: string;
+  resource_id?: string | null;
+  resource_group_filter?: string | null;
+  time_window?: TimeWindowPreset;
+  custom_start_time?: string | null;
+  custom_end_time?: string | null;
+  interval?: MetricInterval | null;
+  force_refresh?: boolean;
+}
+
+export interface MetricDataPoint {
+  timestamp: string;
+  value: number;
+  min_value?: number | null;
+  max_value?: number | null;
+  sample_count?: number;
+}
+
+export interface MetricSummary {
+  avg?: number | null;
+  max?: number | null;
+  min?: number | null;
+  current?: number | null;
+  p95?: number | null;
+}
+
+export interface MetricTimeSeries {
+  metric_name: string;
+  display_name: string;
+  unit: string;
+  resource_id: string;
+  resource_name: string;
+  data_points: MetricDataPoint[];
+  summary: MetricSummary;
+}
+
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  severity: LogSeverity;
+  resource_id: string;
+  resource_name: string;
+  service_type: string;
+  operation_name: string;
+  status: string;
+  message: string;
+  error_code?: string | null;
+  caller?: string | null;
+  correlation_id?: string | null;
+  raw_details?: Record<string, unknown>;
+}
+
+export interface ActiveAlertItem {
+  id: string;
+  title: string;
+  category:
+    | "capacity_exhaustion"
+    | "high_utilization"
+    | "elevated_error_rate"
+    | "elevated_latency"
+    | "service_failure"
+    | "connection_saturation"
+    | "unhealthy_replica"
+    | "security_risk"
+    | "unmonitored_service";
+  severity: AlertSeverity;
+  affected_resource_id: string;
+  affected_resource_name: string;
+  hierarchy_path: string;
+  status: "active" | "resolved" | "acknowledged";
+  observation_window: string;
+  supporting_evidence: string;
+  threshold_rule: string;
+  confidence: "high" | "medium" | "provisional";
+  urgency: "urgent" | "action_required" | "informational";
+  first_observed: string;
+  last_observed: string;
+  recommendation: string;
+  remediation_steps: string[];
+}
+
+export interface ResourceHealthRecord {
+  resource_id: string;
+  resource_name: string;
+  native_type: string;
+  health_state: ResourceHealthState;
+  summary: string;
+  reason?: string | null;
+  last_checked: string;
+  telemetry_source: string;
+}
+
+export interface MonitoringKPIStrip {
+  total_resources: number;
+  healthy_count: number;
+  degraded_count: number;
+  failing_count: number;
+  unmonitored_count: number;
+  active_alerts_count: number;
+  error_event_count: number;
+  error_rate_percentage?: string | null;
+  telemetry_coverage_percentage: string;
+  observed_monthly_spend?: string | null;
+  estimated_monthly_cost: string;
+  potential_monthly_savings: string;
+  technical_debt_items_count: number;
+}
+
+export interface ResourceGroupMonitoringSummary {
+  group_id: string;
+  group_name: string;
+  resource_count: number;
+  healthy_count: number;
+  failing_count: number;
+  active_alerts_count: number;
+  total_monthly_cost: string;
+  potential_monthly_savings: string;
+  telemetry_coverage_pct: string;
+}
+
+export interface RecurringErrorSummary {
+  error_signature: string;
+  error_code?: string | null;
+  affected_resources: string[];
+  frequency: number;
+  first_seen: string;
+  last_seen: string;
+  severity: LogSeverity;
+}
+
+export interface MonitoringOverviewResponse {
+  provider: CloudProvider;
+  scope_id: string;
+  scope_name: string;
+  time_window: string;
+  aggregation_interval: string;
+  start_time: string;
+  end_time: string;
+  query_timestamp: string;
+  is_live: boolean;
+  data_source: string;
+  telemetry_source: string;
+  kpis: MonitoringKPIStrip;
+  cpu_utilization_series: MetricTimeSeries[];
+  memory_utilization_series: MetricTimeSeries[];
+  error_rate_series: MetricTimeSeries[];
+  active_alerts: ActiveAlertItem[];
+  recent_failures: LogEntry[];
+  recurring_errors: RecurringErrorSummary[];
+  health_records: ResourceHealthRecord[];
+  resource_groups_summary: ResourceGroupMonitoringSummary[];
+  limitations_and_gaps: string[];
+}
+
+export interface ResourceCostAndUtilization {
+  monthly_cost?: string | number;
+  currency?: string;
+  utilization_summary?: string | number;
+  waste_identified?: boolean;
+  savings_potential?: string | number;
+  [key: string]: string | number | boolean | undefined;
+}
+
+export interface ResourceDetailMonitoringResponse {
+  resource: DiscoveredResource;
+  health: ResourceHealthRecord;
+  time_window: string;
+  aggregation_interval: string;
+  start_time: string;
+  end_time: string;
+  metrics: MetricTimeSeries[];
+  logs: LogEntry[];
+  alerts: ActiveAlertItem[];
+  dependencies: Array<{
+    target_id: string;
+    target_name: string;
+    target_type: string;
+    relation: string;
+    status: string;
+    latency_ms?: number;
+  }>;
+  cost_and_utilization: ResourceCostAndUtilization;
+  waste_findings: ResourceWasteFinding[];
+  technical_debt_items: TechnicalDebtItem[];
+  limitations: string[];
+}
+
+export interface LogSearchRequest {
+  provider: CloudProvider;
+  scope_id: string;
+  query?: string | null;
+  severity?: LogSeverity | null;
+  resource_id?: string | null;
+  time_window?: TimeWindowPreset;
+  page?: number;
+  page_size?: number;
+}
+
+export interface LogSearchResponse {
+  total_matched: number;
+  page_size: number;
+  logs: LogEntry[];
+  recurring_summaries: RecurringErrorSummary[];
+  query_window: string;
+  limitations: string[];
+}
+
+export interface MonitoringSourcesResponse {
+  azure_monitor: {
+    status: string;
+    is_live: boolean;
+    capabilities: string[];
+    retention_days: number;
+  };
+  gcp_monitoring: {
+    status: string;
+    is_live: boolean;
+    capabilities: string[];
+    retention_days: number;
+  };
+  policy: string;
+}
+

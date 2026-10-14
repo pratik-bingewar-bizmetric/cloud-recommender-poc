@@ -3,8 +3,14 @@ import {
   ArchitectureComponent,
   ClarifyingAnswer,
   CostSimulationResponse,
+  LogSearchRequest,
+  LogSearchResponse,
+  MonitoringOverviewResponse,
+  MonitoringQueryRequest,
+  MonitoringSourcesResponse,
   RecommendationReport,
   RequirementsAnalysisResponse,
+  ResourceDetailMonitoringResponse,
   WorkloadAssumptions,
   WorkloadProfile,
 } from "@/types";
@@ -194,5 +200,50 @@ export async function compareMultiCloud(
     body: JSON.stringify(payload),
   });
   return handleResponse<MultiCloudComparisonResponse>(res);
+}
+
+// ----------------------------------------------------------------------------
+// Centralized Monitoring, Telemetry, and Log Intelligence API
+// ----------------------------------------------------------------------------
+
+export async function getMonitoringOverview(
+  payload: MonitoringQueryRequest
+): Promise<MonitoringOverviewResponse> {
+  const res = await fetch(`${API_BASE_URL}/monitoring/overview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<MonitoringOverviewResponse>(res);
+}
+
+export async function getResourceMonitoringDetail(
+  payload: MonitoringQueryRequest
+): Promise<ResourceDetailMonitoringResponse> {
+  const res = await fetch(`${API_BASE_URL}/monitoring/resource`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<ResourceDetailMonitoringResponse>(res);
+}
+
+export async function searchMonitoringLogs(
+  payload: LogSearchRequest
+): Promise<LogSearchResponse> {
+  const res = await fetch(`${API_BASE_URL}/monitoring/logs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<LogSearchResponse>(res);
+}
+
+export async function getMonitoringSources(): Promise<MonitoringSourcesResponse> {
+  const res = await fetch(`${API_BASE_URL}/monitoring/sources`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<MonitoringSourcesResponse>(res);
 }
 

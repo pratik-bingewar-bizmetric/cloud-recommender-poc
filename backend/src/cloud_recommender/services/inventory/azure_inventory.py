@@ -1251,6 +1251,20 @@ class AzureInventoryService:
             sub_id, token=token, resource_group=resource_group_filter
         )
 
+        if not raw_rgs and not raw_resources:
+            logger.info(
+                "arm_discovery_returned_no_resources_falling_back_to_fixture", sub_id=sub_id
+            )
+            fixture = self._get_demo_fixture_analysis(sub_id, assumptions)
+            fixture.scope_name = f"{sub_id} (Benchmark Simulation)"
+            fixture.access_limitations = [
+                f"Live ARM discovery for subscription '{sub_id}' yielded no active resources or was unauthorized under the current Azure identity.",
+                "Displaying verified reference benchmark simulation for evaluation purposes. This does not represent live customer environment data.",
+                "To enable live telemetry, ensure subscription has deployed resources and the identity is assigned 'Reader' and 'Monitoring Reader' roles.",
+            ]
+            fixture.completeness_warning = f"Reference benchmark simulation loaded. Target subscription '{sub_id}' returned 0 live resources."
+            return fixture
+
         # Index resources by RG and collect server farms for hosting resolution
         rgs_to_raw_resources: dict[str, list[dict[str, Any]]] = {
             rg.get("name", ""): [] for rg in raw_rgs

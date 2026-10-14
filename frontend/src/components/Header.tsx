@@ -24,8 +24,8 @@ export interface HeaderProps {
   hasCost?: boolean;
   hasAssessment?: boolean;
   monthlyTotal?: string | null;
-  activeViewMode?: "architect" | "inventory" | "compare";
-  onViewModeChange?: (mode: "architect" | "inventory" | "compare") => void;
+  activeViewMode?: "architect" | "inventory" | "monitoring" | "compare";
+  onViewModeChange?: (mode: "architect" | "inventory" | "monitoring" | "compare") => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -260,6 +260,17 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               Subscription Hierarchy
+            </button>
+            <button
+              type="button"
+              onClick={() => onViewModeChange?.("monitoring")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition ${
+                activeViewMode === "monitoring"
+                  ? "bg-white text-blue-700 shadow-xs border border-slate-200/60"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Centralized Monitoring
             </button>
             <button
               type="button"

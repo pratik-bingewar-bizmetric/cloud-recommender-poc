@@ -9,6 +9,7 @@ import { SectionArchitecture } from "@/components/SectionArchitecture";
 import { SectionCostSimulator } from "@/components/SectionCostSimulator";
 import { SectionTradeOffs } from "@/components/SectionTradeOffs";
 import { SectionCloudScopeInventory } from "@/components/SectionCloudScopeInventory";
+import { SectionCentralizedMonitoring } from "@/components/SectionCentralizedMonitoring";
 import { SectionMultiCloudCompare } from "@/components/SectionMultiCloudCompare";
 import {
   ApiErrorDetail,
@@ -38,6 +39,7 @@ import {
   ShieldCheck,
   FolderTree,
   Scale,
+  Activity,
 } from "lucide-react";
 
 const DEFAULT_ASSUMPTIONS: WorkloadAssumptions = {
@@ -61,9 +63,9 @@ export default function Home() {
     "checking" | "online" | "offline"
   >("checking");
 
-  // Top-Level View Mode: AI Architect | Subscription Hierarchy | Multi-Cloud Compare
+  // Top-Level View Mode: AI Architect | Subscription Hierarchy | Centralized Monitoring | Multi-Cloud Compare
   const [activeViewMode, setActiveViewMode] = useState<
-    "architect" | "inventory" | "compare"
+    "architect" | "inventory" | "monitoring" | "compare"
   >("architect");
 
   // Section 01 State: Requirements & Clarifications
@@ -411,7 +413,7 @@ export default function Home() {
             </p>
 
             {/* Quick Interactive Engine Switcher Cards */}
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-3">
               <button
                 type="button"
                 onClick={() => setActiveViewMode("architect")}
@@ -459,6 +461,31 @@ export default function Home() {
                 <h3 className="text-sm font-semibold text-white">Subscription Hierarchy</h3>
                 <p className="text-xs text-slate-300 mt-1 leading-relaxed">
                   Discover live Azure subscriptions and GCP projects with interactive dependency graphs and hierarchical FinOps rollups.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveViewMode("monitoring")}
+                className={`p-4 rounded-2xl text-left transition border ${
+                  activeViewMode === "monitoring"
+                    ? "bg-white/15 border-emerald-400/60 shadow-lg ring-1 ring-emerald-400/50 backdrop-blur-md"
+                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-semibold">
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  {activeViewMode === "monitoring" && (
+                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/30 text-emerald-200">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <h3 className="text-sm font-semibold text-white">Centralized Monitoring</h3>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Real-time timeseries metrics, historical error logs, active alerts, and 7-pillar telemetry deep-dives.
                 </p>
               </button>
 
@@ -582,6 +609,9 @@ export default function Home() {
             currentBufferPct={safetyBufferPct}
           />
         )}
+
+        {/* View Mode 4: Centralized Cloud Infrastructure Monitoring & Log Analysis */}
+        {activeViewMode === "monitoring" && <SectionCentralizedMonitoring />}
       </main>
 
       {/* Standardized Glassmorphic Application Footer */}
