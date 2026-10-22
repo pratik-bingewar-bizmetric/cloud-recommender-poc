@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from cloud_recommender.api.routes.analysis import router as analysis_router
 from cloud_recommender.api.routes.architecture import router as architecture_router
 from cloud_recommender.api.routes.catalog import router as catalog_router
+from cloud_recommender.api.routes.connections import router as connections_router
 from cloud_recommender.api.routes.health import router as health_router
 from cloud_recommender.api.routes.inventory import router as inventory_router
 from cloud_recommender.api.routes.monitoring import router as monitoring_router
@@ -12,6 +13,9 @@ api_v1_router = APIRouter()
 
 # Health endpoints mounted under /api/v1
 api_v1_router.include_router(health_router, prefix="", tags=["Health"])
+
+# Connection and authentication lifecycle endpoints mounted under /api/v1/connections
+api_v1_router.include_router(connections_router)
 
 # Catalog endpoints mounted under /api/v1/catalog
 api_v1_router.include_router(catalog_router)

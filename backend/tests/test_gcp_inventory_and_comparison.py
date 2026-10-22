@@ -1,6 +1,7 @@
 """Unit tests for GCP project inventory hierarchy and Azure vs. GCP multi-cloud comparator."""
 
 from decimal import Decimal
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -9,7 +10,11 @@ from fastapi import HTTPException
 
 from cloud_recommender.core.config import Settings
 from cloud_recommender.schemas.analysis import WorkloadAssumptions
-from cloud_recommender.schemas.common import CloudProvider, WorkloadCategory
+from cloud_recommender.schemas.common import (
+    CloudProvider,
+    ServiceCategory,
+    WorkloadCategory,
+)
 from cloud_recommender.schemas.inventory import MultiCloudComparisonRequest
 from cloud_recommender.schemas.workload import WorkloadProfileCreate
 from cloud_recommender.services.inventory.gcp_inventory import GcpInventoryService
@@ -109,10 +114,15 @@ async def test_multi_cloud_comparator_azure_vs_gcp() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gcp_unauthenticated_custom_project_raises_401() -> None:
+async def test_gcp_unauthenticated_custom_project_raises_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Verify unauthenticated request for custom project returns 401 with required read-only IAM roles."""
     settings = Settings(offline_pricing_mode=True, gcp_access_token=None)
     svc = GcpInventoryService(settings=settings)
+    monkeypatch.setattr(
+        svc, "get_inventory_access_token", AsyncMock(return_value=(None, "unauthenticated"))
+    )
 
     with pytest.raises(HTTPException) as exc_info:
         await svc.analyze_project(project_id="arbitrary-custom-proj-999")
@@ -194,3 +204,82 @@ async def test_gcp_live_asset_discovery_mapping_and_failures() -> None:
         svc._map_asset_type_to_canonical("compute.googleapis.com/GlobalForwardingRule", "lb")[0]
         == "gcp-cloud-cdn"
     )
+    # Verification of API vs infrastructure vs configuration classification
+    su_map = svc._map_asset_type_to_canonical(
+        "serviceusage.googleapis.com/Service", "compute.googleapis.com"
+    )
+    assert su_map[0] == "gcp-service-usage"
+    assert su_map[1] == ServiceCategory.INTEGRATION
+    assert su_map[4] == "api_service"
+
+    key_map = svc._map_asset_type_to_canonical("apikeys.googleapis.com/Key", "my-key")
+    assert key_map[0] == "gcp-api-key"
+    assert key_map[1] == ServiceCategory.SECURITY
+    assert key_map[4] == "security_credential"
+
+    proj_map = svc._map_asset_type_to_canonical(
+        "cloudresourcemanager.googleapis.com/Project", "my-proj"
+    )
+    assert proj_map[0] == "gcp-project-metadata"
+    assert proj_map[1] == ServiceCategory.INTEGRATION
+    assert proj_map[4] == "configuration_metadata"
+
+    disk_map = svc._map_asset_type_to_canonical("compute.googleapis.com/Disk", "disk-1")
+    assert disk_map[0] == "gcp-compute-disk"
+    assert disk_map[1] == ServiceCategory.STORAGE
+    assert disk_map[4] == "infrastructure_resource"
+
+
+@pytest.mark.asyncio
+async def test_gcp_rejects_azure_uuid_project_id() -> None:
+    """Verify passing an Azure Subscription UUID to GCP analyze_project is rejected with 400."""
+    settings = Settings(offline_pricing_mode=True)
+    svc = GcpInventoryService(settings=settings)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await svc.analyze_project(project_id="f718c261-ab85-49fd-907e-99c022cc2aeb")
+
+    assert exc_info.value.status_code == 400
+    assert "Azure Subscription UUID" in exc_info.value.detail
+    assert "f718c261-ab85-49fd-907e-99c022cc2aeb" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_gcp_token_economics_truthful_403_handling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that a 403 on GCP project returns unavailable_permission_required with 0 tokens."""
+    from cloud_recommender.schemas.monitoring import MonitoringQueryRequest
+    from cloud_recommender.services.inventory.azure_inventory import AzureInventoryService
+    from cloud_recommender.services.monitoring.monitoring_service import (
+        CentralizedMonitoringService,
+    )
+
+    settings = Settings(offline_pricing_mode=True)
+    az_svc = AzureInventoryService(settings=settings)
+    gcp_svc = GcpInventoryService(settings=settings)
+    mon_svc = CentralizedMonitoringService(
+        settings=settings, azure_service=az_svc, gcp_service=gcp_svc
+    )
+
+    # Simulate GCP analyze_project raising 403 Forbidden
+    async def mock_analyze(*_args: Any, **_kwargs: Any) -> Any:
+        raise HTTPException(
+            status_code=403,
+            detail="GCP Resource Manager API returned 403 Forbidden: Insufficient IAM permissions.",
+        )
+
+    monkeypatch.setattr(gcp_svc, "analyze_project", mock_analyze)
+
+    req = MonitoringQueryRequest(
+        provider=CloudProvider.GCP,
+        scope_id="my-custom-prod-project",
+        time_window="7d",
+    )
+    result = await mon_svc.get_token_economics(req)
+
+    assert result.data_status == "unavailable_permission_required"
+    assert result.total_tokens == 0
+    assert result.prompt_tokens == 0
+    assert result.completion_tokens == 0
+    assert result.estimated_cost_usd == Decimal("0.0000")
+    assert "403 Forbidden" in result.status_message
+    assert len(result.diagnostic_setup_guide) > 0

@@ -15,6 +15,7 @@ Strict Architectural & Security Guardrails:
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -107,7 +108,7 @@ class GcpInventoryService:
                     [gcloud_path, "auth", "print-access-token"],
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=25,
                     check=False,
                 )
                 if proc.returncode == 0:
@@ -168,7 +169,7 @@ class GcpInventoryService:
             token, _ = await self.get_inventory_access_token()
 
         if token:
-            url = "https://cloudresourcemanager.googleapis.com/v3/projects"
+            url = "https://cloudresourcemanager.googleapis.com/v3/projects:search"
             headers = {"Authorization": f"Bearer {token}"}
             summaries: list[CloudScopeSummary] = []
             page_token: str | None = None
@@ -178,7 +179,7 @@ class GcpInventoryService:
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
                     while pages < max_pages:
-                        params: dict[str, Any] = {"pageSize": 100}
+                        params: dict[str, Any] = {"pageSize": 100, "query": "state:ACTIVE"}
                         if page_token:
                             params["pageToken"] = page_token
                         resp = await client.get(url, headers=headers, params=params)
@@ -193,17 +194,24 @@ class GcpInventoryService:
                             raise HTTPException(
                                 status_code=403,
                                 detail=(
-                                    "GCP Resource Manager API returned 403 Forbidden: Insufficient IAM permissions. "
+                                    "GCP Resource Manager API returned 403 Forbidden: Insufficient IAM permissions to search projects. "
                                     "Required read-only role: roles/browser or roles/resourcemanager.organizationViewer."
                                 ),
                             )
                         if resp.status_code != 200:
-                            logger.warning(
-                                "gcp_list_projects_failed",
-                                status_code=resp.status_code,
-                                text=resp.text[:200],
+                            # If search with query failed, try without query
+                            alt_resp = await client.get(
+                                url, headers=headers, params={"pageSize": 100}
                             )
-                            break
+                            if alt_resp.status_code == 200:
+                                resp = alt_resp
+                            else:
+                                logger.warning(
+                                    "gcp_list_projects_failed",
+                                    status_code=resp.status_code,
+                                    text=resp.text[:200],
+                                )
+                                break
                         data = resp.json()
                         projects = data.get("projects", [])
                         for p in projects:
@@ -347,8 +355,8 @@ class GcpInventoryService:
 
     def _map_asset_type_to_canonical(
         self, asset_type: str, _resource_name: str
-    ) -> tuple[str, ServiceCategory, str, str]:
-        """Map native GCP assetType string to canonical service ID, category, name, and default SKU."""
+    ) -> tuple[str, ServiceCategory, str, str, str]:
+        """Map native GCP assetType string to canonical service ID, category, name, default SKU, and resource kind."""
         lower_type = asset_type.lower()
         if (
             "compute.googleapis.com/forwardingrule" in lower_type
@@ -359,6 +367,7 @@ class GcpInventoryService:
                 ServiceCategory.NETWORKING,
                 "Google Cloud Load Balancing + Cloud CDN",
                 "Global External Application LB + Cloud CDN",
+                "infrastructure_resource",
             )
         if "compute.googleapis.com/securitypolicy" in lower_type:
             return (
@@ -366,6 +375,7 @@ class GcpInventoryService:
                 ServiceCategory.SECURITY,
                 "Google Cloud Armor WAF Policy",
                 "Standard WAF Security Policy",
+                "infrastructure_resource",
             )
         if "run.googleapis.com/service" in lower_type:
             return (
@@ -373,6 +383,7 @@ class GcpInventoryService:
                 ServiceCategory.COMPUTE,
                 "Google Cloud Run",
                 "1 vCPU, 2 GiB RAM (Instance-based billing)",
+                "infrastructure_resource",
             )
         if "cloudfunctions.googleapis.com/function" in lower_type:
             return (
@@ -380,6 +391,7 @@ class GcpInventoryService:
                 ServiceCategory.COMPUTE,
                 "Cloud Run functions",
                 "Tier 1 vCPU-seconds",
+                "infrastructure_resource",
             )
         if "sqladmin.googleapis.com/instance" in lower_type:
             return (
@@ -387,6 +399,7 @@ class GcpInventoryService:
                 ServiceCategory.DATABASE,
                 "Google Cloud SQL for PostgreSQL",
                 "db-custom-2-7680 (2 vCPU, 7.5 GiB)",
+                "infrastructure_resource",
             )
         if "storage.googleapis.com/bucket" in lower_type:
             return (
@@ -394,6 +407,7 @@ class GcpInventoryService:
                 ServiceCategory.STORAGE,
                 "Google Cloud Storage",
                 "Standard Regional Storage",
+                "infrastructure_resource",
             )
         if "aiplatform.googleapis.com/endpoint" in lower_type:
             return (
@@ -401,6 +415,7 @@ class GcpInventoryService:
                 ServiceCategory.AI_ML,
                 "Google Vertex AI (Gemini Inference)",
                 "Gemini 1.5 Pay-as-you-go Tokens",
+                "infrastructure_resource",
             )
         if "secretmanager.googleapis.com/secret" in lower_type:
             return (
@@ -408,6 +423,7 @@ class GcpInventoryService:
                 ServiceCategory.SECURITY,
                 "Google Secret Manager",
                 "Active Secret Replica + Access Ops",
+                "infrastructure_resource",
             )
         if "iam.googleapis.com/serviceaccount" in lower_type:
             return (
@@ -415,6 +431,39 @@ class GcpInventoryService:
                 ServiceCategory.SECURITY,
                 "Google Cloud IAM Service Account",
                 "Control Plane Identity",
+                "security_credential",
+            )
+        if "apikeys.googleapis.com" in lower_type:
+            return (
+                "gcp-api-key",
+                ServiceCategory.SECURITY,
+                "Google Cloud API Key",
+                "API Credential Key",
+                "security_credential",
+            )
+        if "cloudresourcemanager.googleapis.com" in lower_type:
+            return (
+                "gcp-project-metadata",
+                ServiceCategory.INTEGRATION,
+                "Cloud Resource Manager Project",
+                "Project Hierarchy Metadata",
+                "configuration_metadata",
+            )
+        if "logging.googleapis.com/logbucket" in lower_type:
+            return (
+                "gcp-cloud-logging-bucket",
+                ServiceCategory.MONITORING,
+                "Cloud Logging Bucket",
+                "Log Storage Retention",
+                "configuration_metadata",
+            )
+        if "logging.googleapis.com/logsink" in lower_type:
+            return (
+                "gcp-cloud-logging-sink",
+                ServiceCategory.MONITORING,
+                "Cloud Logging Export Sink",
+                "Telemetry Routing Sink",
+                "configuration_metadata",
             )
         if "monitoring.googleapis.com" in lower_type or "logging.googleapis.com" in lower_type:
             return (
@@ -422,6 +471,15 @@ class GcpInventoryService:
                 ServiceCategory.MONITORING,
                 "Cloud Monitoring",
                 "GiB Ingestion",
+                "configuration_metadata",
+            )
+        if "compute.googleapis.com/disk" in lower_type:
+            return (
+                "gcp-compute-disk",
+                ServiceCategory.STORAGE,
+                "Persistent Disk",
+                "Standard Persistent Disk",
+                "infrastructure_resource",
             )
         if "compute.googleapis.com/instance" in lower_type:
             return (
@@ -429,6 +487,15 @@ class GcpInventoryService:
                 ServiceCategory.COMPUTE,
                 "Google Compute Engine",
                 "e2-standard-2 (2 vCPU, 8 GiB RAM)",
+                "infrastructure_resource",
+            )
+        if "serviceusage.googleapis.com" in lower_type:
+            return (
+                "gcp-service-usage",
+                ServiceCategory.INTEGRATION,
+                f"Enabled API: {_resource_name}" if _resource_name else "Google Service Usage API",
+                "Service API Enablement",
+                "api_service",
             )
 
         # Fallback mappings based on resource category hints
@@ -438,6 +505,7 @@ class GcpInventoryService:
                 ServiceCategory.COMPUTE,
                 f"GCP Compute ({asset_type.split('/')[-1]})",
                 "Standard",
+                "infrastructure_resource",
             )
         if "sql" in lower_type or "database" in lower_type or "spanner" in lower_type:
             return (
@@ -445,6 +513,7 @@ class GcpInventoryService:
                 ServiceCategory.DATABASE,
                 f"GCP Database ({asset_type.split('/')[-1]})",
                 "Standard",
+                "infrastructure_resource",
             )
         if "storage" in lower_type:
             return (
@@ -452,12 +521,14 @@ class GcpInventoryService:
                 ServiceCategory.STORAGE,
                 f"GCP Storage ({asset_type.split('/')[-1]})",
                 "Standard",
+                "infrastructure_resource",
             )
         return (
             "gcp-generic-service",
-            ServiceCategory.COMPUTE,
+            ServiceCategory.INTEGRATION,
             asset_type.split("/")[-1],
             "Standard",
+            "configuration_metadata",
         )
 
     def _category_to_domain_name(self, category: ServiceCategory) -> str:
@@ -476,6 +547,8 @@ class GcpInventoryService:
             return "AI & Machine Learning Services"
         if category == ServiceCategory.MONITORING:
             return "Observability & Monitoring"
+        if category == ServiceCategory.INTEGRATION:
+            return "API & Service Enablement"
         return "General Infrastructure"
 
     async def _discover_live_hierarchy(
@@ -502,7 +575,7 @@ class GcpInventoryService:
                         status_code=403,
                         detail=(
                             f"GCP Resource Manager API returned 403 Forbidden for project '{project_id}'. "
-                            "Required read-only IAM role: roles/browser or roles/resourcemanager.projectViewer."
+                            "Required read-only IAM role: roles/browser (Hierarchy Browser for project metadata discovery)."
                         ),
                     )
                 if resp.status_code != 200:
@@ -665,7 +738,7 @@ class GcpInventoryService:
             full_name = a.get("name", "")
             asset_type = a.get("assetType", "")
             short_name = full_name.split("/")[-1] if "/" in full_name else full_name
-            canonical_id, cat, s_name, sku = self._map_asset_type_to_canonical(
+            canonical_id, cat, s_name, sku, kind = self._map_asset_type_to_canonical(
                 asset_type, short_name
             )
 
@@ -687,7 +760,7 @@ class GcpInventoryService:
                     service_category=cat,
                     region=asset_loc or region,
                     sku_or_tier=sku,
-                    kind=None,
+                    kind=kind,
                     parent_scope_id=f"projects/{project_id}",
                     subscription_id=None,
                     resource_group=None,  # Strictly None for GCP!
@@ -1271,11 +1344,24 @@ class GcpInventoryService:
         target_project = (
             project_id or self.settings.gcp_project_id or "smart-expense-gcp-prod"
         ).strip()
+
+        if re.match(
+            r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            target_project,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid GCP Project ID '{target_project}': The ID provided is formatted as an Azure Subscription UUID. "
+                    "Scope parameters cannot be crossed between cloud providers. Please switch to an authorized Google Cloud Project ID."
+                ),
+            )
+
         token, auth_method = await self.get_inventory_access_token()
 
-        if not token:
+        if target_project == "smart-expense-gcp-prod" or not token:
             # Reject unauthorized custom project requests with actionable diagnostic
-            if target_project != "smart-expense-gcp-prod":
+            if not token and target_project != "smart-expense-gcp-prod":
                 raise HTTPException(
                     status_code=401,
                     detail=(

@@ -207,12 +207,14 @@ export async function compareMultiCloud(
 // ----------------------------------------------------------------------------
 
 export async function getMonitoringOverview(
-  payload: MonitoringQueryRequest
+  payload: MonitoringQueryRequest,
+  signal?: AbortSignal
 ): Promise<MonitoringOverviewResponse> {
   const res = await fetch(`${API_BASE_URL}/monitoring/overview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   return handleResponse<MonitoringOverviewResponse>(res);
 }
@@ -245,5 +247,56 @@ export async function getMonitoringSources(): Promise<MonitoringSourcesResponse>
     headers: { "Content-Type": "application/json" },
   });
   return handleResponse<MonitoringSourcesResponse>(res);
+}
+
+// ----------------------------------------------------------------------------
+// Cloud Provider Connections Lifecycle API
+// ----------------------------------------------------------------------------
+
+export async function listConnections(): Promise<import("@/types").CloudConnection[]> {
+  const res = await fetch(`${API_BASE_URL}/connections`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").CloudConnection[]>(res);
+}
+
+export async function validateConnection(
+  payload: import("@/types").ValidateConnectionRequest
+): Promise<import("@/types").ConnectionValidationResponse> {
+  const res = await fetch(`${API_BASE_URL}/connections/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<import("@/types").ConnectionValidationResponse>(res);
+}
+
+export async function createConnection(
+  payload: import("@/types").CreateConnectionRequest
+): Promise<import("@/types").CloudConnection> {
+  const res = await fetch(`${API_BASE_URL}/connections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<import("@/types").CloudConnection>(res);
+}
+
+// ----------------------------------------------------------------------------
+// Token Economics & AI Consumption Telemetry API
+// ----------------------------------------------------------------------------
+
+export async function getTokenEconomics(
+  payload: MonitoringQueryRequest,
+  signal?: AbortSignal
+): Promise<import("@/types").TokenEconomicsSummary> {
+  const res = await fetch(`${API_BASE_URL}/monitoring/token-economics`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  return handleResponse<import("@/types").TokenEconomicsSummary>(res);
 }
 

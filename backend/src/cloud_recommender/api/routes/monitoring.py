@@ -15,6 +15,7 @@ from cloud_recommender.schemas.monitoring import (
     ResourceDetailMonitoringResponse,
     TimeWindowPreset,
 )
+from cloud_recommender.schemas.token_economics import TokenEconomicsSummary
 from cloud_recommender.services.inventory.azure_inventory import AzureInventoryService
 from cloud_recommender.services.inventory.gcp_inventory import GcpInventoryService
 from cloud_recommender.services.monitoring.monitoring_service import CentralizedMonitoringService
@@ -131,3 +132,17 @@ async def get_monitoring_sources(
         },
         "policy": "Read-Only / Zero-Execution Enforced",
     }
+
+
+@router.post(
+    "/token-economics",
+    response_model=TokenEconomicsSummary,
+    status_code=status.HTTP_200_OK,
+    summary="Query AI model token consumption, rate meters, and cost telemetry",
+)
+async def get_token_economics(
+    request: MonitoringQueryRequest,
+    service: CentralizedMonitoringService = Depends(get_monitoring_service),
+) -> TokenEconomicsSummary:
+    """Calculate token consumption, model breakdown, and estimated AI costs with official rate meters."""
+    return await service.get_token_economics(request)

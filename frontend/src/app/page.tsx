@@ -1,21 +1,31 @@
 "use client";
 
 import React, { useState, useCallback, useEffect } from "react";
-import { Header } from "@/components/Header";
+import { Sidebar, ViewMode } from "@/components/Sidebar";
+import { TopNav } from "@/components/TopNav";
+import { LandingView } from "@/components/LandingView";
+import { DashboardView } from "@/components/DashboardView";
+import { ArchitectStepper, ArchitectStep } from "@/components/ArchitectStepper";
 import { FoundryConfigAlert } from "@/components/FoundryConfigAlert";
 import { SectionRequirements } from "@/components/SectionRequirements";
 import { SectionAssumptions } from "@/components/SectionAssumptions";
 import { SectionArchitecture } from "@/components/SectionArchitecture";
 import { SectionCostSimulator } from "@/components/SectionCostSimulator";
-import { SectionTradeOffs } from "@/components/SectionTradeOffs";
+import { SectionSavingsReview } from "@/components/SectionSavingsReview";
 import { SectionCloudScopeInventory } from "@/components/SectionCloudScopeInventory";
-import { SectionCentralizedMonitoring } from "@/components/SectionCentralizedMonitoring";
+import {
+  SectionCentralizedMonitoring,
+  MonitoringSubTab,
+} from "@/components/SectionCentralizedMonitoring";
 import { SectionMultiCloudCompare } from "@/components/SectionMultiCloudCompare";
+import { ConnectCloudView } from "@/components/ConnectCloudView";
+import { SettingsModal } from "@/components/SettingsModal";
 import {
   ApiErrorDetail,
   ArchitectureComponent,
   ClarifyingAnswer,
   ClarifyingQuestion,
+  CloudConnection,
   CostBreakdown,
   PricingReference,
   RecommendationReport,
@@ -31,15 +41,12 @@ import {
   ApiError,
 } from "@/lib/api";
 import {
-  Calculator,
-  Layers,
   Sparkles,
-  Loader2,
-  ArrowDown,
+  Calculator,
+  ArrowRight,
+  ArrowLeft,
   ShieldCheck,
-  FolderTree,
-  Scale,
-  Activity,
+  Layers,
 } from "lucide-react";
 
 const DEFAULT_ASSUMPTIONS: WorkloadAssumptions = {
@@ -58,15 +65,75 @@ const DEFAULT_ASSUMPTIONS: WorkloadAssumptions = {
 };
 
 export default function Home() {
+  // Cloud Connection Onboarding State (Default null = Connect Cloud View)
+  const [activeConnection, setActiveConnection] =
+    useState<CloudConnection | null>(null);
+
+  // Navigation & Shell State
+  const [activeView, setActiveView] = useState<ViewMode>("monitoring");
+  const [activeMonitoringTab, setActiveMonitoringTab] =
+    useState<MonitoringSubTab>("overview");
+  const [architectStep, setArchitectStep] = useState<ArchitectStep>("requirements");
+  const [architectMode, setArchitectMode] = useState<"step" | "all">("step");
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+
+  const handleSelectMonitoringTab = useCallback((tab: MonitoringSubTab) => {
+    setActiveMonitoringTab(tab);
+    setActiveView("monitoring");
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tab);
+      url.searchParams.set("view", "monitoring");
+      window.history.pushState({ tab, view: "monitoring" }, "", url.toString());
+    }
+  }, []);
+
+  // Sync URL query params on initial mount and on popstate (browser back/forward navigation)
+  useEffect(() => {
+    const syncFromUrl = () => {
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const tabParam = params.get("tab") as MonitoringSubTab | null;
+        const validTabs: MonitoringSubTab[] = [
+          "overview",
+          "resources",
+          "health",
+          "alerts",
+          "hierarchy",
+          "logs",
+          "tokens",
+          "cost_waste",
+        ];
+        if (tabParam && validTabs.includes(tabParam)) {
+          setActiveMonitoringTab(tabParam);
+        }
+        const viewParam = params.get("view") as ViewMode | null;
+        const validViews: ViewMode[] = [
+          "home",
+          "dashboard",
+          "architect",
+          "inventory",
+          "monitoring",
+          "compare",
+        ];
+        if (viewParam && validViews.includes(viewParam)) {
+          setActiveView(viewParam);
+        }
+      }
+    };
+
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, []);
+
   // Backend Connectivity State
   const [backendStatus, setBackendStatus] = useState<
     "checking" | "online" | "offline"
   >("checking");
-
-  // Top-Level View Mode: AI Architect | Subscription Hierarchy | Centralized Monitoring | Multi-Cloud Compare
-  const [activeViewMode, setActiveViewMode] = useState<
-    "architect" | "inventory" | "monitoring" | "compare"
-  >("architect");
 
   // Section 01 State: Requirements & Clarifications
   const [idea, setIdea] = useState<string>(
@@ -210,6 +277,9 @@ export default function Home() {
         .map((c) => c.missing_price_warning)
         .filter((w): w is string => !!w);
       setUnverifiedWarnings(warnings);
+
+      // Automatically advance step to Blueprint
+      setArchitectStep("blueprint");
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         setFoundryError(err.detail);
@@ -261,7 +331,7 @@ export default function Home() {
     [targetRegion]
   );
 
-  // 4b. Region Change Handler (Updates Region & Triggers Simulation)
+  // 4b. Region Change Handler
   const handleTargetRegionChange = (newRegion: string) => {
     setTargetRegion(newRegion);
     const updatedAssump: WorkloadAssumptions = {
@@ -274,7 +344,7 @@ export default function Home() {
     }
   };
 
-  // 5. Presets Selector (Updates Assumptions & Triggers Simulation)
+  // 5. Presets Selector
   const handlePresetSelect = (preset: number) => {
     setCustomerPreset(preset);
     let updatedAssump: WorkloadAssumptions;
@@ -337,7 +407,7 @@ export default function Home() {
     }
   };
 
-  // 7. Component Change Handler (Add / Remove / Quantity / SKU)
+  // 7. Component Change Handler
   const handleComponentsChange = (updatedComps: ArchitectureComponent[]) => {
     setComponents(updatedComps);
     triggerSimulation(updatedComps, assumptions, safetyBufferPct);
@@ -351,7 +421,7 @@ export default function Home() {
     }
   };
 
-  // Derived Telemetry States for Header
+  // Telemetry status derivations
   const aiStatus: "standby" | "busy" | "verified" | "error" = foundryError
     ? "error"
     : isAnalyzing || isGeneratingArch
@@ -366,411 +436,492 @@ export default function Home() {
       ? "warning"
       : "verified";
 
-  return (
-    <div className="min-h-screen text-slate-900 pb-24">
-      <Header
-        backendStatus={backendStatus}
-        aiStatus={aiStatus}
-        pricingStatus={pricingStatus}
-        hasProfile={!!workloadProfile}
-        hasArchitecture={components.length > 0}
-        hasCost={!!costBreakdown}
-        hasAssessment={!!tradeOffs}
-        monthlyTotal={costBreakdown?.total_monthly || null}
-        activeViewMode={activeViewMode}
-        onViewModeChange={setActiveViewMode}
-      />
+  const scrollToCostSection = () => {
+    setActiveView("architect");
+    setArchitectStep("simulator");
+    setTimeout(() => {
+      const el = document.getElementById("section-cost");
+      if (el) el.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  };
 
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        {/* Setup / Config Alert (HTTP 503 / API Errors) */}
-        <FoundryConfigAlert
-          errorDetail={foundryError}
-          onDismiss={() => setFoundryError(null)}
-        />
-
-        {/* Platform Hero Banner */}
-        <div className="mb-8 rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-6 sm:p-8 lg:p-10 shadow-xl border border-slate-800/80 relative overflow-hidden">
-          <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 rounded-full bg-blue-500/10 blur-3xl pointer-events-none" />
-          <div className="absolute bottom-0 left-1/3 -mb-20 w-72 h-72 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
-
-          <div className="relative z-10">
-            <div className="flex flex-wrap items-center gap-2 mb-3">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/15 border border-blue-400/30 text-blue-300 text-xs font-semibold tracking-wide uppercase">
-                <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                Enterprise Infrastructure Intelligence
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-medium">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                Zero-Execution Policy &bull; 100% Read-Only
-              </span>
+  // If no cloud account is actively connected, show the First-Screen Onboarding
+  if (!activeConnection) {
+    return (
+      <div className="min-h-screen bg-background text-navy-900 flex flex-col">
+        {/* Connection Onboarding Top Header */}
+        <header className="topbar-surface sticky top-0 z-30 h-14 px-4 sm:px-6 flex items-center justify-between border-b border-slate-200 bg-white">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center font-bold shadow-2xs">
+              <Layers className="w-4 h-4" />
             </div>
-
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-white max-w-3xl leading-tight">
-              FinOps &amp; Infrastructure Intelligence Platform
-            </h1>
-            <p className="mt-2 text-base sm:text-lg text-slate-300 max-w-2xl font-light leading-relaxed">
-              Understand your infrastructure. Optimize your costs. Engineer what comes next.
-            </p>
-
-            {/* Quick Interactive Engine Switcher Cards */}
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-3">
-              <button
-                type="button"
-                onClick={() => setActiveViewMode("architect")}
-                className={`p-4 rounded-2xl text-left transition border ${
-                  activeViewMode === "architect"
-                    ? "bg-white/15 border-blue-400/60 shadow-lg ring-1 ring-blue-400/50 backdrop-blur-md"
-                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center font-semibold">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  {activeViewMode === "architect" && (
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/30 text-blue-200">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-sm font-semibold text-white">AI Cloud Architect</h3>
-                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  Synthesize topology blueprints, trade-off scorecards, and live bills of materials from natural language requirements.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveViewMode("inventory")}
-                className={`p-4 rounded-2xl text-left transition border ${
-                  activeViewMode === "inventory"
-                    ? "bg-white/15 border-indigo-400/60 shadow-lg ring-1 ring-indigo-400/50 backdrop-blur-md"
-                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-semibold">
-                    <FolderTree className="w-4 h-4" />
-                  </div>
-                  {activeViewMode === "inventory" && (
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/30 text-indigo-200">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-sm font-semibold text-white">Subscription Hierarchy</h3>
-                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  Discover live Azure subscriptions and GCP projects with interactive dependency graphs and hierarchical FinOps rollups.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveViewMode("monitoring")}
-                className={`p-4 rounded-2xl text-left transition border ${
-                  activeViewMode === "monitoring"
-                    ? "bg-white/15 border-emerald-400/60 shadow-lg ring-1 ring-emerald-400/50 backdrop-blur-md"
-                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-semibold">
-                    <Activity className="w-4 h-4" />
-                  </div>
-                  {activeViewMode === "monitoring" && (
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/30 text-emerald-200">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-sm font-semibold text-white">Centralized Monitoring</h3>
-                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  Real-time timeseries metrics, historical error logs, active alerts, and 7-pillar telemetry deep-dives.
-                </p>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveViewMode("compare")}
-                className={`p-4 rounded-2xl text-left transition border ${
-                  activeViewMode === "compare"
-                    ? "bg-white/15 border-violet-400/60 shadow-lg ring-1 ring-violet-400/50 backdrop-blur-md"
-                    : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20 backdrop-blur-sm"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="w-8 h-8 rounded-xl bg-violet-500/20 text-violet-400 flex items-center justify-center font-semibold">
-                    <Scale className="w-4 h-4" />
-                  </div>
-                  {activeViewMode === "compare" && (
-                    <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-violet-500/30 text-violet-200">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-sm font-semibold text-white">Multi-Cloud Compare</h3>
-                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  Side-by-side architectural alignment and deterministic cost intelligence between Azure and Google Cloud.
-                </p>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* View Mode 1: AI Cloud Architect & Simulator */}
-        {activeViewMode === "architect" && (
-          <>
-            {/* Step 01: Idea & Requirements Ingestion */}
-            <SectionRequirements
-              idea={idea}
-              setIdea={setIdea}
-              targetRegion={targetRegion}
-              setTargetRegion={handleTargetRegionChange}
-              customerPreset={customerPreset}
-              setCustomerPreset={setCustomerPreset}
-              onAnalyze={handleAnalyze}
-              isAnalyzing={isAnalyzing}
-              workloadProfile={workloadProfile}
-              clarifyingQuestions={clarifyingQuestions}
-              clarifyingAnswers={clarifyingAnswers}
-              onAnswerChange={handleClarifyingAnswer}
-              missingRequirements={missingRequirements}
-              onGenerateArchitecture={handleGenerateArchitecture}
-              isGeneratingArch={isGeneratingArch}
-            />
-
-            {/* Step 02: Workload Sizing & FinOps Assumptions */}
-            <SectionAssumptions
-              assumptions={assumptions}
-              onAssumptionsChange={handleAssumptionsChange}
-              onPresetSelect={handlePresetSelect}
-              safetyBufferPct={safetyBufferPct}
-              onSafetyBufferChange={handleSafetyBufferChange}
-            />
-
-            {/* Guidance Empty State before Architecture Synthesis */}
-            {components.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-white/60 p-8 text-center">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200/80 text-blue-600 flex items-center justify-center mx-auto mb-3">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <h3 className="text-sm font-semibold text-slate-900">
-                  {workloadProfile
-                    ? "Ready to Synthesize Production Azure Architecture"
-                    : "Architecture & Cost Workspace Standby"}
-                </h3>
-                <p className="text-xs text-slate-500 max-w-xl mx-auto mt-1 leading-relaxed">
-                  {workloadProfile
-                    ? "Review the extracted profile and clarifying questions in Step 01, then click 'Generate Production Architecture' to build the topological blueprint, BOM, and 5-pillar trade-off scorecard."
-                    : "Submit your workload specification in Step 01 to extract structured requirements, answer clarifying questions, and generate a deterministic Azure cost simulation."}
-                </p>
-              </div>
-            )}
-
-            {/* Step 03: Production Azure Architecture View */}
-            {components.length > 0 && (
-              <SectionArchitecture
-                architectureDescription={architectureDescription}
-                mermaidDiagram={mermaidDiagram}
-                components={components}
-                onComponentsChange={handleComponentsChange}
-              />
-            )}
-
-            {/* Step 04: Deterministic Cost Simulator */}
-            {costBreakdown && (
-              <SectionCostSimulator
-                costBreakdown={costBreakdown}
-                components={components}
-                pricingProvenance={pricingProvenance}
-                unverifiedWarnings={unverifiedWarnings}
-                isSimulating={isSimulating}
-              />
-            )}
-
-            {/* Step 05: Architecture Analysis & 5-Pillar Trade-Offs */}
-            {tradeOffs && (
-              <SectionTradeOffs
-                tradeOffs={tradeOffs}
-                assumptions={archAssumptions}
-                limitations={archLimitations}
-              />
-            )}
-          </>
-        )}
-
-        {/* View Mode 2: Subscription & Project Hierarchy Intelligence */}
-        {activeViewMode === "inventory" && <SectionCloudScopeInventory />}
-
-        {/* View Mode 3: Multi-Cloud Comparison (Azure vs. GCP) */}
-        {activeViewMode === "compare" && (
-          <SectionMultiCloudCompare
-            currentAssumptions={assumptions}
-            currentBufferPct={safetyBufferPct}
-          />
-        )}
-
-        {/* View Mode 4: Centralized Cloud Infrastructure Monitoring & Log Analysis */}
-        {activeViewMode === "monitoring" && <SectionCentralizedMonitoring />}
-      </main>
-
-      {/* Standardized Glassmorphic Application Footer */}
-      <footer className="mt-20 border-t border-slate-200/80 bg-white/70 backdrop-blur-md">
-        <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-10">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-slate-200/70">
-            {/* Column 1: Brand & Tagline */}
-            <div className="md:col-span-2 space-y-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-                  <Layers className="w-4 h-4" />
-                </div>
-                <span className="font-bold text-slate-900 text-base tracking-tight">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-xs text-navy-900 tracking-tight">
                   FinOps &amp; Infrastructure Intelligence Platform
                 </span>
-              </div>
-              <p className="text-sm text-slate-600 font-light max-w-md leading-relaxed">
-                Understand your infrastructure. Optimize your costs. Engineer what comes next.
-              </p>
-              <div className="flex flex-wrap gap-2 pt-1">
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                  Read-Only Cloud Access
-                </span>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">
-                  <Calculator className="w-3.5 h-3.5 text-blue-600" />
-                  Deterministic Pricing Engine
-                </span>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-medium">
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                  Azure AI Foundry gpt-5.4-mini
+                <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-blue-50 text-brand-600 border border-blue-200">
+                  POC
                 </span>
               </div>
-            </div>
-
-            {/* Column 2: Platform Capabilities */}
-            <div className="space-y-2">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Core Engines
-              </h4>
-              <ul className="space-y-1.5 text-xs text-slate-600">
-                <li>
-                  <button
-                    type="button"
-                    onClick={() => setActiveViewMode("architect")}
-                    className="hover:text-blue-600 transition"
-                  >
-                    AI Cloud Architect &amp; Simulator
-                  </button>
-                </li>
-                <li>
-                  <button
-                    type="button"
-                    onClick={() => setActiveViewMode("inventory")}
-                    className="hover:text-blue-600 transition"
-                  >
-                    Subscription Hierarchy Intelligence
-                  </button>
-                </li>
-                <li>
-                  <button
-                    type="button"
-                    onClick={() => setActiveViewMode("compare")}
-                    className="hover:text-blue-600 transition"
-                  >
-                    Azure vs. GCP Comparison
-                  </button>
-                </li>
-              </ul>
-            </div>
-
-            {/* Column 3: Guardrails & Governance */}
-            <div className="space-y-2">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                Architecture Guardrails
-              </h4>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Zero-Execution Policy enforced. All cloud provider interactions strictly read-only (<code className="font-mono text-slate-700">Reader</code> role). Pricing calculations use official APIs with zero generative hallucination.
-              </p>
-            </div>
-          </div>
-
-          <div className="pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
-            <p>&copy; {new Date().getFullYear()} FinOps &amp; Infrastructure Intelligence Platform. All rights reserved.</p>
-            <p className="font-mono text-[11px] text-slate-400">
-              Deterministic Pricing Engine &bull; Azure Retail Prices API &bull; GCP Cloud Billing Catalog
-            </p>
-          </div>
-        </div>
-      </footer>
-
-      {/* Floating Glassmorphic FinOps Summary Dock (Visible when Cost Breakdown is active in Architect view) */}
-      {activeViewMode === "architect" && costBreakdown && (
-        <div className="fixed bottom-4 inset-x-0 z-40 px-4 pointer-events-none">
-          <div className="max-w-4xl mx-auto glass-floating border border-slate-200/90 rounded-2xl shadow-floating px-4 py-2.5 pointer-events-auto flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-3">
-              <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
-                {isSimulating ? (
-                  <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
-                ) : (
-                  <Calculator className="w-4 h-4 text-blue-600" />
-                )}
-                <span>Live Estimate</span>
-              </span>
-              <span className="hidden sm:inline-flex items-center gap-1 text-slate-500">
-                <Layers className="w-3.5 h-3.5 text-slate-400" />
-                <span>{components.length} services</span>
+              <span className="text-[10px] text-slate-400 block">
+                Connect your cloud account to begin
               </span>
             </div>
-
-            <div className="flex items-center gap-4 sm:gap-6 font-mono">
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-sans block">
-                  Monthly
-                </span>
-                <span className="font-bold text-slate-900 text-sm">
-                  ${parseFloat(costBreakdown.total_monthly).toLocaleString("en-US", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </span>
-              </div>
-              <div className="hidden sm:block">
-                <span className="text-[10px] text-slate-400 uppercase font-sans block">
-                  5-Month
-                </span>
-                <span className="font-semibold text-slate-700 text-xs">
-                  ${parseFloat(costBreakdown.total_five_month).toLocaleString("en-US", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </span>
-              </div>
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-sans block">
-                  Annual
-                </span>
-                <span className="font-semibold text-emerald-700 text-xs">
-                  ${parseFloat(costBreakdown.total_annual).toLocaleString("en-US", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const el = document.getElementById("section-cost");
-                  if (el) el.scrollIntoView({ behavior: "smooth" });
-                }}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-sans font-semibold text-[11px] transition"
-              >
-                <span>BOM</span>
-                <ArrowDown className="w-3 h-3" />
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Strictly Read-Only &bull; Zero-Execution Policy</span>
+            </span>
+          </div>
+        </header>
+
+        {/* Onboarding View Body */}
+        <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-8">
+          <ConnectCloudView
+            onConnectionSelected={(conn) => {
+              setActiveConnection(conn);
+              setActiveView("monitoring");
+            }}
+            onContinueToDemo={() => {
+              setActiveConnection({
+                id: "conn-azure-reference",
+                name: "Azure Reference Tenant",
+                provider: "azure",
+                scope_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
+                display_name: "Azure Sponsorship (f718c261...)",
+                auth_method: "azure_cli_credentials",
+                status: "connected",
+                is_live: true,
+                capabilities: ["inventory", "monitoring", "pricing"],
+                access_limitations: [],
+                last_verified_at: new Date().toISOString(),
+              });
+              setActiveView("monitoring");
+            }}
+          />
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background text-navy-900 flex">
+      {/* 1. Permanent / Collapsible Left Sidebar */}
+      <Sidebar
+        currentView={activeView}
+        onViewChange={(view) => {
+          setActiveView(view);
+          setIsMobileMenuOpen(false);
+        }}
+        currentMonitoringTab={activeMonitoringTab}
+        onSelectMonitoringTab={handleSelectMonitoringTab}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
+        isMobileOpen={isMobileMenuOpen}
+        onCloseMobile={() => setIsMobileMenuOpen(false)}
+      />
+
+      {/* 2. Main Workspace Layout */}
+      <div
+        className={`flex-1 flex flex-col min-w-0 transition-all duration-200 ${
+          isSidebarCollapsed ? "sm:pl-16" : "sm:pl-60"
+        }`}
+      >
+        {/* Top Header Bar */}
+        <TopNav
+          backendStatus={backendStatus}
+          aiStatus={aiStatus}
+          pricingStatus={pricingStatus}
+          monthlyTotal={costBreakdown?.total_monthly || null}
+          targetRegion={targetRegion}
+          onRegionChange={handleTargetRegionChange}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+          onScrollToCost={scrollToCostSection}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          connectedScope={{
+            provider: activeConnection.provider,
+            name: activeConnection.display_name || activeConnection.name,
+            id: activeConnection.scope_id,
+          }}
+          onSwitchConnection={() => setActiveConnection(null)}
+        />
+
+        {/* Main Content Viewport */}
+        <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-16">
+          {/* Foundry / Backend Error Notice */}
+          <FoundryConfigAlert
+            errorDetail={foundryError}
+            onDismiss={() => setFoundryError(null)}
+          />
+
+          {/* SCREEN 1: Home / Product Landing */}
+          {activeView === "home" && (
+            <LandingView
+              onNavigate={(v) => {
+                if (v === "architect") {
+                  setActiveView("architect");
+                  setArchitectStep("requirements");
+                } else {
+                  setActiveView(v);
+                }
+              }}
+              monthlyTotal={costBreakdown?.total_monthly || null}
+              connectedScope={
+                activeConnection
+                  ? activeConnection.display_name ||
+                    activeConnection.name ||
+                    activeConnection.scope_id
+                  : null
+              }
+            />
+          )}
+
+          {/* SCREEN 2: Executive FinOps Dashboard */}
+          {activeView === "dashboard" && (
+            <DashboardView
+              onNavigate={(v) => {
+                setActiveView(v);
+                if (v === "architect") setArchitectStep("requirements");
+              }}
+              monthlyTotal={costBreakdown?.total_monthly || null}
+              region={targetRegion}
+              connectedScope={
+                activeConnection
+                  ? {
+                      provider: activeConnection.provider,
+                      name: activeConnection.display_name || activeConnection.name,
+                      id: activeConnection.scope_id,
+                    }
+                  : null
+              }
+              costBreakdown={costBreakdown}
+            />
+          )}
+
+          {/* SCREENS 3–7: AI Cloud Architect (5-Step Workspace) */}
+          {activeView === "architect" && (
+            <div className="space-y-6">
+              {/* Architect Stepper Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2 border-b border-slate-200">
+                <div>
+                  <h1 className="text-xl sm:text-2xl font-bold text-navy-900 tracking-tight">
+                    AI Cloud Architect &amp; FinOps Simulator
+                  </h1>
+                  <p className="text-xs text-navy-600 mt-0.5">
+                    Synthesize production architectures, explore deterministic bills of materials, and assess 5-pillar trade-offs.
+                  </p>
+                </div>
+
+                {/* View Mode Toggle: Step-by-Step vs All Steps Combined */}
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setArchitectMode("step")}
+                      className={`px-3 py-1 rounded-md font-medium transition ${
+                        architectMode === "step"
+                          ? "bg-white text-navy-900 shadow-2xs font-semibold"
+                          : "text-navy-600 hover:text-navy-900"
+                      }`}
+                    >
+                      Step-by-Step Focus
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setArchitectMode("all")}
+                      className={`px-3 py-1 rounded-md font-medium transition ${
+                        architectMode === "all"
+                          ? "bg-white text-navy-900 shadow-2xs font-semibold"
+                          : "text-navy-600 hover:text-navy-900"
+                      }`}
+                    >
+                      Combined View
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5-Step Stepper Navigation */}
+              <ArchitectStepper
+                currentStep={architectStep}
+                onStepChange={setArchitectStep}
+                hasProfile={!!workloadProfile}
+                hasArchitecture={components.length > 0}
+                hasCost={!!costBreakdown}
+                hasAssessment={!!tradeOffs}
+              />
+
+              {/* STEP 1: Requirements Ingestion & Clarifications (Screen 3) */}
+              {(architectMode === "all" || architectStep === "requirements") && (
+                <div className="space-y-4">
+                  <SectionRequirements
+                    idea={idea}
+                    setIdea={setIdea}
+                    targetRegion={targetRegion}
+                    setTargetRegion={handleTargetRegionChange}
+                    customerPreset={customerPreset}
+                    setCustomerPreset={setCustomerPreset}
+                    onAnalyze={handleAnalyze}
+                    isAnalyzing={isAnalyzing}
+                    workloadProfile={workloadProfile}
+                    clarifyingQuestions={clarifyingQuestions}
+                    clarifyingAnswers={clarifyingAnswers}
+                    onAnswerChange={handleClarifyingAnswer}
+                    missingRequirements={missingRequirements}
+                    onGenerateArchitecture={handleGenerateArchitecture}
+                    isGeneratingArch={isGeneratingArch}
+                  />
+
+                  {architectMode === "step" && workloadProfile && (
+                    <div className="flex justify-end pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setArchitectStep("sizing")}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-navy-900 hover:bg-navy-800 text-white font-medium text-xs shadow-2xs transition"
+                      >
+                        <span>Continue to Workload Sizing (Step 02)</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* STEP 2: Workload Sizing & Presets (Screen 4) */}
+              {(architectMode === "all" || architectStep === "sizing") && (
+                <div className="space-y-4">
+                  <SectionAssumptions
+                    assumptions={assumptions}
+                    onAssumptionsChange={handleAssumptionsChange}
+                    onPresetSelect={handlePresetSelect}
+                    safetyBufferPct={safetyBufferPct}
+                    onSafetyBufferChange={handleSafetyBufferChange}
+                  />
+
+                  {architectMode === "step" && (
+                    <div className="flex items-center justify-between pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setArchitectStep("requirements")}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-navy-700 font-medium text-xs border border-slate-200 transition"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>Back to Requirements</span>
+                      </button>
+
+                      {components.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setArchitectStep("blueprint")}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-navy-900 hover:bg-navy-800 text-white font-medium text-xs shadow-2xs transition"
+                        >
+                          <span>View Architecture Blueprint (Step 03)</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleGenerateArchitecture}
+                          disabled={!workloadProfile || isGeneratingArch}
+                          className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-brand-600 hover:bg-brand-700 disabled:bg-slate-300 text-white font-medium text-xs shadow-2xs transition"
+                        >
+                          <Sparkles className="w-4 h-4" />
+                          <span>Generate Architecture Blueprint</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* STEP 3: Architecture Blueprint & Topology (Screen 5) */}
+              {(architectMode === "all" || architectStep === "blueprint") && (
+                <div className="space-y-4">
+                  {components.length > 0 ? (
+                    <>
+                      <SectionArchitecture
+                        architectureDescription={architectureDescription}
+                        mermaidDiagram={mermaidDiagram}
+                        components={components}
+                        onComponentsChange={handleComponentsChange}
+                      />
+
+                      {architectMode === "step" && (
+                        <div className="flex items-center justify-between pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setArchitectStep("sizing")}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-navy-700 font-medium text-xs border border-slate-200 transition"
+                          >
+                            <ArrowLeft className="w-4 h-4" />
+                            <span>Back to Sizing</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setArchitectStep("simulator")}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-navy-900 hover:bg-navy-800 text-white font-medium text-xs shadow-2xs transition"
+                          >
+                            <span>Open Cost Simulator &amp; BOM (Step 04)</span>
+                            <ArrowRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="app-card p-8 text-center bg-white border border-dashed border-slate-300">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-brand-600 flex items-center justify-center mx-auto mb-3">
+                        <Sparkles className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-navy-900">
+                        No Architecture Blueprint Generated Yet
+                      </h3>
+                      <p className="text-xs text-navy-500 max-w-md mx-auto mt-1 mb-4 leading-relaxed">
+                        Complete your requirements in Step 01 or sizing in Step 02 to synthesize a production topology with deterministic pricing.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setArchitectStep("requirements")}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-medium text-xs transition"
+                      >
+                        <span>Start in Requirements (Step 01)</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* STEP 4: Deterministic Cost Simulator & BOM (Screen 6) */}
+              {(architectMode === "all" || architectStep === "simulator") && (
+                <div className="space-y-4">
+                  {costBreakdown ? (
+                    <>
+                      <SectionCostSimulator
+                        costBreakdown={costBreakdown}
+                        components={components}
+                        pricingProvenance={pricingProvenance}
+                        unverifiedWarnings={unverifiedWarnings}
+                        isSimulating={isSimulating}
+                      />
+
+                      {architectMode === "step" && (
+                        <div className="flex items-center justify-between pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setArchitectStep("blueprint")}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-navy-700 font-medium text-xs border border-slate-200 transition"
+                          >
+                            <ArrowLeft className="w-4 h-4" />
+                            <span>Back to Blueprint</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setArchitectStep("review")}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-navy-900 hover:bg-navy-800 text-white font-medium text-xs shadow-2xs transition"
+                          >
+                            <span>View Savings &amp; Review (Step 05)</span>
+                            <ArrowRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="app-card p-8 text-center bg-white border border-dashed border-slate-300">
+                      <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-accent-amber flex items-center justify-center mx-auto mb-3">
+                        <Calculator className="w-5 h-5" />
+                      </div>
+                      <h3 className="text-sm font-semibold text-navy-900">
+                        Cost Simulation Standby
+                      </h3>
+                      <p className="text-xs text-navy-500 max-w-md mx-auto mt-1 mb-4 leading-relaxed">
+                        Generate an architecture blueprint first to calculate deterministic line-item prices using the official Azure Retail Prices API.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setArchitectStep("requirements")}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-medium text-xs transition"
+                      >
+                        <span>Start Requirements Analysis</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* STEP 5: Savings Recommendations & Review (Screen 7) */}
+              {(architectMode === "all" || architectStep === "review") && (
+                <div className="space-y-4">
+                  <SectionSavingsReview
+                    tradeOffs={tradeOffs}
+                    assumptions={archAssumptions}
+                    limitations={archLimitations}
+                    costBreakdown={costBreakdown}
+                  />
+
+                  {architectMode === "step" && (
+                    <div className="flex items-center justify-between pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setArchitectStep("simulator")}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-white hover:bg-slate-50 text-navy-700 font-medium text-xs border border-slate-200 transition"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>Back to Cost Simulator</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveView("monitoring")}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-medium text-xs shadow-2xs transition"
+                      >
+                        <span>Inspect Centralized Monitoring &rarr;</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SCREEN 8: Centralized Cloud Infrastructure Monitoring & Log Analysis */}
+          {activeView === "monitoring" && (
+            <SectionCentralizedMonitoring
+              initialConnection={activeConnection}
+              activeTab={activeMonitoringTab}
+              onTabChange={handleSelectMonitoringTab}
+              onSwitchConnection={() => setActiveConnection(null)}
+            />
+          )}
+
+          {/* SCREEN 9a: Subscription & Resource Hierarchy Intelligence */}
+          {activeView === "inventory" && <SectionCloudScopeInventory />}
+
+          {/* SCREEN 9b: Multi-Cloud Comparison (Azure vs. GCP) */}
+          {activeView === "compare" && (
+            <SectionMultiCloudCompare
+              currentAssumptions={assumptions}
+              currentBufferPct={safetyBufferPct}
+            />
+          )}
+        </main>
+      </div>
+
+      {/* Platform Governance & Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        backendStatus={backendStatus}
+        targetRegion={targetRegion}
+      />
     </div>
   );
 }
