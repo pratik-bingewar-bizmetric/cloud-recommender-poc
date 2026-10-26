@@ -166,12 +166,33 @@ class ResourceHealthRecord(BaseModel):
         default_factory=lambda: datetime.now(UTC), description="Timestamp of health check."
     )
     telemetry_source: str = Field(..., description="Source of health data.")
+    resource_kind: Literal[
+        "infrastructure_resource",
+        "api_service",
+        "configuration_metadata",
+        "security_credential",
+    ] = Field(
+        default="infrastructure_resource",
+        description="Distinction between provisioned infrastructure (VMs, DBs, Disks) and API/configuration records.",
+    )
 
 
 class MonitoringKPIStrip(BaseModel):
     """High-level infrastructure health and FinOps metrics for the dashboard header."""
 
     total_resources: int = Field(default=0, description="Total resources in scope.")
+    infrastructure_resources_count: int = Field(
+        default=0,
+        description="Count of actual provisioned infrastructure resources (compute, databases, disks, storage).",
+    )
+    api_services_count: int = Field(
+        default=0,
+        description="Count of enabled API and service management records.",
+    )
+    configuration_records_count: int = Field(
+        default=0,
+        description="Count of project metadata, logging sinks/buckets, and credential records.",
+    )
     healthy_count: int = Field(default=0, description="Resources verified healthy.")
     degraded_count: int = Field(default=0, description="Resources operating in degraded state.")
     failing_count: int = Field(default=0, description="Resources experiencing critical failures.")

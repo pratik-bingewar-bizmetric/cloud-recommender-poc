@@ -552,6 +552,12 @@ export interface ActiveAlertItem {
   remediation_steps: string[];
 }
 
+export type ResourceKind =
+  | "infrastructure_resource"
+  | "api_service"
+  | "configuration_metadata"
+  | "security_credential";
+
 export interface ResourceHealthRecord {
   resource_id: string;
   resource_name: string;
@@ -561,10 +567,14 @@ export interface ResourceHealthRecord {
   reason?: string | null;
   last_checked: string;
   telemetry_source: string;
+  resource_kind?: ResourceKind;
 }
 
 export interface MonitoringKPIStrip {
   total_resources: number;
+  infrastructure_resources_count?: number;
+  api_services_count?: number;
+  configuration_records_count?: number;
   healthy_count: number;
   degraded_count: number;
   failing_count: number;
@@ -693,4 +703,177 @@ export interface MonitoringSourcesResponse {
   };
   policy: string;
 }
+
+export type ConnectionStatus =
+  | "connected"
+  | "ready_to_connect"
+  | "connecting"
+  | "validating_access"
+  | "discovering_scope"
+  | "auth_failed"
+  | "permission_denied"
+  | "scope_not_found"
+  | "simulation_fixture";
+
+export interface CloudConnection {
+  id: string;
+  name: string;
+  provider: CloudProvider;
+  scope_id: string;
+  display_name: string;
+  tenant_or_org_id?: string | null;
+  auth_method: string;
+  status: ConnectionStatus;
+  last_verified_at?: string | null;
+  is_live: boolean;
+  capabilities: string[];
+  access_limitations: string[];
+}
+
+export interface ValidateConnectionRequest {
+  connection_id?: string | null;
+  provider: CloudProvider;
+  scope_id: string;
+}
+
+export interface ConnectionValidationResponse {
+  success: boolean;
+  connection_id: string;
+  provider: CloudProvider;
+  scope_id: string;
+  scope_name: string;
+  status: ConnectionStatus;
+  details: string;
+  discovered_resource_count: number;
+  discovered_resource_groups: string[];
+  permissions_verified: string[];
+  is_live: boolean;
+  latency_ms: number;
+  validated_at: string;
+}
+
+export interface CreateConnectionRequest {
+  provider: CloudProvider;
+  name: string;
+  scope_id: string;
+  azure_tenant_id?: string;
+  azure_client_id?: string;
+  azure_client_secret?: string;
+  gcp_project_id?: string;
+  gcp_service_account_json?: string;
+  gcp_access_token?: string;
+}
+
+export type TokenDataStatus =
+  | "live_telemetry"
+  | "no_data_available"
+  | "instrumentation_required"
+  | "simulation_benchmark"
+  | "unavailable_permission_required"
+  | "pricing_catalog";
+
+export interface TokenUsageRecord {
+  timestamp: string;
+  provider: CloudProvider;
+  subscription_id?: string | null;
+  project_id?: string | null;
+  resource_id: string;
+  resource_name: string;
+  resource_group: string;
+  service_name?: string;
+  model_name: string;
+  model_id?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  provider_total_tokens?: number | null;
+  normalized_total_tokens?: number;
+  total_tokens: number;
+  prompt_rate_per_million?: string | number | null;
+  completion_rate_per_million?: string | number | null;
+  estimated_cost_usd: string | number;
+  currency?: string;
+  telemetry_status?: TokenDataStatus;
+  metric_source?: string;
+  rate_meter_source?: string;
+  pricing_source?: string;
+  attribution_status?: "attributed_to_model" | "attributed_to_resource" | "unattributed" | string;
+  last_updated?: string;
+}
+
+export interface TokenTrendPoint {
+  timestamp: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: string | number;
+}
+
+export interface ModelTokenBreakdown {
+  model_name: string;
+  provider: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_rate_per_million: string | number;
+  completion_rate_per_million: string | number;
+  total_cost_usd: string | number;
+  percentage_of_total: number;
+}
+
+export interface WorkloadTokenBreakdown {
+  workload_or_group: string;
+  resource_count: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens: number;
+  total_cost_usd: string | number;
+  percentage_of_total: number;
+  pricing_source?: string;
+  telemetry_status?: TokenDataStatus;
+  attribution_status?: string;
+}
+
+export interface ServiceTokenBreakdown {
+  service_name: string;
+  resource_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  total_cost_usd: string | number;
+  percentage_of_total: number;
+  pricing_source?: string;
+  telemetry_status?: TokenDataStatus;
+  attribution_status?: string;
+}
+
+export interface TokenEconomicsSummary {
+  provider: CloudProvider;
+  scope_id: string;
+  scope_name: string;
+  time_window: string;
+  data_status: TokenDataStatus;
+  status_message: string;
+  total_tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  prompt_cost_usd?: string | number;
+  completion_cost_usd?: string | number;
+  estimated_cost_usd: string | number;
+  unattributed_tokens: number;
+  unattributed_percentage: number;
+  active_models_count: number;
+  discovered_ai_resources_count: number;
+  discovered_ai_resources: string[];
+  trend_points: TokenTrendPoint[];
+  model_breakdowns: ModelTokenBreakdown[];
+  workload_breakdowns: WorkloadTokenBreakdown[];
+  service_breakdowns?: ServiceTokenBreakdown[];
+  usage_records: TokenUsageRecord[];
+  diagnostic_setup_guide: string[];
+  generated_at: string;
+}
+
+export * from "./financials";
 
