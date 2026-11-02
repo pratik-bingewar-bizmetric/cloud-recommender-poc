@@ -11,8 +11,11 @@
     "test": "npx tsx --test test/**/*.test.ts"
   },
   "dependencies": {
+    "@swc/helpers": "^0.5.23",
+    "cytoscape": "^3.34.4",
+    "cytoscape-fcose": "^2.2.0",
     "lucide-react": "^1.55.0",
-    "mermaid": "^12.1.0",
+    "mermaid": "^12.2.0",
     "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18"
