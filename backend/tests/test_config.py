@@ -8,7 +8,7 @@ from cloud_recommender.core.config import Settings, get_settings
 
 def test_default_settings_values() -> None:
     """Verify safe default settings."""
-    settings = Settings()
+    settings = Settings(_env_file=None)
     assert settings.app_name == "cloud-recommender"
     assert settings.app_env in ["development", "testing"]
     assert settings.llm_provider == "mock"

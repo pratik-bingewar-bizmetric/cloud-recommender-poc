@@ -23,12 +23,41 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, ge=1, le=65535, description="API server bind port")
     api_v1_str: str = Field(default="/api/v1", description="Prefix for version 1 API routes")
     cors_origins: list[str] = Field(
-        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"],
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "https://app.fabric.microsoft.com",
+            "https://true-holly-e4e36b6da6-northcentralus.webapp.fabricapps.net",
+        ],
         description="Allowed CORS origins",
     )
     secret_key: str = Field(
         default="insecure-default-development-secret-key-change-in-production",
         description="Application secret key",
+    )
+
+    # Microsoft Entra ID Authentication & Authorization
+    entra_auth_enabled: bool = Field(
+        default=False,
+        description="Enable cryptographic Microsoft Entra ID JWT verification for protected API routes.",
+    )
+    entra_tenant_id: str | None = Field(
+        default="fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
+        description="Target Microsoft Entra ID tenant GUID.",
+    )
+    entra_audience: str | None = Field(
+        default=None,
+        description="Expected audience (client ID or API URI) for incoming Entra ID JWTs.",
+    )
+    entra_jwks_cache_ttl_hours: int = Field(
+        default=24,
+        ge=1,
+        le=168,
+        description="Cache time-to-live for Microsoft published JWKS public keys in hours.",
     )
 
     # Relational Database (PostgreSQL with asyncpg)
@@ -144,6 +173,26 @@ class Settings(BaseSettings):
     # Logging & Observability
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO")
     log_format: Literal["json", "console"] = Field(default="json")
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def validate_cors_origins(cls, v: object) -> list[str]:
+        """Support JSON arrays, comma-separated strings, or string lists for CORS origins."""
+        import json
+
+        if isinstance(v, str):
+            v_str = v.strip()
+            if v_str.startswith("[") and v_str.endswith("]"):
+                try:
+                    parsed = json.loads(v_str)
+                    if isinstance(parsed, list):
+                        return [str(origin).strip() for origin in parsed if str(origin).strip()]
+                except Exception:
+                    pass
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        if isinstance(v, list):
+            return [str(origin).strip() for origin in v if str(origin).strip()]
+        return []
 
     @field_validator("debug", mode="before")
     @classmethod

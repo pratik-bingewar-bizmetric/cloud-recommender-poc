@@ -111,6 +111,15 @@ class AzureAIFoundryProvider:
         # Standard path fallback
         return f"{endpoint}/chat/completions?api-version={api_version}"
 
+    def _scrub_sensitive(self, text: str) -> str:
+        """Ensure API keys or bearer tokens are scrubbed from error output and logs."""
+        if not text:
+            return text
+        api_key = (self.settings.azure_ai_foundry_api_key or "").strip()
+        if api_key and len(api_key) >= 4 and api_key in text:
+            text = text.replace(api_key, "[REDACTED_API_KEY]")
+        return text
+
     async def _call_inference(
         self,
         messages: list[dict[str, str]],
@@ -151,16 +160,19 @@ class AzureAIFoundryProvider:
                 response = await client.post(url, headers=headers, json=payload)
 
             if response.status_code in (401, 403):
+                scrubbed = self._scrub_sensitive(response.text)
                 raise AzureAIFoundryAuthError(
-                    f"Azure AI Foundry auth failed ({response.status_code}): {response.text}"
+                    f"Azure AI Foundry auth failed ({response.status_code}): {scrubbed}"
                 )
             if response.status_code == 429:
+                scrubbed = self._scrub_sensitive(response.text)
                 raise AzureAIFoundryRateLimitError(
-                    f"Azure AI Foundry rate limit exceeded (429): {response.text}"
+                    f"Azure AI Foundry rate limit exceeded (429): {scrubbed}"
                 )
             if response.status_code >= 400:
+                scrubbed = self._scrub_sensitive(response.text)
                 raise AzureAIFoundryResponseError(
-                    f"Azure AI Foundry returned error ({response.status_code}): {response.text}"
+                    f"Azure AI Foundry returned error ({response.status_code}): {scrubbed}"
                 )
 
             data = response.json()
@@ -470,3 +482,151 @@ class AzureAIFoundryProvider:
             assumptions_list,
             limitations_list,
         )
+
+    def generate_mock_requirements(
+        self,
+        idea: str,
+        target_region: str = "eastus",
+        customer_preset: int | None = None,
+    ) -> tuple[WorkloadProfile, list[ClarifyingQuestion], WorkloadAssumptions, list[str]]:
+        """Generate clearly labeled mock requirements for safe offline POC testing."""
+        cust_count = customer_preset if customer_preset is not None else 10000
+        assumptions = WorkloadAssumptions(
+            customer_count=cust_count,
+            monthly_active_users=max(1, cust_count // 4),
+            requests_per_user_per_day=20,
+            peak_rps=max(1.0, cust_count / 200.0),
+            db_storage_gb=100.0,
+            blob_storage_gb=250.0,
+            monthly_egress_gb=150.0,
+            ai_support_monthly_tokens=cust_count * 500,
+            target_sla_percentage=99.95,
+            ha_required=True,
+            backup_retention_days=30,
+            target_region=target_region,
+        )
+
+        profile = WorkloadProfile(
+            id=uuid4(),
+            name=f"[MOCK SIMULATION] {idea[:30].strip() or 'Analyzed Workload'}",
+            description=f"[MOCK SIMULATION] Mock requirement extraction for: {idea[:200]}",
+            category=WorkloadCategory.WEB_APP,
+            target_traffic_rps=int(assumptions.peak_rps),
+            monthly_active_users=assumptions.monthly_active_users,
+            peak_multiplier=Decimal("2.50"),
+            target_sla_percentage=Decimal(str(assumptions.target_sla_percentage)),
+            high_availability=assumptions.ha_required,
+            primary_region=target_region,
+            target_regions=[target_region],
+            compliance_frameworks=[ComplianceStandard.SOC2],
+            storage_volume_gb=Decimal(str(assumptions.db_storage_gb + assumptions.blob_storage_gb)),
+            monthly_data_egress_gb=Decimal(str(assumptions.monthly_egress_gb)),
+            estimation_assumptions={
+                "customer_count": str(assumptions.customer_count),
+                "ai_support_monthly_tokens": str(assumptions.ai_support_monthly_tokens),
+                "ha_required": str(assumptions.ha_required),
+                "analysis_engine": "mock_fallback_fixture",
+                "provenance_notice": (
+                    "Generated via offline mock engine. Configure AZURE_AI_FOUNDRY_API_KEY "
+                    "for live AI model inference."
+                ),
+            },
+        )
+
+        questions = [
+            ClarifyingQuestion(
+                id="mock-q1",
+                category="availability",
+                question="What is the recovery time objective (RTO) for service restoration?",
+                rationale=(
+                    "Determines whether active-active multi-region or single-region zone redundancy "
+                    "is needed."
+                ),
+                options=["RTO < 15 minutes (Zone redundant)", "RTO < 2 hours (Backup restore)"],
+                default_answer="RTO < 15 minutes (Zone redundant)",
+                impact_on_architecture=(
+                    "Selects zone-redundant Azure Container Apps and PostgreSQL Flexible HA."
+                ),
+            )
+        ]
+        return profile, questions, assumptions, ["compliance_certifications"]
+
+    def generate_mock_architecture(
+        self,
+        workload: WorkloadProfile,
+        assumptions: WorkloadAssumptions,
+        clarifications: list[ClarifyingAnswer],
+    ) -> tuple[list[ArchitectureComponent], TradeOffAssessment, str, str, list[str], list[str]]:
+        """Generate clearly labeled mock architecture blueprint for offline POC testing."""
+        components = [
+            ArchitectureComponent(
+                component_id="comp-mock-compute",
+                category=ServiceCategory.COMPUTE,
+                service_id="azure-container-apps",
+                service_name="Azure Container Apps",
+                sku_or_tier="Consumption 0.5 vCPU 1.0 GiB",
+                quantity=2,
+                rationale="[MOCK SIMULATION] Scalable serverless container hosting for web tiers",
+                monthly_cost=Decimal("0.00"),
+                region=assumptions.target_region,
+                dependencies=["comp-mock-db"],
+                security_considerations="Managed identity, VNet integration",
+                reliability_considerations="Zone-redundant deployment across 3 availability zones",
+                scaling_considerations="Autoscaling from 2 to 10 replicas based on HTTP load",
+                known_risks=["Cold start latency during scale from zero"],
+            ),
+            ArchitectureComponent(
+                component_id="comp-mock-db",
+                category=ServiceCategory.DATABASE,
+                service_id="azure-postgres-flexible",
+                service_name="Azure Database for PostgreSQL",
+                sku_or_tier="General Purpose D2ds_v5",
+                quantity=1,
+                rationale="[MOCK SIMULATION] Managed relational database with automatic backups",
+                monthly_cost=Decimal("0.00"),
+                region=assumptions.target_region,
+                dependencies=[],
+                security_considerations="Private endpoint, TLS 1.3 enforced",
+                reliability_considerations="Zone-redundant high availability with automatic failover",
+                scaling_considerations="Online compute and storage scaling up to 16 TiB",
+                known_risks=["Planned failover window during maintenance"],
+            ),
+        ]
+        trade_offs = TradeOffAssessment(
+            cost_efficiency=TradeOffDimension(
+                score=85, assessment="[MOCK SIMULATION] Balanced cost"
+            ),
+            security_compliance=TradeOffDimension(
+                score=90, assessment="[MOCK SIMULATION] Enterprise security"
+            ),
+            reliability_resilience=TradeOffDimension(
+                score=92, assessment="[MOCK SIMULATION] Zone-redundant HA"
+            ),
+            scalability_performance=TradeOffDimension(
+                score=88, assessment="[MOCK SIMULATION] Elastic PaaS"
+            ),
+            operational_complexity=TradeOffDimension(
+                score=80, assessment="[MOCK SIMULATION] Low operational overhead"
+            ),
+            summary="[MOCK SIMULATION] Offline mock fallback architecture blueprint",
+        )
+        arch_desc = (
+            f"[MOCK SIMULATION] {workload.name}: Azure Container Apps frontend with Azure "
+            "Database for PostgreSQL Flexible Server backend, deployed in a zone-redundant topology."
+        )
+        mermaid = (
+            "graph TD\n"
+            "  Client[Web Client] --> App[Azure Container Apps]\n"
+            "  App --> DB[(Azure Database for PostgreSQL Flexible)]\n"
+            "  App --> Storage[Azure Blob Storage]"
+        )
+        assumptions_list = [
+            "Generated via offline mock engine",
+            f"Workload primary region: {workload.primary_region}",
+            "Single target region with zone redundancy",
+        ]
+        limitations_list = [
+            "Mock simulation fixture for local development and test suite validation",
+            f"Processed with {len(clarifications)} architectural clarification parameters",
+        ]
+        return components, trade_offs, arch_desc, mermaid, assumptions_list, limitations_list
