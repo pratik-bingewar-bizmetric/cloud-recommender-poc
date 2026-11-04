@@ -350,3 +350,66 @@ async def test_require_roles_enforcement(
         )
     assert ok_response.status_code == 200
     assert ok_response.json() == {"status": "authorized"}
+
+
+@pytest.mark.asyncio
+async def test_create_connection_requires_admin_role_rejects_reader_403(
+    app_with_entra: FastAPI,
+    rsa_key_pair: tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey],
+) -> None:
+    """Verify POST /api/v1/connections rejects authenticated user with only Reader role (403)."""
+    priv, _ = rsa_key_pair
+    reader_token = make_token(priv, roles=["Reader"])
+
+    payload = {
+        "provider": "azure",
+        "name": "Production Subscription",
+        "tenant_id": TENANT_ID,
+        "subscription_id": "11111111-2222-3333-4444-555555555555",
+        "client_id": "test-client-id",
+        "client_secret": "test-secret-mock",
+    }
+
+    transport = ASGITransport(app=app_with_entra)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/connections",
+            json=payload,
+            headers={"Authorization": f"Bearer {reader_token}"},
+        )
+
+    assert response.status_code == 403
+    detail = response.json()["error"]["message"]
+    assert detail["error_code"] == "INSUFFICIENT_PERMISSIONS"
+
+
+@pytest.mark.asyncio
+async def test_create_connection_requires_admin_role_rejects_reader_403(
+    app_with_entra: FastAPI,
+    rsa_key_pair: tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey],
+) -> None:
+    """Verify POST /api/v1/connections rejects authenticated user with only Reader role (403)."""
+    priv, _ = rsa_key_pair
+    reader_token = make_token(priv, roles=["Reader"])
+
+    payload = {
+        "provider": "azure",
+        "name": "Production Subscription",
+        "tenant_id": TENANT_ID,
+        "subscription_id": "11111111-2222-3333-4444-555555555555",
+        "client_id": "test-client-id",
+        "client_secret": "test-secret-mock",
+    }
+
+    transport = ASGITransport(app=app_with_entra)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/connections",
+            json=payload,
+            headers={"Authorization": f"Bearer {reader_token}"},
+        )
+
+    assert response.status_code == 403
+    detail = response.json()["error"]["message"]
+    assert detail["error_code"] == "INSUFFICIENT_PERMISSIONS"
+
