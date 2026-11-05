@@ -11,6 +11,9 @@ services:
       enabled: false
     allowedRedirectUris:
       - http://localhost:5173
+      - http://localhost:5174
+      - http://127.0.0.1:5174
+      - https://true-holly-e4e36b6da6-northcentralus.webapp.fabricapps.net
   data:
     enabled: false
     path: packages/data
@@ -21,6 +24,10 @@ services:
     folder: dist
     buildCommand: npm run build:fabric
     indexDocument: index.html
-    assetAccess: protected
+    assetAccess: public
     embedded:
       only: false
+  storage:
+    enabled: false
+  functions:
+    enabled: false

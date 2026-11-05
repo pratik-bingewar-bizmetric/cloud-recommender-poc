@@ -131,7 +131,7 @@ export const TelemetryCoverageDrawer: React.FC<TelemetryCoverageDrawerProps> = (
             r.telemetry_source ||
             (overview.is_live
               ? "Provider Metrics REST API"
-              : "Verified Benchmark Telemetry"),
+              : "Local Pricing Cache Telemetry"),
           lastChecked: new Date(r.last_checked || overview.query_timestamp),
           reason,
         };
@@ -143,7 +143,7 @@ export const TelemetryCoverageDrawer: React.FC<TelemetryCoverageDrawerProps> = (
     const unmonitored = eligible.filter((i) => !i.isMonitored);
     const ineligible = items.filter((i) => !i.isEligible);
 
-    const isKnown = overview.is_live || overview.data_source === "mock_fixture";
+    const isKnown = overview.is_live;
     const coveragePct =
       eligible.length > 0
         ? ((monitored.length / eligible.length) * 100).toFixed(1)

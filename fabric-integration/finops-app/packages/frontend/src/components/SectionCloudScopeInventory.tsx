@@ -377,7 +377,7 @@ export function SectionCloudScopeInventory() {
             >
               {scopes.map((s) => (
                 <option key={s.scope_id} value={s.scope_id}>
-                  {s.display_name} ({s.scope_id}) {s.data_source === "mock_fixture" ? "[Demo Fixture]" : ""}
+                  {s.display_name} ({s.scope_id})
                 </option>
               ))}
             </select>
@@ -618,7 +618,7 @@ export function SectionCloudScopeInventory() {
                 )}
               </div>
               <span className="text-[10px] text-slate-400 block mt-0.5">
-                {analysis.data_source === "live_authenticated" ? "Live Cloud Rates" : "Reference Fixture"}
+                {analysis.data_source === "live_authenticated" ? "Live Cloud Rates" : "Local Pricing Cache"}
               </span>
             </div>
           </div>

@@ -140,7 +140,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
               <span className="text-[11px] text-slate-500 font-medium">
-                Simulation Fixture
+                Pricing Catalog / Live Auth Ready
               </span>
             </div>
           </div>

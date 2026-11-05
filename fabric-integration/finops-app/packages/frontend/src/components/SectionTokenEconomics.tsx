@@ -6,10 +6,6 @@ import {
   TimeWindowPreset,
   MetricInterval,
   TokenEconomicsSummary,
-  TokenUsageRecord,
-  ModelTokenBreakdown,
-  WorkloadTokenBreakdown,
-  ServiceTokenBreakdown,
 } from "@/types";
 import { getTokenEconomics } from "@/lib/api";
 import { TokenConsumptionChart } from "@/components/TokenConsumptionChart";
@@ -22,7 +18,6 @@ import {
   HelpCircle,
   RefreshCw,
   Terminal,
-  SlidersHorizontal,
   ChevronDown,
   ChevronUp,
   X,
@@ -59,7 +54,6 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loadingStage, setLoadingStage] = useState<number>(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [showBenchmarkPreview, setShowBenchmarkPreview] = useState<boolean>(false);
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
   const [selectedKpi, setSelectedKpi] = useState<KpiType>("total");
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
@@ -167,7 +161,6 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
 
   useEffect(() => {
     fetchTokenData();
-    setShowBenchmarkPreview(false);
   }, [fetchTokenData]);
 
   // Provenance determination
@@ -175,313 +168,10 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
   const isPermissionRequired = dataStatus === "unavailable_permission_required";
   const isInstrumentationRequired = dataStatus === "instrumentation_required" || isPermissionRequired;
   const isLiveTelemetry = dataStatus === "live_telemetry";
-  const isSimulationBenchmark = dataStatus === "simulation_benchmark";
 
-  // Reconciled fallback fixture if user clicks "Preview Benchmark" on an uninstrumented scope
-  const fallbackBenchmark = useMemo(() => {
-    if (provider === "gcp") {
-      const totalP = 1110000;
-      const totalC = 372000;
-      const tot = totalP + totalC;
-      const costP = (1110000 * 0.5 * 1.25 + 1110000 * 0.5 * 0.075) / 1000000;
-      const costC = (372000 * 0.6 * 5.0 + 372000 * 0.4 * 0.3) / 1000000;
-      const costTotal = costP + costC;
-
-      const models: ModelTokenBreakdown[] = [
-        {
-          model_name: "gemini-1.5-pro",
-          provider: "GCP Vertex AI",
-          prompt_tokens: 555000,
-          completion_tokens: 223200,
-          total_tokens: 778200,
-          prompt_rate_per_million: "1.2500",
-          completion_rate_per_million: "5.0000",
-          total_cost_usd: (555000 * 1.25 + 223200 * 5.0) / 1000000,
-          percentage_of_total: 52.5,
-        },
-        {
-          model_name: "gemini-1.5-flash",
-          provider: "GCP Vertex AI",
-          prompt_tokens: 555000,
-          completion_tokens: 148800,
-          total_tokens: 703800,
-          prompt_rate_per_million: "0.0750",
-          completion_rate_per_million: "0.3000",
-          total_cost_usd: (555000 * 0.075 + 148800 * 0.3) / 1000000,
-          percentage_of_total: 47.5,
-        },
-      ];
-
-      const workloads: WorkloadTokenBreakdown[] = [
-        {
-          workload_or_group: "smart-expense-gcp-prod",
-          resource_count: 2,
-          prompt_tokens: Math.round(totalP * 0.85),
-          completion_tokens: Math.round(totalC * 0.85),
-          total_tokens: Math.round(tot * 0.85),
-          total_cost_usd: Number((costTotal * 0.85).toFixed(4)),
-          percentage_of_total: 85.0,
-          pricing_source: "GCP Cloud Billing Catalog",
-          telemetry_status: "simulation_benchmark",
-          attribution_status: "attributed_to_resource",
-        },
-        {
-          workload_or_group: "Unattributed",
-          resource_count: 1,
-          prompt_tokens: totalP - Math.round(totalP * 0.85),
-          completion_tokens: totalC - Math.round(totalC * 0.85),
-          total_tokens: tot - Math.round(tot * 0.85),
-          total_cost_usd: Number((costTotal * 0.15).toFixed(4)),
-          percentage_of_total: 15.0,
-          pricing_source: "GCP Cloud Billing Catalog",
-          telemetry_status: "simulation_benchmark",
-          attribution_status: "unattributed",
-        },
-      ];
-
-      const services: ServiceTokenBreakdown[] = [
-        {
-          service_name: "Vertex AI API",
-          resource_count: 2,
-          prompt_tokens: totalP,
-          completion_tokens: totalC,
-          total_tokens: tot,
-          total_cost_usd: Number(costTotal.toFixed(4)),
-          percentage_of_total: 100.0,
-          pricing_source: "GCP Cloud Billing Catalog",
-          telemetry_status: "simulation_benchmark",
-          attribution_status: "attributed_to_resource",
-        },
-      ];
-
-      const gcpTrendPoints: import("@/types").TokenTrendPoint[] = [];
-      const numSteps = 24;
-      const windowHours =
-        timeWindow === "1h"
-          ? 1
-          : timeWindow === "24h"
-          ? 24
-          : timeWindow === "7d"
-          ? 168
-          : timeWindow === "30d"
-          ? 720
-          : 2160;
-      const stepDurationMs = (windowHours * 3600 * 1000) / numSteps;
-      const nowMs = Date.now();
-      const startTimeMs = nowMs - windowHours * 3600 * 1000;
-
-      let runningGcpP = 0;
-      let runningGcpC = 0;
-
-      for (let i = 0; i < numSteps; i++) {
-        const isLast = i === numSteps - 1;
-        const stepTime = new Date(startTimeMs + (i + 1) * stepDurationMs).toISOString();
-        const varFactor = 1.0 + 0.3 * ((i % 5) - 2);
-
-        let stepP = isLast ? totalP - runningGcpP : Math.round((totalP / numSteps) * varFactor);
-        let stepC = isLast ? totalC - runningGcpC : Math.round((totalC / numSteps) * varFactor);
-
-        if (stepP < 0) stepP = 0;
-        if (stepC < 0) stepC = 0;
-
-        runningGcpP += stepP;
-        runningGcpC += stepC;
-
-        const stepTot = stepP + stepC;
-        const stepCost =
-          totalP > 0 && totalC > 0
-            ? stepP * (costP / totalP) + stepC * (costC / totalC)
-            : 0;
-
-        gcpTrendPoints.push({
-          timestamp: stepTime,
-          prompt_tokens: stepP,
-          completion_tokens: stepC,
-          total_tokens: stepTot,
-          estimated_cost_usd: stepCost.toFixed(4),
-        });
-      }
-
-      return {
-        total_tokens: tot,
-        prompt_tokens: totalP,
-        completion_tokens: totalC,
-        prompt_cost_usd: costP.toFixed(4),
-        completion_cost_usd: costC.toFixed(4),
-        estimated_cost_usd: costTotal.toFixed(4),
-        unattributed_tokens: Math.round(tot * 0.15),
-        unattributed_percentage: 15.0,
-        model_breakdowns: models,
-        workload_breakdowns: workloads,
-        service_breakdowns: services,
-        usage_records: [] as TokenUsageRecord[],
-        trend_points: gcpTrendPoints,
-      };
-    }
-
-    const totalP = 444000;
-    const totalC = 148800;
-    const tot = totalP + totalC;
-    const p4o = Math.round(totalP * 0.6);
-    const c4o = Math.round(totalC * 0.75);
-    const pMini = Math.round(totalP * 0.3);
-    const cMini = totalC - c4o;
-    const pEmb = totalP - p4o - pMini;
-
-    const cost4o = (p4o * 2.5 + c4o * 10.0) / 1000000;
-    const costMini = (pMini * 0.15 + cMini * 0.6) / 1000000;
-    const costEmb = (pEmb * 0.02) / 1000000;
-    const costTotal = cost4o + costMini + costEmb;
-    const costP = (p4o * 2.5 + pMini * 0.15 + pEmb * 0.02) / 1000000;
-    const costC = (c4o * 10.0 + cMini * 0.6) / 1000000;
-
-    const models: ModelTokenBreakdown[] = [
-      {
-        model_name: "gpt-4o",
-        provider: "Azure OpenAI",
-        prompt_tokens: p4o,
-        completion_tokens: c4o,
-        total_tokens: p4o + c4o,
-        prompt_rate_per_million: "2.5000",
-        completion_rate_per_million: "10.0000",
-        total_cost_usd: cost4o,
-        percentage_of_total: Number((((p4o + c4o) / tot) * 100).toFixed(1)),
-      },
-      {
-        model_name: "gpt-4o-mini",
-        provider: "Azure OpenAI",
-        prompt_tokens: pMini,
-        completion_tokens: cMini,
-        total_tokens: pMini + cMini,
-        prompt_rate_per_million: "0.1500",
-        completion_rate_per_million: "0.6000",
-        total_cost_usd: costMini,
-        percentage_of_total: Number((((pMini + cMini) / tot) * 100).toFixed(1)),
-      },
-      {
-        model_name: "text-embedding-3-small",
-        provider: "Azure OpenAI",
-        prompt_tokens: pEmb,
-        completion_tokens: 0,
-        total_tokens: pEmb,
-        prompt_rate_per_million: "0.0200",
-        completion_rate_per_million: "0.0000",
-        total_cost_usd: costEmb,
-        percentage_of_total: Number(((pEmb / tot) * 100).toFixed(1)),
-      },
-    ];
-
-    const workloads: WorkloadTokenBreakdown[] = [
-      {
-        workload_or_group: "rg-smart-expense",
-        resource_count: 2,
-        prompt_tokens: Math.round(totalP * 0.85),
-        completion_tokens: Math.round(totalC * 0.85),
-        total_tokens: Math.round(tot * 0.85),
-        total_cost_usd: Number((costTotal * 0.85).toFixed(4)),
-        percentage_of_total: 85.0,
-        pricing_source: "Azure Retail Prices API (Public Tier)",
-        telemetry_status: "simulation_benchmark",
-        attribution_status: "attributed_to_resource",
-      },
-      {
-        workload_or_group: "Unattributed",
-        resource_count: 1,
-        prompt_tokens: totalP - Math.round(totalP * 0.85),
-        completion_tokens: totalC - Math.round(totalC * 0.85),
-        total_tokens: tot - Math.round(tot * 0.85),
-        total_cost_usd: Number((costTotal * 0.15).toFixed(4)),
-        percentage_of_total: 15.0,
-        pricing_source: "Azure Retail Prices API (Public Tier)",
-        telemetry_status: "simulation_benchmark",
-        attribution_status: "unattributed",
-      },
-    ];
-
-    const services: ServiceTokenBreakdown[] = [
-      {
-        service_name: "Azure OpenAI Service",
-        resource_count: 2,
-        prompt_tokens: totalP,
-        completion_tokens: totalC,
-        total_tokens: tot,
-        total_cost_usd: Number(costTotal.toFixed(4)),
-        percentage_of_total: 100.0,
-        pricing_source: "Azure Retail Prices API (Public Tier)",
-        telemetry_status: "simulation_benchmark",
-        attribution_status: "attributed_to_resource",
-      },
-    ];
-
-    const azTrendPoints: import("@/types").TokenTrendPoint[] = [];
-    const numSteps = 24;
-    const windowHours =
-      timeWindow === "1h"
-        ? 1
-        : timeWindow === "24h"
-        ? 24
-        : timeWindow === "7d"
-        ? 168
-        : timeWindow === "30d"
-        ? 720
-        : 2160;
-    const stepDurationMs = (windowHours * 3600 * 1000) / numSteps;
-    const nowMs = Date.now();
-    const startTimeMs = nowMs - windowHours * 3600 * 1000;
-
-    let runningAzP = 0;
-    let runningAzC = 0;
-
-    for (let i = 0; i < numSteps; i++) {
-      const isLast = i === numSteps - 1;
-      const stepTime = new Date(startTimeMs + (i + 1) * stepDurationMs).toISOString();
-      const varFactor = 1.0 + 0.3 * ((i % 5) - 2);
-
-      let stepP = isLast ? totalP - runningAzP : Math.round((totalP / numSteps) * varFactor);
-      let stepC = isLast ? totalC - runningAzC : Math.round((totalC / numSteps) * varFactor);
-
-      if (stepP < 0) stepP = 0;
-      if (stepC < 0) stepC = 0;
-
-      runningAzP += stepP;
-      runningAzC += stepC;
-
-      const stepTot = stepP + stepC;
-      const stepCost =
-        totalP > 0 && totalC > 0
-          ? stepP * (costP / totalP) + stepC * (costC / totalC)
-          : 0;
-
-      azTrendPoints.push({
-        timestamp: stepTime,
-        prompt_tokens: stepP,
-        completion_tokens: stepC,
-        total_tokens: stepTot,
-        estimated_cost_usd: stepCost.toFixed(4),
-      });
-    }
-
-    return {
-      total_tokens: tot,
-      prompt_tokens: totalP,
-      completion_tokens: totalC,
-      prompt_cost_usd: costP.toFixed(4),
-      completion_cost_usd: costC.toFixed(4),
-      estimated_cost_usd: costTotal.toFixed(4),
-      unattributed_tokens: Math.round(tot * 0.15),
-      unattributed_percentage: 15.0,
-      model_breakdowns: models,
-      workload_breakdowns: workloads,
-      service_breakdowns: services,
-      usage_records: [] as TokenUsageRecord[],
-      trend_points: azTrendPoints,
-    };
-  }, [provider, timeWindow]);
-
-  // Unified single source of truth:
-  // If data is returned from backend, ALWAYS prioritize backend's reconciled fields
+  // Single source of truth from real backend telemetry
   const activeData = useMemo(() => {
-    if (data && (data.total_tokens > 0 || isLiveTelemetry || isSimulationBenchmark)) {
+    if (data && (data.total_tokens > 0 || isLiveTelemetry)) {
       return {
         total_tokens: data.total_tokens,
         prompt_tokens: data.prompt_tokens,
@@ -503,16 +193,6 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
       };
     }
 
-    if (showBenchmarkPreview) {
-      return {
-        ...fallbackBenchmark,
-        trend_points:
-          data?.trend_points && data.trend_points.length > 0
-            ? data.trend_points
-            : fallbackBenchmark.trend_points,
-      };
-    }
-
     return {
       total_tokens: data?.total_tokens ?? 0,
       prompt_tokens: data?.prompt_tokens ?? 0,
@@ -528,7 +208,7 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
       usage_records: data?.usage_records ?? [],
       trend_points: data?.trend_points ?? [],
     };
-  }, [data, isLiveTelemetry, isSimulationBenchmark, showBenchmarkPreview, fallbackBenchmark]);
+  }, [data, isLiveTelemetry]);
 
   const displayTotal = activeData.total_tokens;
   const displayPrompt = activeData.prompt_tokens;
@@ -539,8 +219,8 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
   const displayUnattributed = activeData.unattributed_tokens;
   const displayUnattributedPct = activeData.unattributed_percentage;
 
-  const isTelemetryAvailable =
-    isLiveTelemetry || isSimulationBenchmark || showBenchmarkPreview;
+  const hasTelemetryData = Boolean(data && data.total_tokens > 0);
+  const isTelemetryAvailable = isLiveTelemetry && hasTelemetryData;
   const isMeasuredZero = isLiveTelemetry && displayTotal === 0;
 
   // Available models for filtering drawer
@@ -934,20 +614,10 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
               </h3>
 
               {/* Truthful Data Status Badge */}
-              {showBenchmarkPreview ? (
-                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center gap-1">
-                  <SlidersHorizontal className="w-3 h-3 text-indigo-600" />
-                  Benchmark Preview Mode
-                </span>
-              ) : isLiveTelemetry ? (
+              {isLiveTelemetry ? (
                 <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   Live Provider Telemetry
-                </span>
-              ) : isSimulationBenchmark ? (
-                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-indigo-600" />
-                  Verified Reference Benchmark
                 </span>
               ) : isPermissionRequired ? (
                 <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1">
@@ -987,22 +657,7 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
 
         {/* Right Toolbar Actions */}
         <div className="flex items-center gap-2 shrink-0">
-          {isInstrumentationRequired && (
-            <button
-              type="button"
-              onClick={() => setShowBenchmarkPreview((prev) => !prev)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                showBenchmarkPreview
-                  ? "bg-slate-900 text-white hover:bg-slate-800"
-                  : "bg-blue-50 text-brand-700 hover:bg-blue-100 border border-blue-200"
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>
-                {showBenchmarkPreview ? "Exit Benchmark Preview" : "Preview Benchmark Model"}
-              </span>
-            </button>
-          )}
+          
 
           <button
             type="button"
@@ -1016,28 +671,7 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
         </div>
       </div>
 
-      {/* 2. Benchmark Preview Warning Notice (When Active) */}
-      {(showBenchmarkPreview || isSimulationBenchmark) && (
-        <div className="p-3.5 rounded-xl bg-indigo-50/70 border border-indigo-200 text-xs text-indigo-900 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-indigo-600 shrink-0" />
-            <p>
-              <strong>Benchmark Simulation Notice:</strong> The figures below represent illustrative workload benchmarks calculated deterministically with official{" "}
-              {provider === "gcp" ? "Google Cloud" : "Microsoft Azure"} list rates. They do not contaminate real connected telemetry.
-            </p>
-          </div>
-          {showBenchmarkPreview && (
-            <button
-              type="button"
-              onClick={() => setShowBenchmarkPreview(false)}
-              className="text-xs font-semibold text-indigo-700 hover:underline shrink-0 flex items-center gap-1"
-            >
-              <span>Dismiss</span>
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      )}
+
 
       {/* 3. Five Interactive, Clickable KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -1064,15 +698,13 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
             </div>
           )}
           <span className="text-[11px] text-slate-400 block mt-0.5">
-            {showBenchmarkPreview || isSimulationBenchmark
-              ? "Reconciled reference total"
-              : isMeasuredZero
+            isMeasuredZero
               ? "Measured zero (0 tokens)"
-              : isLiveTelemetry
+              : isLiveTelemetry && hasTelemetryData
               ? "Live observed volume"
               : isPermissionRequired
               ? "Permission required (403)"
-              : "Telemetry not instrumented"}
+              : "Insufficient data"
           </span>
           <span className="text-[10px] text-brand-600 font-medium opacity-0 group-hover:opacity-100 transition mt-1 block">
             Click to drill down &rarr;
@@ -1329,8 +961,7 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
             provider={provider}
             isLoading={isLoading}
             isMeasuredZero={isMeasuredZero}
-            onBenchmarkPreviewClick={() => setShowBenchmarkPreview(true)}
-          />
+            />
         </div>
 
         {/* Chart 2: Model Mix Breakdown (Reconciled with Backend) */}

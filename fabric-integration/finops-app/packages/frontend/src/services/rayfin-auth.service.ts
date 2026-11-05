@@ -61,6 +61,9 @@ export interface IAuthService {
   onSessionChange?(
     listener: (session: OpaqueSession | null) => void
   ): () => void;
+
+  /** Resolve active JWT access token for API forwarding (e.g. Fabric UDF requests). */
+  getAccessToken?(): Promise<string | null> | string | null;
 }
 
 /**
@@ -143,6 +146,10 @@ class UnconfiguredAuthService implements IAuthService {
   async signIn(): Promise<OpaqueSession> {
     throw new Error('Sign-in is unavailable until Rayfin is configured.');
   }
+
+  getAccessToken(): string | null {
+    return null;
+  }
 }
 
 /**
@@ -220,5 +227,31 @@ class RayfinAuthService implements IAuthService {
     listener: (session: OpaqueSession | null) => void
   ): () => void {
     return this.client.auth.onSessionChange(listener);
+  }
+
+  getAccessToken(): string | null {
+    // 1. Direct active access token from Auth instance
+    const authAny = this.client.auth as any;
+    if (typeof authAny?.accessToken === 'string' && authAny.accessToken.trim()) {
+      return authAny.accessToken;
+    }
+
+    // 2. Internal session model access token
+    if (typeof authAny?.internalSession?.accessToken === 'string' && authAny.internalSession.accessToken.trim()) {
+      return authAny.internalSession.accessToken;
+    }
+
+    // 3. ApiClient callback lookup
+    try {
+      const cb = authAny?.getAuthApi?.()?.apiClient?.getAccessTokenCallback;
+      if (typeof cb === 'function') {
+        const token = cb();
+        if (typeof token === 'string' && token.trim()) return token;
+      }
+    } catch {
+      // Ignore internal lookup error
+    }
+
+    return null;
   }
 }

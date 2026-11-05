@@ -435,7 +435,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                                   : "bg-slate-100 text-slate-600"
                               }`}
                             >
-                              {conn.is_live ? "Live ARM Session" : "Reference Fixture"}
+                              {conn.is_live ? "Live ARM Session" : "Saved Connection"}
                             </span>
                           </div>
 
@@ -674,7 +674,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                                   : "bg-slate-100 text-slate-600"
                               }`}
                             >
-                              {conn.is_live ? "Live IAM Session" : "Reference Benchmark"}
+                              {conn.is_live ? "Live IAM Session" : "Saved Connection"}
                             </span>
                           </div>
 

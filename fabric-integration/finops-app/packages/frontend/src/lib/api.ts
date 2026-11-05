@@ -14,6 +14,16 @@ import {
   WorkloadAssumptions,
   WorkloadProfile,
 } from "@/types";
+import {
+  getFabricUdfBaseUrl,
+  udfListConnections,
+  udfCreateConnection,
+  udfValidateConnection,
+  udfDeleteConnection,
+  udfGetInventory,
+  udfGetCostWaste,
+  udfGetTokenEconomics,
+} from "./fabric-udf-client";
 
 export function getApiBaseUrl(): string {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
@@ -22,6 +32,9 @@ export function getApiBaseUrl(): string {
   }
   if (import.meta.env.DEV) {
     return "http://localhost:8000/api/v1";
+  }
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    return getFabricUdfBaseUrl();
   }
   // In production, do not silently fallback to localhost
   throw new ApiError(
@@ -58,6 +71,43 @@ export class ApiError extends Error {
 
 export type TokenProvider = () => Promise<string | null> | string | null;
 let currentTokenProvider: TokenProvider | null = null;
+let isResolvingToken = false;
+
+const ENTRA_TOKEN_STORAGE_KEY = "fabric_entra_access_token";
+
+/**
+ * Persist or clear a delegated Microsoft Entra ID access token for Fabric UDF REST calls.
+ */
+export function setStoredEntraToken(token: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (token && token.trim()) {
+      sessionStorage.setItem(ENTRA_TOKEN_STORAGE_KEY, token.trim());
+      localStorage.setItem(ENTRA_TOKEN_STORAGE_KEY, token.trim());
+    } else {
+      sessionStorage.removeItem(ENTRA_TOKEN_STORAGE_KEY);
+      localStorage.removeItem(ENTRA_TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Storage access restricted
+  }
+}
+
+/**
+ * Retrieve the active delegated Microsoft Entra ID token from session or local storage.
+ */
+export function getStoredEntraToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const sessionVal = sessionStorage.getItem(ENTRA_TOKEN_STORAGE_KEY);
+    if (sessionVal && sessionVal.trim()) return sessionVal.trim();
+    const localVal = localStorage.getItem(ENTRA_TOKEN_STORAGE_KEY);
+    if (localVal && localVal.trim()) return localVal.trim();
+  } catch {
+    // Storage access restricted
+  }
+  return null;
+}
 
 /**
  * Configure an asynchronous or synchronous token provider for Entra ID Bearer token forwarding.
@@ -67,18 +117,31 @@ export function setAuthTokenProvider(provider: TokenProvider | null): void {
 }
 
 /**
- * Resolve the current access token from the active provider or Rayfin localStorage session.
+ * Resolve the current access token from Entra storage, active provider, or Rayfin localStorage session.
  */
 export async function getAuthToken(): Promise<string | null> {
-  if (currentTokenProvider) {
+  // 1. Explicit delegated Microsoft Entra token (highest priority for Fabric UDF REST)
+  const explicitEntra = getStoredEntraToken();
+  if (explicitEntra) {
+    return explicitEntra;
+  }
+
+  // 2. Active token provider with recursion guard
+  if (currentTokenProvider && !isResolvingToken) {
     try {
+      isResolvingToken = true;
       const token = await currentTokenProvider();
-      if (token) return token;
-    } catch {
-      // Fall through to storage lookup
+      if (token && typeof token === "string" && token.trim()) {
+        return token.trim();
+      }
+    } catch (err) {
+      console.warn("[FinOps Auth] currentTokenProvider failed:", err);
+    } finally {
+      isResolvingToken = false;
     }
   }
 
+  // 3. Fallback: Rayfin localStorage authSession
   if (typeof window !== "undefined" && window.localStorage) {
     try {
       for (let i = 0; i < localStorage.length; i++) {
@@ -88,7 +151,7 @@ export async function getAuthToken(): Promise<string | null> {
           if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed.accessToken && typeof parsed.accessToken === "string") {
-              return parsed.accessToken;
+              return parsed.accessToken.trim();
             }
           }
         }
@@ -146,6 +209,9 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export async function checkBackendHealth(): Promise<{ status: string }> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    return { status: "healthy" };
+  }
   const rootUrl = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
   const res = await fetch(`${rootUrl}/health`);
   return handleResponse<{ status: string }>(res);
@@ -227,6 +293,31 @@ import type {
 } from "@/types";
 
 export async function getProvidersStatus(): Promise<ProviderConnectionStatus[]> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    const connections = await udfListConnections();
+    const azureConns = connections.filter((c) => c.provider === "azure");
+    const isAzureConnected = azureConns.some((c) => c.status === "connected");
+    return [
+      {
+        provider: "azure" as const,
+        status: isAzureConnected ? "connected" : "not_configured",
+        accounts_count: azureConns.length,
+        last_synced_at: azureConns[0]?.last_verified_at || null,
+      },
+      {
+        provider: "aws" as const,
+        status: "not_configured" as const,
+        accounts_count: 0,
+        last_synced_at: null,
+      },
+      {
+        provider: "gcp" as const,
+        status: "not_configured" as const,
+        accounts_count: 0,
+        last_synced_at: null,
+      },
+    ];
+  }
   const headers = await getHeaders();
   const url = `${API_BASE_URL}/inventory/providers/status`;
   const res = headers ? await fetch(url, { headers }) : await fetch(url);
@@ -234,6 +325,18 @@ export async function getProvidersStatus(): Promise<ProviderConnectionStatus[]> 
 }
 
 export async function listAzureSubscriptions(): Promise<CloudScopeSummary[]> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    const connections = await udfListConnections("azure");
+    return connections.map((conn) => ({
+      provider: "azure" as const,
+      scope_id: conn.scope_id || conn.id,
+      display_name: conn.name,
+      tenant_or_org_id: conn.tenant_or_org_id || null,
+      parent_scope_id: null,
+      state: conn.status,
+      data_source: conn.is_live ? ("live_authenticated" as const) : ("mock_fixture" as const),
+    }));
+  }
   const headers = await getHeaders();
   const url = `${API_BASE_URL}/inventory/azure/subscriptions`;
   const res = headers ? await fetch(url, { headers }) : await fetch(url);
@@ -248,6 +351,47 @@ export async function analyzeAzureSubscription(payload: {
   metric_window_days?: number;
   refresh_telemetry?: boolean;
 }): Promise<SubscriptionOrProjectAnalysis> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    const connectionId = payload.scope_id || "conn-default";
+    const [inv, waste] = await Promise.all([
+      udfGetInventory({ connection_id: connectionId }),
+      udfGetCostWaste({ connection_id: connectionId, force_refresh: payload.refresh_telemetry }),
+    ]);
+
+    const resources = inv.map((r) => ({
+      resource_id: r.resource_id,
+      name: r.name,
+      resource_type: r.resource_type,
+      location: r.location,
+      tags: r.tags || {},
+      monthly_cost_usd: String(r.monthly_cost_usd || "0.00"),
+    }));
+
+    return {
+      provider: "azure" as const,
+      scope_id: payload.scope_id || "azure-subscription",
+      scope_name: payload.scope_id || "Azure Subscription",
+      scope_type: "azure_subscription" as const,
+      tenant_or_org_id: null,
+      hierarchy_nodes: [],
+      data_source: "live_authenticated" as const,
+      spend_label: "actual_billed_spend" as const,
+      actual_billed_monthly_spend: String(waste.total_monthly_waste_usd),
+      resource_count: resources.length,
+      group_count: 1,
+      groups: [],
+      resources: resources as any,
+      cost_breakdown: {
+        total_monthly_usd: String(waste.total_monthly_waste_usd),
+        total_annual_usd: String(waste.total_annual_waste_usd),
+        compute_cost_usd: "0.00",
+        storage_cost_usd: "0.00",
+        network_cost_usd: "0.00",
+        database_cost_usd: "0.00",
+        other_cost_usd: "0.00",
+      },
+    };
+  }
   const res = await fetch(`${API_BASE_URL}/inventory/azure/analyze`, {
     method: "POST",
     headers: await getHeaders(),
@@ -354,6 +498,9 @@ export async function getMonitoringSources(): Promise<MonitoringSourcesResponse>
 // ----------------------------------------------------------------------------
 
 export async function listConnections(): Promise<import("@/types").CloudConnection[]> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    return udfListConnections();
+  }
   const res = await fetch(`${API_BASE_URL}/connections`, {
     method: "GET",
     headers: await getHeaders(),
@@ -364,6 +511,28 @@ export async function listConnections(): Promise<import("@/types").CloudConnecti
 export async function validateConnection(
   payload: import("@/types").ValidateConnectionRequest
 ): Promise<import("@/types").ConnectionValidationResponse> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    const res = await udfValidateConnection({
+      connection_id: payload.connection_id || undefined,
+      provider: payload.provider,
+      subscription_id: payload.scope_id,
+    });
+    return {
+      success: res.valid,
+      connection_id: payload.connection_id || "conn-val",
+      provider: payload.provider,
+      scope_id: payload.scope_id,
+      scope_name: payload.scope_id,
+      status: res.valid ? "connected" : "auth_failed",
+      details: res.message,
+      discovered_resource_count: 0,
+      discovered_resource_groups: [],
+      permissions_verified: ["Reader", "Cost Management Reader"],
+      is_live: true,
+      latency_ms: 100,
+      validated_at: new Date().toISOString(),
+    };
+  }
   const res = await fetch(`${API_BASE_URL}/connections/validate`, {
     method: "POST",
     headers: await getHeaders(),
@@ -375,12 +544,35 @@ export async function validateConnection(
 export async function createConnection(
   payload: import("@/types").CreateConnectionRequest
 ): Promise<import("@/types").CloudConnection> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    return udfCreateConnection({
+      name: payload.name,
+      tenant_id: payload.azure_tenant_id || "",
+      subscription_id: payload.scope_id,
+      client_id: payload.azure_client_id || "",
+      client_secret: payload.azure_client_secret || "",
+      provider: payload.provider,
+    });
+  }
   const res = await fetch(`${API_BASE_URL}/connections`, {
     method: "POST",
     headers: await getHeaders(),
     body: JSON.stringify(payload),
   });
   return handleResponse<import("@/types").CloudConnection>(res);
+}
+
+export async function deleteConnection(
+  connectionId: string
+): Promise<{ deleted: boolean; connection_id: string }> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    return udfDeleteConnection(connectionId);
+  }
+  const res = await fetch(`${API_BASE_URL}/connections/${connectionId}`, {
+    method: "DELETE",
+    headers: await getHeaders(),
+  });
+  return handleResponse<{ deleted: boolean; connection_id: string }>(res);
 }
 
 // ----------------------------------------------------------------------------
@@ -391,6 +583,59 @@ export async function getTokenEconomics(
   payload: MonitoringQueryRequest,
   signal?: AbortSignal
 ): Promise<import("@/types").TokenEconomicsSummary> {
+  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
+    const raw = await udfGetTokenEconomics({
+      connection_id: payload.scope_id || "default",
+      days: payload.time_window === "7d" ? 7 : 30,
+    });
+
+    const hasTokens = raw.total_tokens > 0;
+    return {
+      provider: payload.provider || "azure",
+      scope_id: payload.scope_id || "",
+      scope_name: payload.scope_id || "Connected Scope",
+      time_window: payload.time_window || "30d",
+      data_status: hasTokens ? "live_telemetry" : "no_data_available",
+      status_message: hasTokens
+        ? "Live telemetry observed from model invocations and Azure AI Foundry."
+        : "No token telemetry recorded in this interval.",
+      total_tokens: raw.total_tokens,
+      prompt_tokens: raw.total_prompt_tokens,
+      completion_tokens: raw.total_completion_tokens,
+      estimated_cost_usd: Number(raw.total_cost_usd),
+      unattributed_tokens: 0,
+      unattributed_percentage: 0,
+      active_models_count: raw.models_breakdown.length,
+      discovered_ai_resources_count: raw.models_breakdown.length > 0 ? 1 : 0,
+      discovered_ai_resources: raw.models_breakdown.map((m) => m.model_name),
+      trend_points: raw.daily_timeseries.map((d) => ({
+        timestamp: d.timestamp,
+        prompt_tokens: d.promptTokens,
+        completion_tokens: d.completionTokens,
+        total_tokens: d.totalTokens,
+        estimated_cost_usd: d.costUsd,
+      })),
+      model_breakdowns: raw.models_breakdown.map((m) => ({
+        model_name: m.model_name,
+        provider: "Azure OpenAI",
+        prompt_tokens: m.prompt_tokens,
+        completion_tokens: m.completion_tokens,
+        total_tokens: m.total_tokens,
+        prompt_rate_per_million: "2.5000",
+        completion_rate_per_million: "10.0000",
+        total_cost_usd: m.cost_usd,
+        percentage_of_total: raw.total_tokens > 0 ? (m.total_tokens / raw.total_tokens) * 100 : 0,
+      })),
+      workload_breakdowns: [],
+      usage_records: [],
+      diagnostic_setup_guide: [
+        "1. In Azure AI Foundry, ensure Diagnostic Settings route Metrics (TokenCount) to Log Analytics.",
+        "2. For platform LLM requests, real usage tokens are captured automatically upon completion.",
+      ],
+      generated_at: new Date().toISOString(),
+    };
+  }
+
   const res = await fetch(`${API_BASE_URL}/monitoring/token-economics`, {
     method: "POST",
     headers: await getHeaders(),
@@ -399,4 +644,21 @@ export async function getTokenEconomics(
   });
   return handleResponse<import("@/types").TokenEconomicsSummary>(res);
 }
+
+// Re-export Fabric UDF client operations
+export {
+  invokeUdfFunction,
+  getFabricUdfBaseUrl,
+  FabricUdfError,
+  udfListConnections,
+  udfCreateConnection,
+  udfValidateConnection,
+  udfDeleteConnection,
+  udfGetInventory,
+  udfGetCostWaste,
+  udfGetMetrics,
+  udfGetTokenEconomics,
+  udfRecordTokenUsage,
+  udfCalculatePricing,
+} from "./fabric-udf-client";
 

@@ -16,7 +16,7 @@ import {
 
 import { AuthContext, type AuthContextValue } from './auth.context';
 
-import { getAuthToken, setAuthTokenProvider } from '@/lib/api';
+import { setAuthTokenProvider } from '@/lib/api';
 import { IAuthService } from '@/services/rayfin-auth.service';
 
 interface AuthProviderProps {
@@ -75,11 +75,17 @@ export function AuthProvider({
 
   useEffect(() => {
     if (isAuthenticated) {
-      setAuthTokenProvider(async () => getAuthToken());
+      setAuthTokenProvider(async () => {
+        if (typeof rayfinAuthService.getAccessToken === 'function') {
+          const token = await rayfinAuthService.getAccessToken();
+          if (token) return token;
+        }
+        return null;
+      });
     } else {
       setAuthTokenProvider(null);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, rayfinAuthService]);
 
   const signIn = useCallback(async () => {
     setIsSigningIn(true);
