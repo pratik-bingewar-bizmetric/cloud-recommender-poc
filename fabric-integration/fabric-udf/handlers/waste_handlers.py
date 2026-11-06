@@ -1,11 +1,13 @@
 """FinOps cost waste analysis RPC handlers for Microsoft Fabric UDF."""
 
 import logging
+import os
+from typing import Any, Optional
 import urllib.error
-from typing import Any
 
 from pydantic import ValidationError
 from schemas.models import (
+    DiscoveredResource,
     GetWasteArgs,
     UdfResponse,
     WasteSummary,
@@ -22,6 +24,7 @@ async def handle_get_waste(
     azure_client: AzureRealClient,
     waste_detector: FinOpsWasteDetector,
     args: dict[str, Any],
+    analytical_repo: Optional[Any] = None,
 ) -> dict[str, Any]:
     """Execute deterministic FinOps waste detection on actual discovered resources."""
     try:
@@ -41,7 +44,65 @@ async def handle_get_waste(
             error_message=f"Connection '{parsed.connection_id}' not found.",
         ).model_dump(mode="json")
 
-    # Fetch resources
+    resources: list[DiscoveredResource] = []
+    vm_cpu_metrics: dict[str, float] = {}
+
+    # 1. Primary Path: OneLake Delta Analytical Storage
+    analytics_source = os.getenv("FINOPS_ANALYTICS_SOURCE", "onelake").lower()
+    if analytical_repo and analytics_source == "onelake":
+        envelope = analytical_repo.get_inventory_summary(
+            connection_id=parsed.connection_id,
+            subscription_id=conn.scope_id if conn else None,
+        )
+        if envelope.status == "success" and envelope.data and envelope.data.resources:
+            resources = [
+                DiscoveredResource(
+                    resource_id=item.resource_id,
+                    name=item.name,
+                    resource_type=item.resource_type,
+                    resource_group=item.resource_group,
+                    location=item.location,
+                    sku_name=item.sku_name,
+                    power_state=item.power_state,
+                    tags=item.tags or {},
+                    monthly_retail_cost=item.monthly_retail_cost,
+                )
+                for item in envelope.data.resources
+            ]
+            # Check metrics for running VMs from OneLake
+            running_vms = [
+                r
+                for r in resources
+                if "microsoft.compute/virtualmachines" in r.resource_type.lower()
+                and (r.power_state or "").lower() in ("running", "powerstate/running")
+            ]
+            for vm in running_vms[:10]:
+                m_env = analytical_repo.get_metrics_summary(
+                    connection_id=parsed.connection_id,
+                    resource_id=vm.resource_id,
+                    metric_names=["Percentage CPU", "cpu_percent"],
+                    days=7,
+                )
+                if m_env.status == "success" and m_env.data and m_env.data.series:
+                    for s in m_env.data.series:
+                        if s.peak_utilization is not None:
+                            vm_cpu_metrics[vm.resource_id] = s.peak_utilization
+
+            waste_summary = waste_detector.analyze_waste(
+                connection_id=parsed.connection_id,
+                resources=resources,
+                vm_cpu_metrics=vm_cpu_metrics,
+            )
+            waste_summary.connection_id = parsed.connection_id
+            resp_dict = UdfResponse(
+                status="success",
+                data=waste_summary.model_dump(mode="json"),
+            ).model_dump(mode="json")
+            resp_dict["data_source"] = "onelake_delta"
+            resp_dict["last_sync_at"] = envelope.data.snapshot_timestamp
+            return resp_dict
+
+    # 2. Local Fallback Path: SQLite or live Azure query
     resources = store.get_inventory(parsed.connection_id)
     secret = store.get_connection_secret(parsed.connection_id)
     token, _ = await azure_client.get_access_token(
@@ -61,7 +122,6 @@ async def handle_get_waste(
             logger.debug(f"live_arg_waste_query_failed: {exc}")
 
     if not resources:
-        # Return empty waste summary with honest zero counts
         empty_summary = WasteSummary(connection_id=parsed.connection_id)
         return UdfResponse(
             status="success",
@@ -69,7 +129,6 @@ async def handle_get_waste(
         ).model_dump(mode="json")
 
     # Collect CPU metrics for running VMs if token is available
-    vm_cpu_metrics: dict[str, float] = {}
     if token:
         running_vms = [
             r
@@ -77,7 +136,7 @@ async def handle_get_waste(
             if "microsoft.compute/virtualmachines" in r.resource_type.lower()
             and (r.power_state or "").lower() in ("running", "powerstate/running")
         ]
-        for vm in running_vms[:10]:  # Limit to 10 for latency bounds
+        for vm in running_vms[:10]:
             try:
                 metrics_resp = await azure_client.query_monitor_metrics(
                     token=token,
@@ -86,7 +145,6 @@ async def handle_get_waste(
                     time_grain="PT1H",
                     days=7,
                 )
-                # Find max CPU across series
                 for s in metrics_resp.series:
                     max_val = max(
                         (p.maximum for p in s.points if p.maximum is not None),
@@ -99,13 +157,13 @@ async def handle_get_waste(
                     f"vm_cpu_metric_query_failed vm_id={vm.resource_id} error={exc}"
                 )
 
-    summary = waste_detector.analyze_waste(
+    waste_summary = waste_detector.analyze_waste(
         connection_id=parsed.connection_id,
         resources=resources,
         vm_cpu_metrics=vm_cpu_metrics,
     )
-
+    waste_summary.connection_id = parsed.connection_id
     return UdfResponse(
         status="success",
-        data=summary.model_dump(mode="json"),
+        data=waste_summary.model_dump(mode="json"),
     ).model_dump(mode="json")

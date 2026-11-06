@@ -1,0 +1,11 @@
+{
+  "lakehouseId": "4bba3647-0112-4adc-8b18-f7a422461404",
+  "displayName": "finops_lakehouse",
+  "description": "Cloud FinOps persistent analytical Lakehouse",
+  "workspaceId": "672a6995-4190-4000-befd-5cc6479c3f74",
+  "oneLakeTablesPath": "https://onelake.dfs.fabric.microsoft.com/672a6995-4190-4000-befd-5cc6479c3f74/4bba3647-0112-4adc-8b18-f7a422461404/Tables",
+  "oneLakeFilesPath": "https://onelake.dfs.fabric.microsoft.com/672a6995-4190-4000-befd-5cc6479c3f74/4bba3647-0112-4adc-8b18-f7a422461404/Files",
+  "sqlEndpointId": "eb9febf5-c84d-47e3-a803-b89dab01a3b6",
+  "sqlEndpointConnectionString": "pstif7vh7kne3o72pus3obd3ie-svusuz4qieaebpx5ltdephb7oq.datawarehouse.fabric.microsoft.com",
+  "sqlEndpointProvisioningStatus": "Success"
+}
