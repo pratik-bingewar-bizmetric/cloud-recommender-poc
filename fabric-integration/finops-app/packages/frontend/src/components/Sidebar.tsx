@@ -19,14 +19,20 @@ import {
   Terminal,
   Coins,
   TrendingDown,
+  SlidersHorizontal,
+  Server,
 } from "lucide-react";
 
 import { ENABLE_AI_ARCHITECT } from "@/config/features";
 import { MonitoringSubTab } from "./SectionCentralizedMonitoring";
+import { FinOpsModule } from "@/types";
 
 export type ViewMode =
   | "home"
   | "dashboard"
+  | "configuration"
+  | "databricks"
+  | "finops"
   | "architect"
   | "inventory"
   | "monitoring"
@@ -37,6 +43,8 @@ interface SidebarProps {
   onViewChange: (view: ViewMode) => void;
   currentMonitoringTab?: MonitoringSubTab;
   onSelectMonitoringTab?: (tab: MonitoringSubTab) => void;
+  currentFinOpsModule?: FinOpsModule;
+  onSelectFinOpsModule?: (module: FinOpsModule) => void;
   onOpenSettings: () => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -49,6 +57,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onViewChange,
   currentMonitoringTab = "overview",
   onSelectMonitoringTab,
+  currentFinOpsModule = "overview",
+  onSelectFinOpsModule,
   onOpenSettings,
   isCollapsed,
   onToggleCollapse,
@@ -56,6 +66,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
 }) => {
   const [isMonitoringOpen, setIsMonitoringOpen] = useState<boolean>(true);
+  const [isFinOpsOpen, setIsFinOpsOpen] = useState<boolean>(true);
+
+  const finopsSubNav: { id: FinOpsModule; label: string; group: string }[] = [
+    { id: "overview", label: "Executive Overview", group: "Overview" },
+    { id: "cost", label: "Cost Explorer", group: "Overview" },
+    { id: "allocation", label: "Cost Allocation", group: "Overview" },
+    { id: "compute", label: "Compute & Warehouses", group: "Databricks FinOps" },
+    { id: "ai", label: "AI & Token Economics", group: "Databricks FinOps" },
+    { id: "data", label: "Data & Storage", group: "Databricks FinOps" },
+    { id: "network", label: "Network & Cloud Infra", group: "Databricks FinOps" },
+    { id: "recommend", label: "Optimization Advisor", group: "Intelligence" },
+    { id: "forecast", label: "Forecast & Budgets", group: "Intelligence" },
+    { id: "anomaly", label: "Anomaly Detection", group: "Intelligence" },
+    { id: "governance", label: "Governance & Policies", group: "Intelligence" },
+    { id: "chargeback", label: "Showback & Chargeback", group: "Intelligence" },
+    { id: "workloads", label: "Workload Economics", group: "Operations" },
+    { id: "reports", label: "Reports & Audit", group: "Operations" },
+    { id: "settings", label: "Settings & Integrations", group: "Operations" },
+  ];
 
   const monitoringSubNav: { id: MonitoringSubTab; label: string; icon: React.ReactNode }[] = [
     {
@@ -105,7 +134,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (viewId === "monitoring") {
       setIsMonitoringOpen(true);
     }
-    if (isMobileOpen && onCloseMobile && viewId !== "monitoring") {
+    if (viewId === "finops") {
+      setIsFinOpsOpen(true);
+    }
+    if (isMobileOpen && onCloseMobile && viewId !== "monitoring" && viewId !== "finops") {
+      onCloseMobile();
+    }
+  };
+
+  const handleFinOpsModuleClick = (modId: FinOpsModule) => {
+    onViewChange("finops");
+    if (onSelectFinOpsModule) {
+      onSelectFinOpsModule(modId);
+    }
+    if (isMobileOpen && onCloseMobile) {
       onCloseMobile();
     }
   };
@@ -223,6 +265,143 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               )}
             </button>
+
+            {/* Multi-Cloud Resource Configuration */}
+            <button
+              type="button"
+              onClick={() => handleNavClick("configuration")}
+              title={isCollapsed ? "Configuration" : undefined}
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${
+                currentView === "configuration"
+                  ? "bg-brand-50 text-brand-700 font-semibold"
+                  : "text-navy-700 hover:bg-slate-50 hover:text-navy-900"
+              } ${isCollapsed ? "justify-center" : "justify-between"}`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={currentView === "configuration" ? "text-brand-600" : "text-slate-500"}>
+                  <SlidersHorizontal className="w-4 h-4" />
+                </span>
+                {!isCollapsed && <span className="truncate">Configuration</span>}
+              </div>
+              {!isCollapsed && (
+                <span
+                  className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                    currentView === "configuration"
+                      ? "bg-brand-100 text-brand-800"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  Scope
+                </span>
+              )}
+            </button>
+
+            {/* Databricks Workspaces */}
+            <button
+              type="button"
+              onClick={() => handleNavClick("databricks")}
+              title={isCollapsed ? "Databricks" : undefined}
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${
+                currentView === "databricks"
+                  ? "bg-brand-50 text-brand-700 font-semibold"
+                  : "text-navy-700 hover:bg-slate-50 hover:text-navy-900"
+              } ${isCollapsed ? "justify-center" : "justify-between"}`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={currentView === "databricks" ? "text-brand-600" : "text-slate-500"}>
+                  <Server className="w-4 h-4" />
+                </span>
+                {!isCollapsed && <span className="truncate">Databricks</span>}
+              </div>
+              {!isCollapsed && (
+                <span
+                  className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                    currentView === "databricks"
+                      ? "bg-indigo-100 text-indigo-800"
+                      : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  Workspaces
+                </span>
+              )}
+            </button>
+
+            {/* FinOps Command Center (15 Modules - Azure Databricks) */}
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isCollapsed) {
+                    onViewChange("finops");
+                  } else {
+                    if (currentView !== "finops") {
+                      onViewChange("finops");
+                      setIsFinOpsOpen(true);
+                    } else {
+                      setIsFinOpsOpen(!isFinOpsOpen);
+                    }
+                  }
+                }}
+                title={isCollapsed ? "FinOps Command Center" : undefined}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${
+                  currentView === "finops"
+                    ? "bg-blue-50 text-blue-700 font-semibold"
+                    : "text-navy-700 hover:bg-slate-50 hover:text-navy-900"
+                } ${isCollapsed ? "justify-center" : "justify-between"}`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className={currentView === "finops" ? "text-blue-600" : "text-slate-500"}>
+                    <Coins className="w-4 h-4" />
+                  </span>
+                  {!isCollapsed && <span className="truncate">FinOps Command</span>}
+                </div>
+
+                {!isCollapsed && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800">
+                      15 Modules
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
+                        isFinOpsOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </div>
+                )}
+              </button>
+
+              {/* Sub-Items (Expanded 15 Modules) */}
+              {!isCollapsed && isFinOpsOpen && (
+                <div className="mt-1 ml-3 pl-2.5 border-l border-slate-200 space-y-0.5">
+                  {finopsSubNav.map((sub, idx) => {
+                    const isSubActive = currentView === "finops" && currentFinOpsModule === sub.id;
+                    const prevGroup = idx > 0 ? finopsSubNav[idx - 1].group : null;
+                    const showGroupLabel = prevGroup !== sub.group;
+
+                    return (
+                      <React.Fragment key={sub.id}>
+                        {showGroupLabel && (
+                          <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pt-2 pb-0.5 px-2">
+                            {sub.group}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleFinOpsModuleClick(sub.id)}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition text-left ${
+                            isSubActive
+                              ? "bg-blue-50 text-blue-700 font-semibold"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-navy-900"
+                          }`}
+                        >
+                          <span className="truncate">{sub.label}</span>
+                        </button>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             {/* AI Architect (Preserved, conditionally rendered) */}
             {ENABLE_AI_ARCHITECT && (

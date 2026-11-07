@@ -662,3 +662,379 @@ export {
   udfCalculatePricing,
 } from "./fabric-udf-client";
 
+
+
+// ----------------------------------------------------------------------------
+// Multi-Cloud Resource Configuration & Scope Selection Client
+// ----------------------------------------------------------------------------
+
+export async function discoverScopes(
+  connectionId: string,
+  provider: string = "azure"
+): Promise<import("@/types").ScopeDiscoveryResponse> {
+  const params = new URLSearchParams({ connection_id: connectionId, provider });
+  const res = await fetch(`${API_BASE_URL}/configuration/scopes/discover?${params.toString()}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ScopeDiscoveryResponse>(res);
+}
+
+export async function getConfiguration(
+  connectionId: string
+): Promise<import("@/types").ResourceConfigurationResponse> {
+  const res = await fetch(`${API_BASE_URL}/configuration/${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ResourceConfigurationResponse>(res);
+}
+
+export async function saveConfiguration(
+  payload: import("@/types").ResourceConfigurationCreate
+): Promise<import("@/types").ResourceConfigurationResponse> {
+  const res = await fetch(`${API_BASE_URL}/configuration`, {
+    method: "POST",
+    headers: await getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<import("@/types").ResourceConfigurationResponse>(res);
+}
+
+export async function getEffectiveSelection(
+  connectionId: string
+): Promise<import("@/types").EffectiveSelectionResponse> {
+  const res = await fetch(`${API_BASE_URL}/configuration/${encodeURIComponent(connectionId)}/selected`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").EffectiveSelectionResponse>(res);
+}
+
+export async function getSelectedWorkspaces(
+  connectionId: string
+): Promise<Array<Record<string, unknown>>> {
+  const res = await fetch(`${API_BASE_URL}/configuration/${encodeURIComponent(connectionId)}/workspaces`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<Array<Record<string, unknown>>>(res);
+}
+
+export async function getConfigurationStatus(
+  connectionId: string
+): Promise<import("@/types").ConfigurationStatusResponse> {
+  const res = await fetch(`${API_BASE_URL}/configuration/${encodeURIComponent(connectionId)}/status`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ConfigurationStatusResponse>(res);
+}
+
+// ---------------------------------------------------------------------------
+// Scope-Aware Ingestion API Functions (Phase 2C)
+// ---------------------------------------------------------------------------
+
+export async function checkIngestionReadiness(
+  connectionId: string
+): Promise<import("@/types").IngestionReadinessResponse> {
+  const res = await fetch(`${API_BASE_URL}/ingestion/${encodeURIComponent(connectionId)}/readiness`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").IngestionReadinessResponse>(res);
+}
+
+export async function triggerIngestionRun(
+  connectionId: string,
+  forceResync: boolean = false
+): Promise<import("@/types").IngestionRunResponse> {
+  const res = await fetch(`${API_BASE_URL}/ingestion/${encodeURIComponent(connectionId)}/runs`, {
+    method: "POST",
+    headers: await getHeaders(),
+    body: JSON.stringify({ force_resync: forceResync, triggered_by: "user" }),
+  });
+  return handleResponse<import("@/types").IngestionRunResponse>(res);
+}
+
+export async function listIngestionRuns(
+  connectionId: string,
+  limit: number = 20
+): Promise<import("@/types").IngestionRunSummaryResponse[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const res = await fetch(`${API_BASE_URL}/ingestion/${encodeURIComponent(connectionId)}/runs?${params.toString()}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").IngestionRunSummaryResponse[]>(res);
+}
+
+export async function getIngestionRun(
+  runId: string
+): Promise<import("@/types").IngestionRunResponse> {
+  const res = await fetch(`${API_BASE_URL}/ingestion/runs/${encodeURIComponent(runId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").IngestionRunResponse>(res);
+}
+
+export async function retryIngestionRun(
+  runId: string
+): Promise<import("@/types").IngestionRunResponse> {
+  const res = await fetch(`${API_BASE_URL}/ingestion/runs/${encodeURIComponent(runId)}/retry`, {
+    method: "POST",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").IngestionRunResponse>(res);
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6 Phase 3: Databricks Multi-Workspace API Methods
+// ---------------------------------------------------------------------------
+
+export async function listDatabricksConnections(): Promise<import("@/types").DatabricksConnection[]> {
+  const res = await fetch(`${API_BASE_URL}/databricks/connections`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").DatabricksConnection[]>(res);
+}
+
+export async function getDatabricksConnection(
+  connectionId: string
+): Promise<import("@/types").DatabricksConnection> {
+  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").DatabricksConnection>(res);
+}
+
+export async function testDatabricksConnection(
+  connectionId: string
+): Promise<import("@/types").DatabricksConnectionTestResponse> {
+  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/test`, {
+    method: "POST",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").DatabricksConnectionTestResponse>(res);
+}
+
+export async function getWorkspaceDiscovery(
+  connectionId: string
+): Promise<import("@/types").DatabricksWorkspaceDiscovery> {
+  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").DatabricksWorkspaceDiscovery>(res);
+}
+
+export async function refreshWorkspaceDiscovery(
+  connectionId: string
+): Promise<import("@/types").DatabricksWorkspaceDiscovery> {
+  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery/refresh`, {
+    method: "POST",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").DatabricksWorkspaceDiscovery>(res);
+}
+
+export async function getWorkspaceHealth(
+  connectionId: string
+): Promise<import("@/types").DatabricksConnectionHealth> {
+  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/health`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").DatabricksConnectionHealth>(res);
+}
+
+// -------------------------------------------------------------
+// Milestone 3B: FinOps Command Center 15-Module API Functions
+// -------------------------------------------------------------
+
+export async function getFinOpsOverview(
+  connectionId = "databricks-azure-dev",
+  period = "month",
+  environment?: string
+): Promise<import("@/types").ExecutiveOverviewData> {
+  const params = new URLSearchParams({ connection_id: connectionId, period });
+  if (environment) params.append("environment", environment);
+  const res = await fetch(`${API_BASE_URL}/finops/overview?${params.toString()}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ExecutiveOverviewData>(res);
+}
+
+export async function getFinOpsCostExplorer(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").CostExplorerData> {
+  const res = await fetch(`${API_BASE_URL}/finops/cost-explorer?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").CostExplorerData>(res);
+}
+
+export async function getFinOpsCostAllocation(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").CostAllocationData> {
+  const res = await fetch(`${API_BASE_URL}/finops/cost-allocation?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").CostAllocationData>(res);
+}
+
+export async function getFinOpsComputeWarehouses(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").ComputeWarehousesData> {
+  const res = await fetch(`${API_BASE_URL}/finops/compute-warehouses?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ComputeWarehousesData>(res);
+}
+
+export async function getFinOpsAiEconomics(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").AiEconomicsData> {
+  const res = await fetch(`${API_BASE_URL}/finops/ai-economics?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").AiEconomicsData>(res);
+}
+
+export async function getFinOpsDataStorage(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").DataStorageData> {
+  const res = await fetch(`${API_BASE_URL}/finops/data-storage?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").DataStorageData>(res);
+}
+
+export async function getFinOpsNetworkCloud(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").NetworkCloudData> {
+  const res = await fetch(`${API_BASE_URL}/finops/network-cloud?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").NetworkCloudData>(res);
+}
+
+export async function getFinOpsOptimizationAdvisor(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").OptimizationAdvisorData> {
+  const res = await fetch(`${API_BASE_URL}/finops/optimization-advisor?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").OptimizationAdvisorData>(res);
+}
+
+export async function recordFinOpsRecommendationAction(
+  decisionId: string,
+  action: string,
+  notes?: string
+): Promise<import("@/types").FinOpsDecisionItem> {
+  const res = await fetch(`${API_BASE_URL}/finops/optimization-advisor/${encodeURIComponent(decisionId)}/action`, {
+    method: "POST",
+    headers: await getHeaders(),
+    body: JSON.stringify({ action, notes }),
+  });
+  return handleResponse<import("@/types").FinOpsDecisionItem>(res);
+}
+
+export async function getFinOpsForecastBudgets(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").ForecastBudgetsData> {
+  const res = await fetch(`${API_BASE_URL}/finops/forecast-budgets?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ForecastBudgetsData>(res);
+}
+
+export async function simulateFinOpsScenario(
+  computeSavePct: number,
+  tokenSavePct: number,
+  growthPct: number
+): Promise<import("@/types").ScenarioSimulationResult> {
+  const res = await fetch(`${API_BASE_URL}/finops/forecast-budgets/simulate`, {
+    method: "POST",
+    headers: await getHeaders(),
+    body: JSON.stringify({
+      compute_save_pct: computeSavePct,
+      token_save_pct: tokenSavePct,
+      growth_pct: growthPct,
+    }),
+  });
+  return handleResponse<import("@/types").ScenarioSimulationResult>(res);
+}
+
+export async function getFinOpsAnomalyDetection(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").AnomalyDetectionData> {
+  const res = await fetch(`${API_BASE_URL}/finops/anomaly-detection?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").AnomalyDetectionData>(res);
+}
+
+export async function getFinOpsGovernancePolicies(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").GovernancePoliciesData> {
+  const res = await fetch(`${API_BASE_URL}/finops/governance-policies?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").GovernancePoliciesData>(res);
+}
+
+export async function getFinOpsShowbackChargeback(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").ShowbackChargebackData> {
+  const res = await fetch(`${API_BASE_URL}/finops/showback-chargeback?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ShowbackChargebackData>(res);
+}
+
+export async function getFinOpsWorkloadEconomics(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").WorkloadEconomicsData> {
+  const res = await fetch(`${API_BASE_URL}/finops/workload-economics?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").WorkloadEconomicsData>(res);
+}
+
+export async function getFinOpsReportsAudit(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").ReportsAuditData> {
+  const res = await fetch(`${API_BASE_URL}/finops/reports-audit?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").ReportsAuditData>(res);
+}
+
+export async function getFinOpsSettingsIntegrations(
+  connectionId = "databricks-azure-dev"
+): Promise<import("@/types").SettingsIntegrationsData> {
+  const res = await fetch(`${API_BASE_URL}/finops/settings-integrations?connection_id=${encodeURIComponent(connectionId)}`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").SettingsIntegrationsData>(res);
+}

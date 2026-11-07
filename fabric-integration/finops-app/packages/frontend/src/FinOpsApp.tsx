@@ -19,6 +19,9 @@ import {
 } from "@/components/SectionCentralizedMonitoring";
 import { SectionMultiCloudCompare } from "@/components/SectionMultiCloudCompare";
 import { ConnectCloudView } from "@/components/ConnectCloudView";
+import { ConfigurationView } from "@/components/ConfigurationView";
+import { DatabricksWorkspacesView } from "@/components/DatabricksWorkspacesView";
+import { FinOpsCommandCenterView } from "@/components/FinOpsCommandCenterView";
 import { SettingsModal } from "@/components/SettingsModal";
 import {
   ApiErrorDetail,
@@ -26,7 +29,9 @@ import {
   ClarifyingAnswer,
   ClarifyingQuestion,
   CloudConnection,
+  DatabricksConnection,
   CostBreakdown,
+  FinOpsModule,
   PricingReference,
   RecommendationReport,
   TradeOffAssessment,
@@ -38,6 +43,7 @@ import {
   checkBackendHealth,
   generateArchitecture,
   simulatePricing,
+  listDatabricksConnections,
   ApiError,
 } from "@/lib/api";
 import {
@@ -70,7 +76,8 @@ export default function Home() {
     useState<CloudConnection | null>(null);
 
   // Navigation & Shell State
-  const [activeView, setActiveView] = useState<ViewMode>("monitoring");
+  const [activeView, setActiveView] = useState<ViewMode>("finops");
+  const [activeFinOpsModule, setActiveFinOpsModule] = useState<FinOpsModule>("overview");
   const [activeMonitoringTab, setActiveMonitoringTab] =
     useState<MonitoringSubTab>("overview");
   const [architectStep, setArchitectStep] = useState<ArchitectStep>("requirements");
@@ -79,6 +86,14 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [databricksConnections, setDatabricksConnections] = useState<DatabricksConnection[]>([]);
+  const [selectedDatabricksWorkspaceId, setSelectedDatabricksWorkspaceId] = useState<string>("all");
+
+  useEffect(() => {
+    listDatabricksConnections()
+      .then((conns) => setDatabricksConnections(conns))
+      .catch(() => {});
+  }, []);
 
   const handleSelectMonitoringTab = useCallback((tab: MonitoringSubTab) => {
     setActiveMonitoringTab(tab);
@@ -518,6 +533,8 @@ export default function Home() {
         }}
         currentMonitoringTab={activeMonitoringTab}
         onSelectMonitoringTab={handleSelectMonitoringTab}
+        currentFinOpsModule={activeFinOpsModule}
+        onSelectFinOpsModule={setActiveFinOpsModule}
         onOpenSettings={() => setIsSettingsOpen(true)}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
@@ -549,6 +566,9 @@ export default function Home() {
             id: activeConnection.scope_id,
           }}
           onSwitchConnection={() => setActiveConnection(null)}
+          databricksConnections={databricksConnections}
+          selectedDatabricksWorkspaceId={selectedDatabricksWorkspaceId}
+          onSelectDatabricksWorkspace={setSelectedDatabricksWorkspaceId}
         />
 
         {/* Main Content Viewport */}
@@ -899,6 +919,31 @@ export default function Home() {
               activeTab={activeMonitoringTab}
               onTabChange={handleSelectMonitoringTab}
               onSwitchConnection={() => setActiveConnection(null)}
+            />
+          )}
+
+          {/* Multi-Cloud Resource Configuration */}
+          {activeView === "configuration" && (
+            <ConfigurationView
+              activeConnection={activeConnection}
+              onSelectConnection={(conn) => setActiveConnection(conn)}
+            />
+          )}
+
+          {/* Databricks Multi-Workspace Connectivity & Discovery */}
+          {activeView === "databricks" && (
+            <DatabricksWorkspacesView
+              selectedWorkspaceId={selectedDatabricksWorkspaceId}
+              onWorkspaceChange={setSelectedDatabricksWorkspaceId}
+            />
+          )}
+
+          {/* Azure Databricks FinOps Command Center (15 Modules) */}
+          {activeView === "finops" && (
+            <FinOpsCommandCenterView
+              activeModule={activeFinOpsModule}
+              onSelectModule={setActiveFinOpsModule}
+              selectedWorkspaceId={selectedDatabricksWorkspaceId === "all" ? "databricks-azure-dev" : selectedDatabricksWorkspaceId}
             />
           )}
 

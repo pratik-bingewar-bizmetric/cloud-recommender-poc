@@ -1,7 +1,8 @@
 "use client";
 
-import { CloudProvider } from "@/types";
+import { CloudProvider, DatabricksConnection } from "@/types";
 import { ENABLE_AI_ARCHITECT } from "@/config/features";
+import { DatabricksWorkspaceSelector } from "./DatabricksWorkspaceSelector";
 import {
   Search,
   Globe,
@@ -26,6 +27,9 @@ interface TopNavProps {
   onSearchChange: (q: string) => void;
   connectedScope?: { provider: CloudProvider; name: string; id: string } | null;
   onSwitchConnection?: () => void;
+  databricksConnections?: DatabricksConnection[];
+  selectedDatabricksWorkspaceId?: string;
+  onSelectDatabricksWorkspace?: (workspaceId: string) => void;
 }
 
 export const TopNav: React.FC<TopNavProps> = ({
@@ -41,6 +45,9 @@ export const TopNav: React.FC<TopNavProps> = ({
   onSearchChange,
   connectedScope,
   onSwitchConnection,
+  databricksConnections = [],
+  selectedDatabricksWorkspaceId = "all",
+  onSelectDatabricksWorkspace,
 }) => {
   const regions = [
     { id: "eastus", label: "East US (eastus)" },
@@ -77,7 +84,14 @@ export const TopNav: React.FC<TopNavProps> = ({
 
       {/* Right: Region Selector, Status Indicators & Live Cost */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Connected Cloud Scope Badge */}
+        {/* Global Databricks Workspace Selector */}
+        {databricksConnections && databricksConnections.length > 0 && onSelectDatabricksWorkspace && (
+          <DatabricksWorkspaceSelector
+            connections={databricksConnections}
+            selectedWorkspaceId={selectedDatabricksWorkspaceId}
+            onSelectWorkspace={onSelectDatabricksWorkspace}
+          />
+        )}
         {connectedScope ? (
           <div
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800"

@@ -88,6 +88,50 @@ class Settings(BaseSettings):
         default=None,
         description="Azure AI Foundry / Azure OpenAI inference endpoint URL.",
     )
+
+    # Databricks FinOps & System Tables Ingestion (Milestone 3H)
+    databricks_host: str = Field(
+        default="https://adb-642006393507276.16.azuredatabricks.net",
+        description="Azure Databricks workspace host URL",
+    )
+    databricks_warehouse_id: str = Field(
+        default="05ed10a52697a344",
+        description="SQL Warehouse ID (Serverless Starter Warehouse)",
+    )
+    databricks_auth_type: str = Field(
+        default="azure-cli",
+        description="Databricks authentication type: oauth, azure-cli, profile",
+    )
+    databricks_client_id: str | None = Field(
+        default=None,
+        description="OAuth Service Principal client ID",
+    )
+    databricks_client_secret: str | None = Field(
+        default=None,
+        description="OAuth Service Principal client secret",
+    )
+    databricks_profile: str = Field(
+        default="azure-dev",
+        description="Databricks CLI profile fallback for local development",
+    )
+    databricks_query_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=300,
+        description="Read-only query timeout limit in seconds",
+    )
+    finops_signing_secret: str | None = Field(
+        default=None,
+        description="Explicit HMAC-SHA256 secret for signing live execution approval tokens",
+    )
+    finops_signing_kid: str = Field(
+        default="k1-2026",
+        description="Key identifier for the active token signing secret",
+    )
+    finops_verification_keys: str | None = Field(
+        default=None,
+        description="JSON dictionary mapping kid to secret key for verification key ring and rotation",
+    )
     azure_ai_foundry_api_key: str | None = Field(
         default=None,
         description="API key for authenticating with Azure AI Foundry model deployment.",

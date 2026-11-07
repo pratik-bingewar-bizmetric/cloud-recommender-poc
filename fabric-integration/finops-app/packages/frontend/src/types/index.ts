@@ -877,3 +877,687 @@ export interface TokenEconomicsSummary {
 
 export * from "./financials";
 
+
+
+// ----------------------------------------------------------------------------
+// Resource Configuration & Scope Selection Types
+// ----------------------------------------------------------------------------
+
+export type ScopeType =
+  | "tenant"
+  | "subscription"
+  | "resource_group"
+  | "resource"
+  | "databricks_workspace"
+  | "organization"
+  | "folder"
+  | "project"
+  | "account";
+
+export type SelectionState = "included" | "excluded" | "all_children";
+
+export interface ScopeDiscoveryNode {
+  id: string;
+  name: string;
+  scope_type: ScopeType | string;
+  scope_identifier: string;
+  parent_scope_identifier?: string | null;
+  resource_type?: string | null;
+  region?: string | null;
+  is_leaf?: boolean;
+  metadata?: Record<string, unknown>;
+  children?: ScopeDiscoveryNode[];
+}
+
+export interface ScopeDiscoveryResponse {
+  provider: CloudProvider | string;
+  connection_id: string;
+  tenant_or_org_id?: string | null;
+  status: "ready" | "permission_denied" | "unsupported" | "empty";
+  status_message: string;
+  last_discovered_at: string;
+  tree: ScopeDiscoveryNode[];
+  total_discovered_resources: number;
+  databricks_workspaces_count: number;
+}
+
+export interface ConfiguredScopeItemCreate {
+  scope_type: string;
+  scope_identifier: string;
+  parent_scope_identifier?: string | null;
+  display_name: string;
+  resource_type?: string | null;
+  region?: string | null;
+  selection_state: SelectionState;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ConfiguredScopeItemResponse {
+  item_id: string;
+  configuration_id: string;
+  scope_type: string;
+  scope_identifier: string;
+  parent_scope_identifier?: string | null;
+  display_name: string;
+  resource_type?: string | null;
+  region?: string | null;
+  selection_state: SelectionState | string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResourceConfigurationCreate {
+  connection_id: string;
+  provider: string;
+  created_by?: string;
+  scope_items: ConfiguredScopeItemCreate[];
+}
+
+export interface ResourceConfigurationResponse {
+  configuration_id: string;
+  connection_id: string;
+  provider: string;
+  configuration_version: number;
+  active_status: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  scope_items: ConfiguredScopeItemResponse[];
+  total_items: number;
+}
+
+export interface EffectiveSelectionResponse {
+  configuration_id: string;
+  connection_id: string;
+  provider: string;
+  configuration_version: number;
+  effective_resource_ids: string[];
+  effective_subscriptions: string[];
+  effective_resource_groups: string[];
+  databricks_workspaces: Array<{
+    resource_id: string;
+    name: string;
+    resource_group?: string;
+    region?: string;
+    workspace_url?: string;
+    workspace_id?: string;
+    pricing_tier?: string;
+  }>;
+  total_selected_resources: number;
+}
+
+export interface ConfigurationStatusResponse {
+  connection_id: string;
+  has_configuration: boolean;
+  configuration_id?: string | null;
+  configuration_version?: number | null;
+  active_status?: string | null;
+  selected_resource_count: number;
+  databricks_workspaces_count: number;
+  ingestion_readiness: "ready" | "not_configured" | "no_selection";
+  updated_at?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Scope-Aware Ingestion & Enforcement Types (Phase 2C)
+// ---------------------------------------------------------------------------
+
+export type IngestionReadinessState =
+  | "ready"
+  | "not_configured"
+  | "no_resources_selected"
+  | "connection_error"
+  | "permission_denied"
+  | "configuration_invalid";
+
+export type IngestionRunStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "partial_failure"
+  | "failed";
+
+export type ResourceIngestionStatus = "success" | "failed" | "skipped";
+
+export interface IngestionReadinessResponse {
+  connection_id: string;
+  provider: string;
+  readiness_state: IngestionReadinessState;
+  can_start_ingestion: boolean;
+  has_configuration: boolean;
+  configuration_id?: string | null;
+  configuration_version?: number | null;
+  selected_resource_count: number;
+  selected_workspace_count: number;
+  effective_resource_ids: string[];
+  effective_workspace_ids: string[];
+  details: string;
+  missing_requirements: string[];
+  checked_at: string;
+}
+
+export interface IngestionResourceStatusResponse {
+  resource_id: string;
+  resource_type?: string | null;
+  region?: string | null;
+  status: ResourceIngestionStatus;
+  inventory_extracted: boolean;
+  cost_extracted: boolean;
+  metrics_extracted: boolean;
+  extracted_records_count: number;
+  error_message?: string | null;
+}
+
+export interface IngestionRunResponse {
+  run_id: string;
+  connection_id: string;
+  provider: string;
+  configuration_id: string;
+  configuration_version: number;
+  status: IngestionRunStatus;
+  triggered_by: string;
+  started_at: string;
+  completed_at?: string | null;
+  total_resources_scoped: number;
+  successful_resources_count: number;
+  failed_resources_count: number;
+  error_message?: string | null;
+  scope_snapshot: Record<string, unknown>;
+  resource_statuses: IngestionResourceStatusResponse[];
+}
+
+export interface IngestionRunSummaryResponse {
+  run_id: string;
+  connection_id: string;
+  provider: string;
+  configuration_version: number;
+  status: IngestionRunStatus;
+  triggered_by: string;
+  started_at: string;
+  completed_at?: string | null;
+  total_resources_scoped: number;
+  successful_resources_count: number;
+  failed_resources_count: number;
+  error_message?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6 Phase 3: Databricks Workspace Connectivity & Discovery Types
+// ---------------------------------------------------------------------------
+
+export type DatabricksCloud = "azure" | "aws" | "gcp";
+
+export type CategoryDiscoveryStatus =
+  | "available"
+  | "permission_denied"
+  | "unsupported"
+  | "no_resources_found"
+  | "connection_error"
+  | "not_yet_discovered";
+
+export type DatabricksConnectionStatus =
+  | "ready_to_connect"
+  | "connected"
+  | "auth_failed"
+  | "permission_denied"
+  | "connection_error";
+
+export interface DatabricksConnection {
+  connection_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  workspace_url: string;
+  cloud: DatabricksCloud;
+  region?: string | null;
+  auth_method: string;
+  profile_name?: string | null;
+  status: DatabricksConnectionStatus;
+  last_connected_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CategoryDiscoveryResult {
+  category: string;
+  status: CategoryDiscoveryStatus;
+  resource_count: number;
+  error_message?: string | null;
+  discovered_at?: string | null;
+}
+
+export interface DiscoveredResourceItem {
+  id: string;
+  name: string;
+  resource_type: string;
+  workspace_id: string;
+  status?: string | null;
+  creator?: string | null;
+  source_api: string;
+  metadata: Record<string, unknown>;
+  discovered_at: string;
+}
+
+export interface DatabricksWorkspaceDiscovery {
+  connection_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  workspace_url: string;
+  cloud: DatabricksCloud;
+  overall_status: "completed" | "partial_failure" | "failed";
+  categories: Record<string, CategoryDiscoveryResult>;
+  resources: DiscoveredResourceItem[];
+  total_resources_count: number;
+  discovered_at: string;
+}
+
+export interface DatabricksConnectionTestResponse {
+  connection_id: string;
+  workspace_id: string;
+  workspace_url: string;
+  success: boolean;
+  status: DatabricksConnectionStatus;
+  current_user?: string | null;
+  details: string;
+  tested_at: string;
+}
+
+export interface DatabricksConnectionHealth {
+  connection_id: string;
+  workspace_id: string;
+  cloud: DatabricksCloud;
+  status: DatabricksConnectionStatus;
+  authenticated_user?: string | null;
+  last_verified_at?: string | null;
+  categories_summary: Record<string, CategoryDiscoveryStatus>;
+  resource_counts_by_type: Record<string, number>;
+  capabilities: string[];
+  limitations: string[];
+}
+
+// -------------------------------------------------------------
+// Milestone 3B: FinOps Command Center 15-Module Types
+// -------------------------------------------------------------
+
+export type FinOpsModule =
+  | "overview"
+  | "cost"
+  | "allocation"
+  | "compute"
+  | "ai"
+  | "data"
+  | "network"
+  | "recommend"
+  | "forecast"
+  | "anomaly"
+  | "governance"
+  | "chargeback"
+  | "workloads"
+  | "reports"
+  | "settings";
+
+export type KpiAvailabilityStatus =
+  | "AVAILABLE"
+  | "PARTIAL"
+  | "NO_DATA"
+  | "PERMISSION_DENIED"
+  | "UNSUPPORTED"
+  | "STALE"
+  | "ERROR";
+
+export interface FinOpsKpiMetric {
+  value: number;
+  formatted_value: string;
+  unit: string;
+  currency?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  comparison_value?: number | null;
+  change_absolute?: number | null;
+  change_percentage?: number | null;
+  delta_label?: string | null;
+  is_favorable?: boolean | null;
+  status: KpiAvailabilityStatus;
+  data_freshness: string;
+  source: string;
+  workspace_id: string;
+  configuration_version: number;
+  calculation_version: string;
+  coverage: number;
+  limitations?: string | null;
+}
+
+export interface FinOpsDecisionItem {
+  id: string;
+  priority: number;
+  title: string;
+  description: string;
+  estimated_savings_monthly: number;
+  formatted_savings: string;
+  impact: string;
+  status: string;
+  confidence_pct: number;
+  effort: string;
+  owner: string;
+  evidence: string;
+}
+
+export interface ExecutiveOverviewData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  spend_trend: Array<{ day: string; actual: number; forecast: number; budget_pace: number }>;
+  spend_composition: Array<{ family: string; share: number; amount: number; color: string }>;
+  top_cost_drivers: Array<{
+    driver: string;
+    workspace_owner: string;
+    spend: number;
+    formatted_spend: string;
+    change: string;
+    signal: string;
+  }>;
+  decisions_requiring_attention: FinOpsDecisionItem[];
+  global_filters: Record<string, unknown>;
+}
+
+export interface CostExplorerData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  daily_trend: Array<{ date: string; cost: number; dbu: number }>;
+  cost_by_product_family: Array<{ product: string; cost: number; share: number }>;
+  billing_ledger: Array<{
+    date: string;
+    product: string;
+    sku: string;
+    workspace: string;
+    usage_qty: number;
+    unit: string;
+    list_cost: number;
+    effective_cost: number;
+    owner_tag: string;
+    allocation_status: string;
+  }>;
+}
+
+export interface CostAllocationData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  spend_by_bu: Array<{ business_unit: string; spend: number }>;
+  allocation_completeness: Record<string, number>;
+  rulebook: Array<{
+    priority: number;
+    rule_name: string;
+    match_condition: string;
+    allocation_target: string;
+    method: string;
+    status: string;
+  }>;
+}
+
+export interface ComputeWarehousesData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  clusters: Array<{
+    cluster_id: string;
+    name: string;
+    type: string;
+    owner: string;
+    node_profile: string;
+    runtime_hrs: number;
+    cpu_utilization: string;
+    dbu_mtd: number;
+    cost_mtd: number;
+    state: string;
+    finding: string;
+  }>;
+  warehouses: Array<{
+    warehouse_id: string;
+    name: string;
+    warehouse_class: string;
+    size: string;
+    uptime: string;
+    avg_utilization: string;
+    queue_p95: string;
+    auto_stop_mins: number;
+    cost_mtd: number;
+    state: string;
+    recommendation: string;
+  }>;
+  jobs: Array<{
+    job_id: string;
+    name: string;
+    runs: number;
+    success_rate: string;
+    retries: number;
+    avg_duration: string;
+    dbu_per_run: number;
+    cost_per_run: number;
+    cost_per_tb: number;
+    signal: string;
+  }>;
+  heatmap_utilization: number[];
+}
+
+export interface AiEconomicsData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  token_consumption_by_model: Array<{ model: string; tokens: number; spend: number }>;
+  token_cost_drivers: Array<{ driver: string; amount: string; is_deduction: boolean }>;
+  model_economics: Array<{
+    model_name: string;
+    serving_mode: string;
+    input_tokens: string;
+    output_tokens: string;
+    cached_tokens: string;
+    requests: string;
+    cost_mtd: number;
+    avg_latency: string;
+    cost_per_1k_output: string;
+  }>;
+  serving_endpoints: Array<{
+    endpoint_name: string;
+    model: string;
+    serving_type: string;
+    requests_per_day: string;
+    capacity_utilization: string;
+    p95_latency: string;
+    availability: string;
+    monthly_cost: number;
+    action: string;
+  }>;
+  genie_scorecard: Array<{
+    space_name: string;
+    business_owner: string;
+    questions: number;
+    answer_rate: string;
+    warehouse: string;
+    spend: number;
+    cost_per_success: string;
+    quality_score: number;
+  }>;
+  agents: Array<{
+    agent_name: string;
+    runs: number;
+    success_rate: string;
+    avg_steps: number;
+    llm_cost: number;
+    tool_cost: number;
+    total_cost: number;
+    cost_per_success: string;
+    outcome: string;
+  }>;
+  training: Array<{
+    experiment_name: string;
+    workload: string;
+    compute_hrs: string;
+    runs: number;
+    artifact_storage: string;
+    spend: number;
+    quality_lift: string;
+    decision: string;
+  }>;
+  unit_economics: Array<Record<string, string>>;
+}
+
+export interface DataStorageData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  storage_tiers: Array<{ tier: string; share: number; tb: number }>;
+  lifecycle_opportunities: Array<{ opportunity: string; metric: string }>;
+  tables: Array<{
+    catalog_schema_table: string;
+    storage_type: string;
+    size: string;
+    last_read: string;
+    retention: string;
+    growth_month: string;
+    monthly_cost: number;
+    recommendation: string;
+  }>;
+}
+
+export interface NetworkCloudData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  components: Array<{
+    provider: string;
+    service: string;
+    resource: string;
+    region: string;
+    usage_driver: string;
+    cost_mtd: number;
+    allocation: string;
+    opportunity: string;
+  }>;
+}
+
+export interface OptimizationAdvisorData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  recommendations: FinOpsDecisionItem[];
+}
+
+export interface ScenarioSimulationResult {
+  baseline_spend: number;
+  adjusted_spend: number;
+  formatted_spend: string;
+  savings_vs_baseline: number;
+  delta_label: string;
+  is_favorable: boolean;
+  budget_variance: number;
+}
+
+export interface ForecastBudgetsData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  budget_burn: Array<{ day: string; actual: number; budget: number }>;
+  budget_controls: Array<{
+    budget_scope: string;
+    owner: string;
+    budget: number;
+    actual: number;
+    forecast: number;
+    threshold: string;
+    burn_pct: number;
+    status: string;
+  }>;
+  default_scenario: ScenarioSimulationResult;
+}
+
+export interface AnomalyItemData {
+  id: string;
+  detected: string;
+  severity: string;
+  signal: string;
+  resource: string;
+  baseline: string;
+  observed: string;
+  estimated_impact: string;
+  likely_cause: string;
+  evidence_detail: string;
+}
+
+export interface AnomalyDetectionData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  anomalies: AnomalyItemData[];
+}
+
+export interface GovernancePoliciesData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  policies: Array<{
+    policy_name: string;
+    scope: string;
+    control: string;
+    enforcement: string;
+    owner: string;
+    exceptions: number;
+    status: string;
+  }>;
+  checklist: Array<{ label: string; checked: boolean }>;
+  workflow_steps: string[];
+}
+
+export interface ShowbackChargebackData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  statements: Array<{
+    business_unit: string;
+    direct_compute: number;
+    ai_tokens: number;
+    storage: number;
+    shared_allocation: number;
+    total: number;
+    budget_variance: string;
+    trend: string;
+  }>;
+}
+
+export interface WorkloadEconomicsData {
+  kpis: Record<string, FinOpsKpiMetric>;
+  workloads: Array<{
+    workload: string;
+    workload_type: string;
+    owner: string;
+    monthly_spend: number;
+    volume: string;
+    unit_cost: string;
+    sla_quality: string;
+    business_outcome: string;
+    efficiency_trend: string;
+  }>;
+}
+
+export interface ReportsAuditData {
+  report_packs: Array<{
+    report_id: string;
+    title: string;
+    subtitle: string;
+    format: string;
+  }>;
+  audit_events: Array<{
+    timestamp: string;
+    actor: string;
+    event: string;
+    resource: string;
+    before: string;
+    after: string;
+    approval_ref: string;
+  }>;
+}
+
+export interface SettingsIntegrationsData {
+  connected_sources: Array<{
+    source_name: string;
+    status: string;
+    last_verified: string;
+    details: string;
+  }>;
+  pipeline_health: Array<{ metric_name: string; metric_value: string }>;
+  rate_cards: Array<{
+    provider: string;
+    sku_family: string;
+    region: string;
+    list_rate: string;
+    contract_rate: string;
+    discount: string;
+    effective_date: string;
+    source: string;
+  }>;
+  system_tables_readiness: {
+    catalog: string;
+    schemas_verified: string[];
+    key_tables: Array<{ name: string; columns_count: number; status: string }>;
+    sql_execution_state: string;
+    sql_execution_note: string;
+  };
+}

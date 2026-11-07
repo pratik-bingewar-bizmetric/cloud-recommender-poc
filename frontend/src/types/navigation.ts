@@ -1,0 +1,94 @@
+export type CloudScopeType =
+  | "azure_subscription"
+  | "azure_resource_group"
+  | "databricks_workspace"
+  | "databricks_resource"
+  | "all";
+
+export type ChildResourceType =
+  | "cluster"
+  | "warehouse"
+  | "job"
+  | "pipeline"
+  | "serving_endpoint"
+  | "catalog"
+  | "app";
+
+export interface ChildResourceScope {
+  resource_type: ChildResourceType;
+  resource_id: string;
+  resource_name: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CloudScope {
+  provider: "azure" | "databricks" | "aws" | "gcp";
+  scope_type: CloudScopeType;
+  subscription_id?: string;
+  subscription_name?: string;
+  resource_group?: string;
+  workspace_id?: string;
+  workspace_name?: string;
+  workspace_url?: string;
+  region?: string;
+  display_name: string;
+  resource_count?: number;
+  status?: string;
+  last_discovered_at?: string;
+  selected_child_resource?: ChildResourceScope | null;
+}
+
+export type DatabricksModuleId =
+  | "overview"
+  | "clusters"
+  | "warehouses"
+  | "jobs"
+  | "pipelines"
+  | "serving"
+  | "catalog"
+  | "apps"
+  | "system_tables"
+  | "query_history"
+  | "ai_economics"
+  | "audit"
+  | "billing"
+  | "discovery_history";
+
+export type DatabricksModuleGroup =
+  | "Overview"
+  | "Compute & Data"
+  | "AI & Models"
+  | "Governance & Cost"
+  | "System Diagnostics";
+
+export interface NavigationModule {
+  id: DatabricksModuleId;
+  title: string;
+  shortTitle: string;
+  description: string;
+  group: DatabricksModuleGroup;
+  iconName: string;
+  path: string;
+  badge?: string;
+  badgeColor?: "blue" | "emerald" | "amber" | "purple" | "slate";
+  requiredCapability?: string;
+}
+
+export interface ResourceScope {
+  id: string;
+  type: string;
+  name: string;
+  parent_id?: string | null;
+  region?: string;
+  status?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ModuleCapability {
+  module_id: string;
+  supported: boolean;
+  requires_permission?: string;
+  status: "available" | "permission_denied" | "unsupported" | "stopped";
+  reason?: string;
+}
+

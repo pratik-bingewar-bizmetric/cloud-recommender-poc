@@ -20,6 +20,10 @@ import {
 import { SectionMultiCloudCompare } from "@/components/SectionMultiCloudCompare";
 import { ConnectCloudView } from "@/components/ConnectCloudView";
 import { SettingsModal } from "@/components/SettingsModal";
+import { ConfigurationView } from "@/components/ConfigurationView";
+import { DatabricksWorkspaceDetailView } from "@/components/DatabricksWorkspaceDetailView";
+import { FinOpsCommandCenterView } from "@/components/FinOpsCommandCenterView";
+import { CloudScope, DatabricksModuleId } from "@/types/navigation";
 import {
   ApiErrorDetail,
   ArchitectureComponent,
@@ -32,12 +36,16 @@ import {
   TradeOffAssessment,
   WorkloadAssumptions,
   WorkloadProfile,
+  FinOpsModule,
+  DatabricksWorkspaceDiscovery,
 } from "@/types";
 import {
   analyzeRequirements,
   checkBackendHealth,
   generateArchitecture,
   simulatePricing,
+  getWorkspaceDiscovery,
+  refreshWorkspaceDiscovery,
   ApiError,
 } from "@/lib/api";
 import {
@@ -73,12 +81,56 @@ export default function Home() {
   const [activeView, setActiveView] = useState<ViewMode>("monitoring");
   const [activeMonitoringTab, setActiveMonitoringTab] =
     useState<MonitoringSubTab>("overview");
+  const [activeCloudScope, setActiveCloudScope] = useState<CloudScope>({
+    provider: "azure",
+    scope_type: "azure_resource_group",
+    subscription_id: "sub-prod-01",
+    resource_group: "rg-finops-eastus",
+    display_name: "rg-finops-eastus",
+  });
+  const [activeDatabricksModule, setActiveDatabricksModule] =
+    useState<DatabricksModuleId>("overview");
+  const [activeFinOpsModule, setActiveFinOpsModule] =
+    useState<FinOpsModule>("overview");
+  const [databricksDiscovery, setDatabricksDiscovery] =
+    useState<DatabricksWorkspaceDiscovery | null>(null);
+  const [isDiscoveringDatabricks, setIsDiscoveringDatabricks] =
+    useState<boolean>(false);
   const [architectStep, setArchitectStep] = useState<ArchitectStep>("requirements");
   const [architectMode, setArchitectMode] = useState<"step" | "all">("step");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Initial load of Databricks discovery snapshot
+  useEffect(() => {
+    let isMounted = true;
+    async function loadInitialDatabricks() {
+      try {
+        const disc = await getWorkspaceDiscovery("databricks-azure-dev");
+        if (isMounted) setDatabricksDiscovery(disc);
+      } catch {
+        // Fallback handled by component
+      }
+    }
+    loadInitialDatabricks();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleRefreshDatabricks = useCallback(async () => {
+    setIsDiscoveringDatabricks(true);
+    try {
+      const disc = await refreshWorkspaceDiscovery("databricks-azure-dev");
+      setDatabricksDiscovery(disc);
+    } catch (err) {
+      console.warn("Databricks discovery refresh failed:", err);
+    } finally {
+      setIsDiscoveringDatabricks(false);
+    }
+  }, []);
 
   const handleSelectMonitoringTab = useCallback((tab: MonitoringSubTab) => {
     setActiveMonitoringTab(tab);
@@ -118,6 +170,9 @@ export default function Home() {
           "inventory",
           "monitoring",
           "compare",
+          "configuration",
+          "databricks",
+          "finops",
         ];
         if (viewParam && validViews.includes(viewParam)) {
           setActiveView(viewParam);
@@ -518,6 +573,17 @@ export default function Home() {
         }}
         currentMonitoringTab={activeMonitoringTab}
         onSelectMonitoringTab={handleSelectMonitoringTab}
+        activeScope={activeCloudScope}
+        currentDatabricksModule={activeDatabricksModule}
+        onSelectDatabricksModule={(mod) => {
+          setActiveDatabricksModule(mod);
+          setActiveView("databricks");
+        }}
+        currentFinOpsModule={activeFinOpsModule}
+        onSelectFinOpsModule={(mod) => {
+          setActiveFinOpsModule(mod);
+          setActiveView("finops");
+        }}
         onOpenSettings={() => setIsSettingsOpen(true)}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
@@ -528,7 +594,7 @@ export default function Home() {
       {/* 2. Main Workspace Layout */}
       <div
         className={`flex-1 flex flex-col min-w-0 transition-all duration-200 ${
-          isSidebarCollapsed ? "sm:pl-16" : "sm:pl-60"
+          isSidebarCollapsed ? "sm:pl-16" : "sm:pl-64"
         }`}
       >
         {/* Top Header Bar */}
@@ -544,11 +610,18 @@ export default function Home() {
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           connectedScope={{
-            provider: activeConnection.provider,
-            name: activeConnection.display_name || activeConnection.name,
-            id: activeConnection.scope_id,
+            provider:
+              activeCloudScope.provider === "databricks"
+                ? "azure"
+                : activeCloudScope.provider,
+            name: activeCloudScope.display_name,
+            id:
+              activeCloudScope.workspace_id ||
+              activeCloudScope.resource_group ||
+              activeConnection?.scope_id ||
+              "rg-finops-eastus",
           }}
-          onSwitchConnection={() => setActiveConnection(null)}
+          onSwitchConnection={() => setActiveView("configuration")}
         />
 
         {/* Main Content Viewport */}
@@ -910,6 +983,71 @@ export default function Home() {
             <SectionMultiCloudCompare
               currentAssumptions={assumptions}
               currentBufferPct={safetyBufferPct}
+            />
+          )}
+
+          {/* SCREEN 10: Dynamic Resource Scope Selection & Discovery Manager */}
+          {activeView === "configuration" && (
+            <ConfigurationView
+              activeScope={activeCloudScope}
+              onSelectScope={(scope) => {
+                setActiveCloudScope(scope);
+                if (scope.provider === "databricks") {
+                  setActiveView("databricks");
+                } else {
+                  setActiveView("monitoring");
+                }
+              }}
+              onNavigateToDatabricksModule={(mod) => {
+                setActiveDatabricksModule(mod);
+                setActiveView("databricks");
+              }}
+            />
+          )}
+
+          {/* SCREEN 11: Azure Databricks Multi-Module Workspace View (14 Modules) */}
+          {activeView === "databricks" && (
+            <DatabricksWorkspaceDetailView
+              connection={{
+                connection_id: "databricks-azure-dev",
+                workspace_id: activeCloudScope.workspace_id || "642006393507276",
+                workspace_name: activeCloudScope.workspace_name || "Azure Databricks Dev",
+                workspace_url:
+                  activeCloudScope.workspace_url ||
+                  "https://adb-642006393507276.16.azuredatabricks.net",
+                cloud: "azure",
+                status: "connected",
+                auth_method: "azure-cli",
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }}
+              discovery={databricksDiscovery}
+              activeModuleId={activeDatabricksModule}
+              onSelectModule={(mod) => setActiveDatabricksModule(mod)}
+              isLoading={isDiscoveringDatabricks}
+              onBack={() => setActiveView("configuration")}
+              onRefresh={handleRefreshDatabricks}
+              activeScope={activeCloudScope}
+              onSelectScope={(scope) => setActiveCloudScope(scope)}
+              onFocusScope={(child) => {
+                setActiveCloudScope((prev) => ({
+                  ...prev,
+                  scope_type: "databricks_resource",
+                  selected_child_resource: child,
+                  display_name: `${prev.workspace_name || "Databricks"} > ${child.resource_name}`,
+                }));
+              }}
+            />
+          )}
+
+          {/* SCREEN 12: FinOps Command Center (15 Full Modules) */}
+          {activeView === "finops" && (
+            <FinOpsCommandCenterView
+              activeModule={activeFinOpsModule}
+              onSelectModule={(mod) => setActiveFinOpsModule(mod)}
+              selectedWorkspaceId={activeCloudScope.workspace_id || "databricks-azure-dev"}
+              activeScope={activeCloudScope}
+              onSelectScope={(scope) => setActiveCloudScope(scope)}
             />
           )}
         </main>
