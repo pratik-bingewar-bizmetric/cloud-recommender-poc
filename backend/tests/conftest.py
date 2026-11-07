@@ -1,6 +1,11 @@
 """Pytest global configuration, test fixtures, and mock clients."""
 
+import os
 from collections.abc import AsyncGenerator
+
+# Configure fail-closed cryptographic signing key for test environment
+os.environ.setdefault("FINOPS_SIGNING_SECRET", "finops-test-signing-secret-2026-min-32-chars-long")
+os.environ.setdefault("FINOPS_SIGNING_KID", "k1-2026")
 
 import httpx
 import pytest
@@ -23,6 +28,8 @@ def test_settings() -> Settings:
         llm_provider="mock",
         fabric_enabled=False,
         offline_pricing_mode=True,
+        finops_signing_secret="finops-test-signing-secret-2026-min-32-chars-long",
+        finops_signing_kid="k1-2026",
     )
 
 

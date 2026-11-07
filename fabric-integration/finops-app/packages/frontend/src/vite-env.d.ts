@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  /** FinOps Backend API base URL (e.g. http://localhost:8000/api/v1). */
+  readonly VITE_API_BASE_URL?: string;
   /** Rayfin API base URL (e.g. http://localhost:5168). */
   readonly VITE_RAYFIN_API_URL?: string;
   /** Rayfin publishable key (pk-...). */

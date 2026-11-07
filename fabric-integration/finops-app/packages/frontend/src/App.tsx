@@ -5,11 +5,10 @@
 // </copyright>
 //-----------------------------------------------------------------------
 
-import { EmptyStatePreview } from './EmptyStatePreview';
+import FinOpsApp from './FinOpsApp';
 
-// Replace this starting view with your app. See README.md for welcome cleanup.
 function App() {
-  return <EmptyStatePreview />;
+  return <FinOpsApp />;
 }
 
 export default App;

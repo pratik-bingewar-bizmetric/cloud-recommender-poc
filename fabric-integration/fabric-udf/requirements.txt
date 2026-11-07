@@ -1,0 +1,10 @@
+# Microsoft Fabric Python User Data Functions (UDF) Dependencies
+fabric-user-data-functions>=0.1.0; sys_platform == 'linux'
+pydantic>=2.7.0
+httpx>=0.27.0
+azure-identity>=1.15.0
+azure-mgmt-resource>=23.0.0
+azure-mgmt-costmanagement>=4.0.0
+cryptography>=42.0.0
+structlog>=24.0.0
+

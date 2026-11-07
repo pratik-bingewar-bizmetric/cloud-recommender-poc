@@ -285,6 +285,57 @@ class AzureInventoryService:
             )
         return await self._arm_get_all(url, token)
 
+    async def list_databricks_workspaces(
+        self, subscription_id: str, token: str
+    ) -> list[dict[str, Any]]:
+        """List Azure Databricks workspaces within the subscription.
+
+        Queries ARM for Microsoft.Databricks/workspaces and extracts workspace metadata.
+        """
+        url = (
+            f"{self.settings.azure_arm_base_url.rstrip('/')}/subscriptions/"
+            f"{subscription_id}/providers/Microsoft.Databricks/workspaces?api-version=2024-05-01"
+        )
+        items = await self._arm_get_all(url, token)
+        if not items:
+            all_res = await self.list_resources(subscription_id, token)
+            items = [
+                r
+                for r in all_res
+                if str(r.get("type", "")).lower() == "microsoft.databricks/workspaces"
+            ]
+
+        workspaces: list[dict[str, Any]] = []
+        for item in items:
+            res_id = str(item.get("id", ""))
+            name = str(item.get("name", ""))
+            location = str(item.get("location", ""))
+            props_raw = item.get("properties")
+            properties: dict[str, Any] = props_raw if isinstance(props_raw, dict) else {}
+            sku_raw = item.get("sku")
+            sku: dict[str, Any] = sku_raw if isinstance(sku_raw, dict) else {}
+
+            rg_match = re.search(r"/resourceGroups/([^/]+)/", res_id, re.IGNORECASE)
+            rg_name = rg_match.group(1) if rg_match else str(item.get("resourceGroup", ""))
+
+            workspaces.append(
+                {
+                    "resource_id": res_id,
+                    "name": name,
+                    "subscription_id": subscription_id,
+                    "resource_group": rg_name,
+                    "region": location,
+                    "workspace_url": properties.get("workspaceUrl"),
+                    "workspace_id": properties.get("workspaceId"),
+                    "pricing_tier": sku.get("name"),
+                    "managed_resource_group_id": properties.get("managedResourceGroupId"),
+                    "provisioning_state": properties.get("provisioningState", "Succeeded"),
+                    "discovery_status": "discovered",
+                    "raw_properties": properties,
+                }
+            )
+        return workspaces
+
     async def _fetch_live_resource_metrics(
         self,
         arm_id: str,

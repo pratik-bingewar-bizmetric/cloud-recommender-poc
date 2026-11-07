@@ -41,6 +41,54 @@ def test_initial_migration_module_structure() -> None:
     assert callable(migration_module.downgrade)
 
 
+def test_billing_ingestion_migration_module_structure() -> None:
+    """Verify Milestone 3H.1/3J billing ingestion migration defines upgrade/downgrade and correct lineage."""
+    migration_path = (
+        ALEMBIC_DIR / "versions" / "2026_11_07_0002_billing_ingestion_and_reconciliation.py"
+    )
+    assert migration_path.exists(), f"Migration file not found at {migration_path}"
+
+    spec = importlib.util.spec_from_file_location("billing_migration", migration_path)
+    assert spec is not None and spec.loader is not None
+    migration_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration_module)
+
+    assert migration_module.revision == "2026_11_07_0002"
+    assert migration_module.down_revision == "2026_10_12_0001"
+    assert callable(migration_module.upgrade)
+    assert callable(migration_module.downgrade)
+
+    # Verify that Base.metadata contains the new tables registered by the migration
+    expected_tables = {
+        "billing_usage_records",
+        "billing_price_records",
+        "billing_ingestion_runs",
+        "billing_reconciliation_results",
+        "billing_source_checkpoints",
+        "billing_scope_snapshots",
+        "billing_calculation_versions",
+        "billing_approval_tokens",
+    }
+    for table_name in expected_tables:
+        assert table_name in Base.metadata.tables, f"Table {table_name} missing from Base.metadata"
+
+
+def test_billing_approval_tokens_migration_module_structure() -> None:
+    """Verify Milestone 3J.2 billing approval tokens migration defines upgrade/downgrade and correct lineage."""
+    migration_path = ALEMBIC_DIR / "versions" / "2026_11_07_0003_billing_approval_tokens.py"
+    assert migration_path.exists(), f"Migration file not found at {migration_path}"
+
+    spec = importlib.util.spec_from_file_location("approval_tokens_migration", migration_path)
+    assert spec is not None and spec.loader is not None
+    migration_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration_module)
+
+    assert migration_module.revision == "2026_11_07_0003"
+    assert migration_module.down_revision == "2026_11_07_0002"
+    assert callable(migration_module.upgrade)
+    assert callable(migration_module.downgrade)
+
+
 def test_alembic_env_preserves_explicit_config_url() -> None:
     """Verify Alembic env.py respects explicitly configured sqlalchemy.url from Alembic config."""
     from alembic.config import Config

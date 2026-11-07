@@ -37,6 +37,7 @@ eggs/
 .eggs/
 lib/
 !frontend/src/lib/
+!fabric-integration/finops-app/packages/frontend/src/lib/
 lib64/
 parts/
 sdist/

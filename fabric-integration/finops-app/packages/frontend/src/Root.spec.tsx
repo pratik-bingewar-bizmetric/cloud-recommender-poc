@@ -48,7 +48,7 @@ describe('protected app content with standalone sign-in', () => {
     );
     render(<Root rayfinAuthService={auth} />);
     expect(
-      screen.queryByRole('heading', { name: 'Your app is taking shape' })
+      screen.queryByRole('heading', { name: 'Connect your cloud' })
     ).toBeNull();
     expect(screen.getByText('Connecting to Fabric…')).toBeVisible();
   });
@@ -59,7 +59,7 @@ describe('protected app content with standalone sign-in', () => {
       await screen.findByRole('button', { name: 'Sign in with Microsoft' })
     ).toBeVisible();
     expect(
-      screen.queryByRole('heading', { name: 'Your app is taking shape' })
+      screen.queryByRole('heading', { name: 'Connect your cloud' })
     ).toBeNull();
     expect(screen.queryByText(/outside Fabric/)).toBeNull();
   });
@@ -69,7 +69,7 @@ describe('protected app content with standalone sign-in', () => {
     auth.resolveSession = vi.fn(async () => authenticated);
     render(<Root rayfinAuthService={auth} />);
     expect(
-      await screen.findByRole('heading', { name: 'Your app is taking shape' })
+      await screen.findByRole('heading', { name: 'Connect your cloud' })
     ).toBeVisible();
     expect(auth.signIn).not.toHaveBeenCalled();
   });
@@ -85,7 +85,7 @@ describe('protected app content with standalone sign-in', () => {
       await screen.findByRole('button', { name: 'Sign in with Microsoft' })
     ).toBeVisible();
     expect(
-      screen.queryByRole('heading', { name: 'Your app is taking shape' })
+      screen.queryByRole('heading', { name: 'Connect your cloud' })
     ).toBeNull();
   });
 
@@ -99,12 +99,12 @@ describe('protected app content with standalone sign-in', () => {
       name: 'Try Sign in with Microsoft',
     });
     expect(
-      screen.queryByRole('heading', { name: 'Your app is taking shape' })
+      screen.queryByRole('heading', { name: 'Connect your cloud' })
     ).toBeNull();
     await act(async () => fireEvent.click(button));
     expect(auth.signIn).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByRole('heading', { name: 'Your app is taking shape' })
+      await screen.findByRole('heading', { name: 'Connect your cloud' })
     ).toBeVisible();
   });
 
@@ -122,7 +122,7 @@ describe('protected app content with standalone sign-in', () => {
       'Sign-in was cancelled.'
     );
     expect(
-      screen.queryByRole('heading', { name: 'Your app is taking shape' })
+      screen.queryByRole('heading', { name: 'Connect your cloud' })
     ).toBeNull();
   });
 
@@ -137,14 +137,14 @@ describe('protected app content with standalone sign-in', () => {
     });
     render(<Root rayfinAuthService={auth} />);
     expect(
-      await screen.findByRole('heading', { name: 'Your app is taking shape' })
+      await screen.findByRole('heading', { name: 'Connect your cloud' })
     ).toBeVisible();
     await act(async () => notify?.(null));
     expect(
       await screen.findByRole('button', { name: 'Sign in with Microsoft' })
     ).toBeVisible();
     expect(
-      screen.queryByRole('heading', { name: 'Your app is taking shape' })
+      screen.queryByRole('heading', { name: 'Connect your cloud' })
     ).toBeNull();
     expect(unsubscribe).toHaveBeenCalled();
   });
@@ -156,7 +156,7 @@ describe('protected app content with standalone sign-in', () => {
   ])('fails closed for $kind configuration', async (config) => {
     await act(async () => render(<Root rayfinAuthService={service(config)} />));
     expect(
-      screen.queryByRole('heading', { name: 'Your app is taking shape' })
+      screen.queryByRole('heading', { name: 'Connect your cloud' })
     ).toBeNull();
     expect(
       screen.queryByRole('button', { name: 'Sign in with Microsoft' })
