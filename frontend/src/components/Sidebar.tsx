@@ -348,11 +348,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             )}
 
-            {/* Scope & Discovery */}
+            {/* Configuration */}
             <button
               type="button"
               onClick={() => handleNavClick("configuration")}
-              title={isCollapsed ? "Scope & Discovery" : undefined}
+              title={isCollapsed ? "Configuration" : undefined}
               className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${
                 currentView === "configuration"
                   ? "bg-brand-50 text-brand-700 font-semibold"
@@ -363,7 +363,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className={currentView === "configuration" ? "text-brand-600" : "text-slate-500"}>
                   <SlidersHorizontal className="w-4 h-4" />
                 </span>
-                {!isCollapsed && <span className="truncate">Scope &amp; Discovery</span>}
+                {!isCollapsed && <span className="truncate">Configuration</span>}
               </div>
             </button>
 

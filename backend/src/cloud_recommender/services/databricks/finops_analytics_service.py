@@ -148,14 +148,41 @@ class FinOpsAnalyticsService:
             ),
         ]
 
-    def validate_scope(self, workspace_id: Any = None) -> None:
-        """Enforce server-side workspace authorization. Rejects unconfigured or mismatched scopes."""
-        if workspace_id is None or not isinstance(workspace_id, str):
-            return
-        if workspace_id and workspace_id not in ("642006393507276", "databricks-azure-dev"):
-            raise ValueError(
-                f"Scope validation failed: Workspace '{workspace_id}' is not authorized or does not match target environment."
-            )
+    AUTHORIZED_WORKSPACES: set[str] = {
+        "642006393507276",
+        "databricks-azure-dev",
+        "7840192837148901",
+        "adb-lakehouse-prod",
+        "all",
+    }
+
+    def validate_scope(self, workspace_id: Any = None) -> list[str]:
+        """Enforce server-side workspace authorization. Rejects unconfigured or mismatched scopes.
+
+        Supports single workspace ID, comma-separated workspace IDs, or list of workspace IDs.
+        Returns the parsed list of authorized workspace IDs.
+        """
+        if workspace_id is None:
+            return ["642006393507276"]
+        if isinstance(workspace_id, str):
+            wid_str = workspace_id.strip()
+            if not wid_str:
+                return ["642006393507276"]
+            items = [w.strip() for w in wid_str.split(",") if w.strip()]
+        elif isinstance(workspace_id, (list, tuple, set)):
+            items = [str(w).strip() for w in workspace_id if str(w).strip()]
+        else:
+            return ["642006393507276"]
+
+        if not items:
+            return ["642006393507276"]
+
+        for wid in items:
+            if wid not in self.AUTHORIZED_WORKSPACES:
+                raise ValueError(
+                    f"Scope validation failed: Workspace '{wid}' is not authorized or does not match target environment."
+                )
+        return items
 
     def _get_workspace_assets(
         self, connection_id: str = "databricks-azure-dev"

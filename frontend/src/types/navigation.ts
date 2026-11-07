@@ -3,6 +3,7 @@ export type CloudScopeType =
   | "azure_resource_group"
   | "databricks_workspace"
   | "databricks_resource"
+  | "multi_scope"
   | "all";
 
 export type ChildResourceType =
@@ -22,12 +23,15 @@ export interface ChildResourceScope {
 }
 
 export interface CloudScope {
-  provider: "azure" | "databricks" | "aws" | "gcp";
+  provider: "azure" | "databricks" | "aws" | "gcp" | "mixed";
   scope_type: CloudScopeType;
   subscription_id?: string;
+  subscription_ids?: string[];
   subscription_name?: string;
   resource_group?: string;
+  resource_groups?: string[];
   workspace_id?: string;
+  workspace_ids?: string[];
   workspace_name?: string;
   workspace_url?: string;
   region?: string;
@@ -36,6 +40,7 @@ export interface CloudScope {
   status?: string;
   last_discovered_at?: string;
   selected_child_resource?: ChildResourceScope | null;
+  is_multi_scope?: boolean;
 }
 
 export type DatabricksModuleId =

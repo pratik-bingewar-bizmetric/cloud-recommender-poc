@@ -611,7 +611,7 @@ export default function Home() {
           onSearchChange={setSearchQuery}
           connectedScope={{
             provider:
-              activeCloudScope.provider === "databricks"
+              activeCloudScope.provider === "databricks" || activeCloudScope.provider === "mixed"
                 ? "azure"
                 : activeCloudScope.provider,
             name: activeCloudScope.display_name,
@@ -624,8 +624,8 @@ export default function Home() {
           onSwitchConnection={() => setActiveView("configuration")}
         />
 
-        {/* Main Content Viewport */}
-        <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-16">
+        {/* Main Content Viewport — Full-Width Responsive Container */}
+        <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 pt-6 pb-16 min-w-0">
           {/* Foundry / Backend Error Notice */}
           <FoundryConfigAlert
             errorDetail={foundryError}

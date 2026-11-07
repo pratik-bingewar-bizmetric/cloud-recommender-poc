@@ -69,6 +69,7 @@ import { KpiDetailDrawer } from "@/components/shared/KpiDetailDrawer";
 import { ResourceDetailDrawer } from "@/components/shared/ResourceDetailDrawer";
 import { AnomalyDetailDrawer } from "@/components/shared/AnomalyDetailDrawer";
 import { FinOpsAiAnalysisSection } from "@/components/shared/FinOpsAiAnalysisSection";
+import { ConnectionStatusIndicator } from "@/components/shared/ConnectionStatusIndicator";
 
 interface FinOpsCommandCenterViewProps {
   activeModule: FinOpsModule;
@@ -103,6 +104,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   const [reportsData, setReportsData] = useState<ReportsAuditData | null>(null);
 
   // Interactive Drawers State
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("USD");
   const [selectedKpiKey, setSelectedKpiKey] = useState<string | null>(null);
   const [selectedKpiMetric, setSelectedKpiMetric] = useState<FinOpsKpiMetric | null>(null);
   const [selectedDrawerResource, setSelectedDrawerResource] =
@@ -360,9 +362,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         </div>
       )}
 
-      {/* Page Header */}
-      <div className="bg-white border-b border-[#e5eaf1] px-8 py-5">
-        <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Page Header — Full Width Responsive */}
+      <div className="bg-white border-b border-[#e5eaf1] px-4 sm:px-6 lg:px-8 py-5">
+        <div className="w-full flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="text-[11px] font-bold text-blue-600 uppercase tracking-wider">
               FinOps Command Center · Azure Databricks
@@ -408,7 +410,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         </div>
       </div>
 
-      <div className="max-w-[1600px] mx-auto px-8 pt-6">
+      <div className="w-full px-4 sm:px-6 lg:px-8 pt-6 pb-12">
         {/* Global Filter Bar */}
         <div className="flex items-center gap-2.5 flex-wrap mb-6 text-xs text-[#344054]">
           <select
@@ -439,13 +441,30 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
             <option value="quarter">This Quarter</option>
           </select>
 
-          <span className="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-slate-200">
-            Currency: USD
-          </span>
-          <span className="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-emerald-200 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            Azure Dev Connected
-          </span>
+          <select
+            value={selectedCurrency}
+            onChange={(e) => setSelectedCurrency(e.target.value)}
+            className="bg-white border border-[#e5eaf1] px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 shadow-2xs"
+            aria-label="Currency selection"
+          >
+            <option value="USD">Currency: USD ($)</option>
+            <option value="EUR">Currency: EUR (€)</option>
+            <option value="GBP">Currency: GBP (£)</option>
+            <option value="AUD">Currency: AUD (A$)</option>
+            <option value="CAD">Currency: CAD (C$)</option>
+            <option value="INR">Currency: INR (₹)</option>
+          </select>
+
+          <ConnectionStatusIndicator
+            status={error ? "failed" : isLoading ? "loading" : "connected"}
+            label="Azure Dev Connected"
+          />
+
+          {activeScope?.is_multi_scope && (
+            <span className="bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md text-[11px] font-bold border border-indigo-200">
+              Multi-Scope: {activeScope.subscription_ids?.length || 1} Subs · {activeScope.workspace_ids?.length || 1} Workspaces
+            </span>
+          )}
           <button
             onClick={() => loadModuleData()}
             className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[#e5eaf1] bg-white hover:bg-slate-50 font-medium text-slate-600 transition text-xs"
@@ -504,11 +523,6 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "overview" && (
           <div className="space-y-6">
-            <FinOpsAiAnalysisSection
-              moduleId="overview"
-              workspaceId={activeScope?.workspace_id || selectedWorkspaceId || "642006393507276"}
-              onNavigateToModule={(m) => onSelectModule?.(m as FinOpsModule)}
-            />
             {/* Active Child Scope Focused Alert Banner */}
             {activeScope?.selected_child_resource && (
               <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between text-xs text-blue-950">
@@ -690,6 +704,20 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               ))}
             </div>
 
+            {/* AI FinOps Intelligence & Cost Analysis (Moved below all 7 KPI cards with Integrated Decisions) */}
+            <FinOpsAiAnalysisSection
+              moduleId="overview"
+              workspaceId={activeScope?.workspace_id || selectedWorkspaceId || "642006393507276"}
+              onNavigateToModule={(m) => onSelectModule?.(m as FinOpsModule)}
+              decisions={advisorData?.recommendations || overviewData?.decisions_requiring_attention || []}
+              onDecisionAction={handleDecisionAction}
+              onViewEvidence={(item) => {
+                setModalTitle(item.title);
+                setModalBody(item.evidence);
+                setIsDetailModalOpen(true);
+              }}
+            />
+
             {/* Charts Row */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
               {/* Spend Trend and Forecast */}
@@ -782,12 +810,19 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </div>
             </div>
 
-            {/* Tables Row: Cost Drivers and Decisions */}
+            {/* Tables Row: Cost Drivers */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
               {/* Top Cost Drivers */}
-              <div className="lg:col-span-6 bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
-                <h3 className="text-sm font-bold text-[#182230]">Top cost drivers</h3>
-                <p className="text-[11px] text-[#667085] mb-3">Highest spend dimensions requiring management attention</p>
+              <div className="lg:col-span-12 bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#182230]">Top cost drivers</h3>
+                    <p className="text-[11px] text-[#667085]">Highest spend dimensions requiring management attention across connected scopes</p>
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
+                    5 Critical Dimensions
+                  </span>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead>
@@ -909,55 +944,6 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       })}
                     </tbody>
                   </table>
-                </div>
-              </div>
-
-              {/* Decisions Requiring Attention */}
-              <div className="lg:col-span-6 bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
-                <h3 className="text-sm font-bold text-[#182230]">Decisions requiring attention</h3>
-                <p className="text-[11px] text-[#667085] mb-3">Prioritized by estimated financial impact and risk</p>
-                <div className="divide-y divide-[#e5eaf1]">
-                  {(advisorData?.recommendations || overviewData?.decisions_requiring_attention || []).slice(0, 3).map((rec, idx) => (
-                    <div key={rec.id || idx} className="py-3 flex items-start gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 font-bold flex items-center justify-center shrink-0 text-xs">
-                        {idx + 1}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-bold text-[#182230]">{rec.title}</div>
-                        <p className="text-[11px] text-[#667085] mt-0.5">{rec.description}</p>
-                        <div className="flex items-center gap-3 mt-2 text-[10px] flex-wrap">
-                          <span className="font-extrabold text-emerald-700">{rec.formatted_savings}</span>
-                          <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded font-bold">{rec.impact}</span>
-                          <span className="text-slate-500">Confidence: {rec.confidence_pct}%</span>
-                          <span className="text-slate-500">Owner: {rec.owner}</span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-2">
-                          <button
-                            onClick={() => handleDecisionAction(rec.id, "Approved")}
-                            className="px-2.5 py-1 rounded bg-blue-600 text-white font-semibold text-[11px] hover:bg-blue-700 transition"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => {
-                              setModalTitle(rec.title);
-                              setModalBody(rec.evidence);
-                              setIsDetailModalOpen(true);
-                            }}
-                            className="px-2.5 py-1 rounded border border-[#e5eaf1] bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50 transition"
-                          >
-                            View Evidence
-                          </button>
-                          <button
-                            onClick={() => handleDecisionAction(rec.id, "Deferred")}
-                            className="px-2.5 py-1 rounded border border-[#e5eaf1] bg-white text-[11px] font-semibold text-slate-500 hover:bg-slate-50 transition"
-                          >
-                            Defer
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </div>
             </div>
