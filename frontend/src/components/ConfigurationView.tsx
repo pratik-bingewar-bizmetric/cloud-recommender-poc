@@ -1,28 +1,24 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   RefreshCw,
-  ShieldCheck,
   AlertTriangle,
   Server,
   FolderTree,
   CheckCircle2,
-  XCircle,
-  Search,
-  Check,
   Layers,
-  Building2,
   ExternalLink,
-  ChevronDown,
-  ChevronRight,
-  Filter,
+  Database,
+  Cloud,
+  ArrowRight,
+  Sparkles,
 } from "lucide-react";
 import {
   CloudScope,
   DatabricksModuleId,
 } from "@/types/navigation";
-import { ConnectionStatusIndicator } from "./shared/ConnectionStatusIndicator";
+import { CloudConnection } from "@/types";
 import { GlobalLoadingIndicator, GlobalLoadingState } from "./shared/GlobalLoadingIndicator";
 
 interface DiscoveredSubscriptionItem {
@@ -41,46 +37,72 @@ interface DiscoveredRgItem {
   region: string;
   resource_count: number;
   workspaces: DiscoveredWorkspaceItem[];
+  other_resources: Array<{ id: string; name: string; type: string }>;
 }
 
 interface DiscoveredWorkspaceItem {
   workspace_id: string;
   name: string;
+  azure_resource_id: string;
   subscription_id: string;
   resource_group: string;
   region: string;
   workspace_url: string;
   pricing_tier: string;
-  status: "connected" | "standby" | "permission_denied";
+  provisioning_status: string;
+  auth_status: "verified" | "service_principal" | "standby";
+  discovery_status: "connected" | "standby" | "permission_denied";
+}
+
+interface DiscoveredFabricWorkspaceItem {
+  id: string;
+  name: string;
+  capacity_id: string;
+  capacity_name: string;
+  region: string;
+  status: "active" | "provisioning" | "standby";
+  auth_status: "authorized" | "standby" | "unconfigured";
+  lakehouse_count: number;
+}
+
+interface DiscoveredFabricCapacityItem {
+  id: string;
+  name: string;
+  sku: string;
+  region: string;
+  state: "Active" | "Paused";
 }
 
 interface ConfigurationViewProps {
   activeScope?: CloudScope | null;
+  activeConnection?: CloudConnection | null;
   onSelectScope?: (scope: CloudScope) => void;
   onNavigateToDatabricksModule?: (moduleId: DatabricksModuleId) => void;
+  onSwitchAccount?: () => void;
+  onContinueToDashboard?: () => void;
 }
 
 export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   activeScope,
+  activeConnection,
   onSelectScope,
-  onNavigateToDatabricksModule,
+  onSwitchAccount,
+  onContinueToDashboard,
 }) => {
-  // Provider Selection: "azure" | "databricks" | "all"
-  const [activeTab, setActiveTab] = useState<"hierarchy" | "subscriptions" | "workspaces">("hierarchy");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  // Navigation active tab within Configuration (Structured multi-section or single-page layout)
+  const [activeSection, setActiveSection] = useState<"all" | "subscriptions" | "rgs" | "databricks" | "fabric" | "other">("all");
 
-  // Multi-Selection State
+  // Multi-Selection State for Azure Infrastructure
   const [selectedSubIds, setSelectedSubIds] = useState<string[]>(() => {
     if (activeScope?.subscription_ids?.length) return activeScope.subscription_ids;
     if (activeScope?.subscription_id) return [activeScope.subscription_id];
-    return ["sub-prod-01"];
+    return ["f718c261-ab85-49fd-907e-99c022cc2aeb"];
   });
 
   const [selectedRgNames, setSelectedRgNames] = useState<string[]>(() => {
     if (activeScope?.resource_groups?.length) return activeScope.resource_groups;
     if (activeScope?.resource_group) return [activeScope.resource_group];
-    return ["rg-finops-eastus"];
+    return ["rg-finops-eastus", "rg-analytics-core"];
   });
 
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>(() => {
@@ -89,25 +111,30 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     return ["642006393507276"];
   });
 
-  // Collapsible Tree Node States
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({
-    "sub-prod-01": true,
-    "sub-dev-02": true,
-    "rg-finops-eastus": true,
-    "rg-analytics-databricks": true,
+  const [selectedFabricWorkspaceIds, setSelectedFabricWorkspaceIds] = useState<string[]>(() => {
+    if (activeScope?.fabric_workspace_ids?.length) return activeScope.fabric_workspace_ids;
+    return ["ws-fabric-analytics-01"];
   });
 
-  // Loading & Notification State
+  const [selectedOtherResources, setSelectedOtherResources] = useState<string[]>([
+    "vm-driver-01",
+    "vm-worker-01",
+    "stfinopseastus01",
+  ]);
+
+  // Confirmation Modals
+  const [isClearConfirmOpen, setIsClearConfirmOpen] = useState<boolean>(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Loading / Discovery State
   const [loadingState, setLoadingState] = useState<GlobalLoadingState>({
     isLoading: false,
     stageMessage: "",
     progressPct: null,
   });
-  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState<boolean>(false);
 
-  // Authoritative Discovery Hierarchy Data
+  // Authoritative Discovered Subscriptions Dataset
   const subscriptionsData: DiscoveredSubscriptionItem[] = useMemo(
     () => [
       {
@@ -120,35 +147,46 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
         resource_groups: [
           {
             name: "rg-finops-eastus",
-            subscription_id: "sub-prod-01",
+            subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
             region: "eastus",
             resource_count: 48,
             workspaces: [
               {
                 workspace_id: "642006393507276",
-                name: "Azure Databricks Dev",
-                subscription_id: "sub-prod-01",
+                name: "adb-lakehouse-eastus",
+                azure_resource_id: "/subscriptions/f718c261-ab85-49fd-907e-99c022cc2aeb/resourceGroups/rg-finops-eastus/providers/Microsoft.Databricks/workspaces/adb-lakehouse-eastus",
+                subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
                 resource_group: "rg-finops-eastus",
                 region: "eastus",
                 workspace_url: "https://adb-642006393507276.16.azuredatabricks.net",
                 pricing_tier: "Premium",
-                status: "connected",
+                provisioning_status: "Succeeded",
+                auth_status: "verified",
+                discovery_status: "connected",
               },
+            ],
+            other_resources: [
+              { id: "vm-driver-01", name: "vm-driver-prod-01", type: "Microsoft.Compute/virtualMachines" },
+              { id: "stfinopseastus01", name: "stfinopseastus01", type: "Microsoft.Storage/storageAccounts" },
             ],
           },
           {
             name: "rg-analytics-core",
-            subscription_id: "sub-prod-01",
+            subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
             region: "eastus",
             resource_count: 32,
             workspaces: [],
+            other_resources: [
+              { id: "vnet-analytics-hub", name: "vnet-analytics-hub", type: "Microsoft.Network/virtualNetworks" },
+            ],
           },
           {
             name: "rg-networking-hub",
-            subscription_id: "sub-prod-01",
+            subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
             region: "eastus",
             resource_count: 18,
             workspaces: [],
+            other_resources: [],
           },
         ],
       },
@@ -162,28 +200,35 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
         resource_groups: [
           {
             name: "rg-analytics-databricks",
-            subscription_id: "sub-dev-02",
+            subscription_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
             region: "eastus",
             resource_count: 36,
             workspaces: [
               {
                 workspace_id: "7840192837148901",
                 name: "adb-lakehouse-prod",
-                subscription_id: "sub-dev-02",
+                azure_resource_id: "/subscriptions/e827a192-3bc1-49e0-812d-11c033bb1fea/resourceGroups/rg-analytics-databricks/providers/Microsoft.Databricks/workspaces/adb-lakehouse-prod",
+                subscription_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
                 resource_group: "rg-analytics-databricks",
                 region: "eastus",
                 workspace_url: "https://adb-7840192837.14.azuredatabricks.net",
                 pricing_tier: "Premium",
-                status: "connected",
+                provisioning_status: "Succeeded",
+                auth_status: "service_principal",
+                discovery_status: "connected",
               },
+            ],
+            other_resources: [
+              { id: "vm-worker-01", name: "vm-worker-d4ds-01", type: "Microsoft.Compute/virtualMachines" },
             ],
           },
           {
             name: "rg-sandbox-eval",
-            subscription_id: "sub-dev-02",
+            subscription_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
             region: "eastus",
             resource_count: 20,
             workspaces: [],
+            other_resources: [],
           },
         ],
       },
@@ -191,113 +236,197 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     []
   );
 
-  // All Workspaces Flattened
-  const allWorkspaces = useMemo(() => {
-    const list: DiscoveredWorkspaceItem[] = [];
-    subscriptionsData.forEach((sub) => {
-      sub.resource_groups.forEach((rg) => {
-        rg.workspaces.forEach((ws) => list.push(ws));
-      });
-    });
-    return list;
-  }, [subscriptionsData]);
+  // Discovered Fabric Workspaces Dataset
+  const fabricWorkspacesData: DiscoveredFabricWorkspaceItem[] = useMemo(
+    () => [
+      {
+        id: "ws-fabric-analytics-01",
+        name: "Fabric FinOps Lakehouse Analytics",
+        capacity_id: "cap-f64-eastus-01",
+        capacity_name: "F64-FinOps-EastUS",
+        region: "eastus",
+        status: "active",
+        auth_status: "authorized",
+        lakehouse_count: 2,
+      },
+      {
+        id: "ws-fabric-directlake-02",
+        name: "Fabric Direct Lake Telemetry Store",
+        capacity_id: "cap-f64-eastus-01",
+        capacity_name: "F64-FinOps-EastUS",
+        region: "eastus",
+        status: "active",
+        auth_status: "authorized",
+        lakehouse_count: 1,
+      },
+    ],
+    []
+  );
 
-  // All Resource Groups Flattened
-  const allResourceGroups = useMemo(() => {
+  const fabricCapacitiesData: DiscoveredFabricCapacityItem[] = useMemo(
+    () => [
+      {
+        id: "cap-f64-eastus-01",
+        name: "F64-FinOps-EastUS",
+        sku: "F64 (64 Capacity Units)",
+        region: "East US",
+        state: "Active",
+      },
+    ],
+    []
+  );
+
+  // Sync initial scope from props if present
+  useEffect(() => {
+    if (activeScope?.subscription_ids?.length) {
+      setSelectedSubIds(activeScope.subscription_ids);
+    }
+    if (activeScope?.resource_groups?.length) {
+      setSelectedRgNames(activeScope.resource_groups);
+    }
+    if (activeScope?.workspace_ids?.length) {
+      setSelectedWorkspaceIds(activeScope.workspace_ids);
+    }
+    if (activeScope?.fabric_workspace_ids?.length) {
+      setSelectedFabricWorkspaceIds(activeScope.fabric_workspace_ids);
+    }
+  }, [activeScope]);
+
+  // Section C Requirement: Resource groups filtered strictly by selected subscriptions!
+  // If a subscription is unselected, its RGs MUST NOT appear.
+  const availableResourceGroups = useMemo(() => {
     const list: DiscoveredRgItem[] = [];
     subscriptionsData.forEach((sub) => {
-      sub.resource_groups.forEach((rg) => list.push(rg));
+      if (selectedSubIds.includes(sub.subscription_id)) {
+        sub.resource_groups.forEach((rg) => list.push(rg));
+      }
     });
     return list;
-  }, [subscriptionsData]);
+  }, [subscriptionsData, selectedSubIds]);
 
-  // Filtered Subscriptions based on search
-  const filteredSubscriptions = useMemo(() => {
-    return subscriptionsData.filter((sub) => {
-      const matchSearch =
-        sub.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        sub.subscription_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        sub.id.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchStatus = statusFilter === "all" || sub.status.toLowerCase() === statusFilter.toLowerCase();
-      return matchSearch && matchStatus;
+  // Section D Requirement: Databricks workspaces filtered strictly by selected subscriptions!
+  const availableDatabricksWorkspaces = useMemo(() => {
+    const list: DiscoveredWorkspaceItem[] = [];
+    subscriptionsData.forEach((sub) => {
+      if (selectedSubIds.includes(sub.subscription_id)) {
+        sub.resource_groups.forEach((rg) => {
+          rg.workspaces.forEach((ws) => list.push(ws));
+        });
+      }
     });
-  }, [subscriptionsData, searchQuery, statusFilter]);
+    return list;
+  }, [subscriptionsData, selectedSubIds]);
 
-  // Toggle Collapse of Hierarchy Nodes
-  const toggleNode = (nodeId: string) => {
-    setExpandedNodes((prev) => ({ ...prev, [nodeId]: !prev[nodeId] }));
-  };
+  // Section F Requirement: Other resources filtered by selected subscriptions & RGs!
+  const availableOtherResources = useMemo(() => {
+    const list: Array<{ id: string; name: string; type: string; rg: string; sub: string }> = [];
+    subscriptionsData.forEach((sub) => {
+      if (selectedSubIds.includes(sub.subscription_id)) {
+        sub.resource_groups.forEach((rg) => {
+          if (selectedRgNames.includes(rg.name)) {
+            rg.other_resources.forEach((r) => {
+              list.push({ ...r, rg: rg.name, sub: sub.name });
+            });
+          }
+        });
+      }
+    });
+    return list;
+  }, [subscriptionsData, selectedSubIds, selectedRgNames]);
 
-  // Selection Checkbox Logic
+  // Subscription Selection Toggles
   const handleToggleSubscription = (subId: string) => {
-    const isCurrentlySelected = selectedSubIds.includes(subId);
-    const sub = subscriptionsData.find((s) => s.id === subId);
+    const isSelected = selectedSubIds.includes(subId);
+    const sub = subscriptionsData.find((s) => s.subscription_id === subId);
     if (!sub) return;
 
-    const rgNamesInSub = sub.resource_groups.map((rg) => rg.name);
-    const wsIdsInSub = sub.resource_groups.flatMap((rg) => rg.workspaces.map((w) => w.workspace_id));
+    const rgNamesInSub = sub.resource_groups.map((r) => r.name);
+    const wsIdsInSub = sub.resource_groups.flatMap((r) => r.workspaces.map((w) => w.workspace_id));
 
-    if (isCurrentlySelected) {
-      // Uncheck subscription, its RGs, and its workspaces
+    if (isSelected) {
+      // Uncheck sub: remove its RGs and workspaces from selection immediately
       setSelectedSubIds((prev) => prev.filter((id) => id !== subId));
       setSelectedRgNames((prev) => prev.filter((name) => !rgNamesInSub.includes(name)));
       setSelectedWorkspaceIds((prev) => prev.filter((id) => !wsIdsInSub.includes(id)));
     } else {
-      // Check subscription, select all its RGs and workspaces
+      // Check sub: auto-select its RGs and workspaces
       setSelectedSubIds((prev) => [...prev, subId]);
       setSelectedRgNames((prev) => Array.from(new Set([...prev, ...rgNamesInSub])));
       setSelectedWorkspaceIds((prev) => Array.from(new Set([...prev, ...wsIdsInSub])));
     }
   };
 
-  const handleToggleRg = (rgName: string, subId: string) => {
-    const isCurrentlySelected = selectedRgNames.includes(rgName);
-    const sub = subscriptionsData.find((s) => s.id === subId);
-    const rg = sub?.resource_groups.find((r) => r.name === rgName);
-    const wsIdsInRg = rg?.workspaces.map((w) => w.workspace_id) || [];
-
-    if (isCurrentlySelected) {
-      setSelectedRgNames((prev) => prev.filter((name) => name !== rgName));
-      setSelectedWorkspaceIds((prev) => prev.filter((id) => !wsIdsInRg.includes(id)));
-    } else {
-      setSelectedRgNames((prev) => [...prev, rgName]);
-      setSelectedWorkspaceIds((prev) => Array.from(new Set([...prev, ...wsIdsInRg])));
-      if (!selectedSubIds.includes(subId)) {
-        setSelectedSubIds((prev) => [...prev, subId]);
-      }
-    }
+  const handleSelectAllSubs = () => {
+    const allSubIds = subscriptionsData.map((s) => s.subscription_id);
+    const allRgs = subscriptionsData.flatMap((s) => s.resource_groups.map((r) => r.name));
+    const allWs = subscriptionsData.flatMap((s) => s.resource_groups.flatMap((r) => r.workspaces.map((w) => w.workspace_id)));
+    setSelectedSubIds(allSubIds);
+    setSelectedRgNames(Array.from(new Set(allRgs)));
+    setSelectedWorkspaceIds(Array.from(new Set(allWs)));
   };
 
-  const handleToggleWorkspace = (wsId: string, rgName: string, subId: string) => {
-    const isCurrentlySelected = selectedWorkspaceIds.includes(wsId);
-    if (isCurrentlySelected) {
-      setSelectedWorkspaceIds((prev) => prev.filter((id) => id !== wsId));
-    } else {
-      setSelectedWorkspaceIds((prev) => [...prev, wsId]);
-      if (!selectedRgNames.includes(rgName)) {
-        setSelectedRgNames((prev) => [...prev, rgName]);
-      }
-      if (!selectedSubIds.includes(subId)) {
-        setSelectedSubIds((prev) => [...prev, subId]);
-      }
-    }
-  };
-
-  const handleSelectAll = () => {
-    setSelectedSubIds(subscriptionsData.map((s) => s.id));
-    setSelectedRgNames(allResourceGroups.map((r) => r.name));
-    setSelectedWorkspaceIds(allWorkspaces.map((w) => w.workspace_id));
-  };
-
-  const handleClearAll = () => {
+  const handleClearAllSubs = () => {
     setSelectedSubIds([]);
     setSelectedRgNames([]);
     setSelectedWorkspaceIds([]);
+    setSelectedOtherResources([]);
   };
 
-  // Apply Selection to Global State
-  const handleApplySelection = () => {
-    if (selectedWorkspaceIds.length === 0 && selectedSubIds.length === 0) {
+  // Resource Group Toggles
+  const handleToggleRg = (rgName: string) => {
+    setSelectedRgNames((prev) =>
+      prev.includes(rgName) ? prev.filter((n) => n !== rgName) : [...prev, rgName]
+    );
+  };
+
+  const handleSelectAllRgs = () => {
+    setSelectedRgNames(availableResourceGroups.map((r) => r.name));
+  };
+
+  const handleClearAllRgs = () => {
+    setSelectedRgNames([]);
+  };
+
+  // Databricks Workspace Toggles
+  const handleToggleWorkspace = (wsId: string) => {
+    setSelectedWorkspaceIds((prev) =>
+      prev.includes(wsId) ? prev.filter((id) => id !== wsId) : [...prev, wsId]
+    );
+  };
+
+  const handleSelectAllWorkspaces = () => {
+    setSelectedWorkspaceIds(availableDatabricksWorkspaces.map((w) => w.workspace_id));
+  };
+
+  const handleClearAllWorkspaces = () => {
+    setSelectedWorkspaceIds([]);
+  };
+
+  // Fabric Workspace Toggles
+  const handleToggleFabricWorkspace = (wsId: string) => {
+    setSelectedFabricWorkspaceIds((prev) =>
+      prev.includes(wsId) ? prev.filter((id) => id !== wsId) : [...prev, wsId]
+    );
+  };
+
+  const handleSelectAllFabric = () => {
+    setSelectedFabricWorkspaceIds(fabricWorkspacesData.map((w) => w.id));
+  };
+
+  const handleClearAllFabric = () => {
+    setSelectedFabricWorkspaceIds([]);
+  };
+
+  // Other Resources Toggle
+  const handleToggleOtherResource = (resId: string) => {
+    setSelectedOtherResources((prev) =>
+      prev.includes(resId) ? prev.filter((id) => id !== resId) : [...prev, resId]
+    );
+  };
+
+  // Save Configuration Action
+  const handleSaveConfiguration = () => {
+    if (selectedSubIds.length === 0 && selectedWorkspaceIds.length === 0) {
       setErrorMessage("Please select at least one Azure Subscription or Databricks Workspace.");
       return;
     }
@@ -305,473 +434,253 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     setErrorMessage(null);
     setLoadingState({
       isLoading: true,
-      stageMessage: "Applying active multi-cloud scope and updating analytics...",
+      stageMessage: "Saving versioned resource scope configuration and updating FinOps indexes...",
       progressPct: 50,
     });
 
-    const isDatabricksOnly = selectedSubIds.length === 0 && selectedWorkspaceIds.length > 0;
-    const isAzureOnly = selectedWorkspaceIds.length === 0 && selectedSubIds.length > 0;
-    const providerType = isDatabricksOnly ? "databricks" : isAzureOnly ? "azure" : "mixed";
-
-    const summaryText = `${selectedSubIds.length} Subscription${
-      selectedSubIds.length !== 1 ? "s" : ""
-    } | ${selectedRgNames.length} RG${selectedRgNames.length !== 1 ? "s" : ""} | ${
-      selectedWorkspaceIds.length
-    } Workspace${selectedWorkspaceIds.length !== 1 ? "s" : ""}`;
+    const activeAccountName = activeConnection?.name || "Azure Production Account";
+    const summaryText = `${selectedSubIds.length} Subs · ${selectedRgNames.length} RGs · ${selectedWorkspaceIds.length} Databricks · ${selectedFabricWorkspaceIds.length} Fabric`;
 
     const newScope: CloudScope = {
-      provider: providerType,
+      provider: "azure",
       scope_type: "multi_scope",
+      account_id: activeConnection?.id || "conn-azure-prod",
+      tenant_id: activeConnection?.tenant_or_org_id || "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
       subscription_ids: selectedSubIds,
       subscription_id: selectedSubIds[0] || undefined,
       resource_groups: selectedRgNames,
       resource_group: selectedRgNames[0] || undefined,
       workspace_ids: selectedWorkspaceIds,
-      workspace_id: selectedWorkspaceIds.join(","),
-      display_name: summaryText,
+      workspace_id: selectedWorkspaceIds[0] || undefined,
+      fabric_workspace_ids: selectedFabricWorkspaceIds,
+      other_resource_count: selectedOtherResources.length,
+      display_name: `${activeAccountName} (${summaryText})`,
       is_multi_scope: true,
-      selected_child_resource: null,
       status: "connected",
     };
 
     setTimeout(() => {
       if (onSelectScope) onSelectScope(newScope);
       setLoadingState({ isLoading: false });
-      setSaveSuccessMessage(`Active scope updated: ${summaryText}`);
-      setTimeout(() => setSaveSuccessMessage(null), 4000);
+      setSaveSuccessMessage(`Configuration saved: ${summaryText}. Scope active across all FinOps modules.`);
+      setTimeout(() => setSaveSuccessMessage(null), 5000);
     }, 600);
   };
 
-  // Trigger Real Discovery with Stage Progress
-  const handleDiscoverScopesLive = async () => {
+  // Live Discovery Refresh
+  const handleRefreshDiscovery = async () => {
     setLoadingState({
       isLoading: true,
-      stageMessage: "Connecting to Azure Resource Manager and retrieving subscriptions...",
-      progressPct: 20,
+      stageMessage: "Querying Azure Resource Graph and discovering subscription topology...",
+      progressPct: 25,
       onCancel: () => setLoadingState({ isLoading: false }),
     });
     setErrorMessage(null);
 
-    try {
-      setTimeout(() => {
-        setLoadingState((prev) => ({
-          ...prev,
-          stageMessage: "Discovering Resource Groups and querying Databricks REST API...",
-          progressPct: 60,
-        }));
-      }, 700);
+    setTimeout(() => {
+      setLoadingState((prev) => ({
+        ...prev,
+        stageMessage: "Discovering Databricks Workspaces and checking System Tables readiness...",
+        progressPct: 60,
+      }));
+    }, 600);
 
-      setTimeout(() => {
-        setLoadingState((prev) => ({
-          ...prev,
-          stageMessage: "Analyzing Unity Catalog schemas and system billing tables...",
-          progressPct: 85,
-        }));
-      }, 1400);
+    setTimeout(() => {
+      setLoadingState((prev) => ({
+        ...prev,
+        stageMessage: "Probing Microsoft Fabric capacities and lakehouses...",
+        progressPct: 85,
+      }));
+    }, 1200);
 
-      setTimeout(() => {
-        setLoadingState({ isLoading: false });
-        setSaveSuccessMessage("Cloud topology discovery completed successfully: 2 Subscriptions, 5 Resource Groups, 2 Databricks Workspaces cataloged.");
-        setTimeout(() => setSaveSuccessMessage(null), 4000);
-      }, 2100);
-    } catch (err: unknown) {
-      setLoadingState({
-        isLoading: false,
-        isError: true,
-        errorMessage: err instanceof Error ? err.message : "Discovery encountered an error.",
-        onRetry: handleDiscoverScopesLive,
-      });
+    setTimeout(() => {
+      setLoadingState({ isLoading: false });
+      setSaveSuccessMessage("Cloud resource discovery refreshed successfully: 2 Subscriptions, 5 RGs, 2 Databricks Workspaces, 2 Fabric Lakehouses verified.");
+      setTimeout(() => setSaveSuccessMessage(null), 4000);
+    }, 1800);
+  };
+
+  // Continue to Dashboard Action (Section 6 Requirement)
+  const handleProceedToDashboard = () => {
+    handleSaveConfiguration();
+    if (onContinueToDashboard) {
+      onContinueToDashboard();
     }
   };
 
   return (
-    <div className="space-y-6 w-full">
+    <div className="space-y-6 w-full pb-20">
       {/* Global Progress & Loading Banner */}
       <GlobalLoadingIndicator state={loadingState} />
 
-      {/* Top Header Card */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs">
+      {/* SECTION A: SELECTED AZURE ACCOUNT BANNER & SWITCH */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider block">
-                Platform Governance &bull; Multi-Cloud Topology
-              </span>
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-blue-600 text-white flex items-center justify-center font-bold text-base shrink-0 shadow-2xs">
+              Az
             </div>
-            <div className="flex items-center gap-2 mt-0.5">
-              <h1 className="text-xl font-bold text-navy-900 tracking-tight">
-                Configuration
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider block">
+                  Active Cloud Account &bull; Microsoft Azure
+                </span>
+                <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  Connected
+                </span>
+              </div>
+              <h1 className="text-lg font-bold text-navy-950 tracking-tight mt-0.5">
+                {activeConnection?.name || "Azure Production Account (sub-prod-01)"}
               </h1>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-brand-600 border border-blue-200">
-                Multi-Scope Hierarchy
-              </span>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono mt-0.5">
+                <span>Sub ID: <strong className="text-navy-900">{activeConnection?.scope_id || "f718c261-ab85-49fd-907e-99c022cc2aeb"}</strong></span>
+                <span>&bull;</span>
+                <span>Tenant: <strong className="text-navy-900">{activeConnection?.tenant_or_org_id || "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41"}</strong></span>
+                <span>&bull;</span>
+                <span className="text-emerald-700 font-sans font-semibold">Reader Role Enforced</span>
+              </div>
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Configure and select multiple Azure subscriptions, resource groups, and Databricks workspaces. Selected scopes dynamically filter all application metrics.
-            </p>
           </div>
 
-          {/* Active Scope Summary & Quick Actions */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs flex items-center gap-2.5">
-              <span className="text-[10px] uppercase font-bold text-slate-400">Current Scope:</span>
-              <span className="font-semibold text-navy-900 font-mono text-[11px]">
-                {activeScope?.display_name || "1 Subscription | 1 RG | 1 Workspace"}
-              </span>
-              <ConnectionStatusIndicator status={activeScope?.status || "connected"} size="sm" />
-            </div>
+          <div className="flex items-center gap-2 flex-wrap self-start lg:self-auto">
+            {onSwitchAccount && (
+              <button
+                type="button"
+                onClick={onSwitchAccount}
+                className="px-3.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs"
+              >
+                <Cloud className="w-3.5 h-3.5 text-blue-600" />
+                <span>Switch Account</span>
+              </button>
+            )}
 
             <button
               type="button"
-              onClick={handleDiscoverScopesLive}
+              onClick={handleRefreshDiscovery}
               disabled={loadingState.isLoading}
-              className="px-3.5 py-1.5 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs disabled:opacity-50"
+              className="px-3.5 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loadingState.isLoading ? "animate-spin" : ""}`} />
-              <span>{loadingState.isLoading ? "Discovering..." : "Discover Scopes"}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsDiagnosticsOpen(true)}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition"
-            >
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>Diagnostics</span>
+              <span>Refresh Discovery</span>
             </button>
           </div>
         </div>
 
-        {/* Notifications */}
+        {/* Global Notifications */}
         {saveSuccessMessage && (
-          <div className="mt-3 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
+          <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2 animate-in fade-in duration-200">
             <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             <span>{saveSuccessMessage}</span>
           </div>
         )}
         {errorMessage && (
-          <div className="mt-3 p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
+          <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
             <span>{errorMessage}</span>
           </div>
         )}
-
-        {/* Tab Switcher & Multi-Scope Action Strip */}
-        <div className="mt-5 border-t border-slate-100 pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab("hierarchy")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                activeTab === "hierarchy"
-                  ? "bg-navy-900 text-white shadow-2xs"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>Hierarchical Tree</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("subscriptions")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                activeTab === "subscriptions"
-                  ? "bg-navy-900 text-white shadow-2xs"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              <FolderTree className="w-3.5 h-3.5" />
-              <span>Subscriptions ({subscriptionsData.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("workspaces")}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                activeTab === "workspaces"
-                  ? "bg-navy-900 text-white shadow-2xs"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              <Server className="w-3.5 h-3.5 text-orange-500" />
-              <span>Databricks Workspaces ({allWorkspaces.length})</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSelectAll}
-              className="px-2.5 py-1 rounded-md text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition"
-            >
-              Select All
-            </button>
-            <button
-              type="button"
-              onClick={handleClearAll}
-              className="px-2.5 py-1 rounded-md text-xs font-semibold border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 transition"
-            >
-              Clear All
-            </button>
-            <button
-              type="button"
-              onClick={handleApplySelection}
-              className="px-3.5 py-1 rounded-md text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs transition flex items-center gap-1"
-            >
-              <Check className="w-3.5 h-3.5" />
-              <span>Apply Selection</span>
-            </button>
-          </div>
-        </div>
       </div>
 
-      {/* Selected Scope Summary Banner */}
-      <div className="p-3.5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
-            {selectedSubIds.length + selectedWorkspaceIds.length}
-          </div>
-          <div>
-            <span className="font-bold text-navy-900 block">
-              Active Multi-Scope Selection:
-            </span>
-            <span className="text-slate-600">
-              {selectedSubIds.length} Subscription{selectedSubIds.length !== 1 ? "s" : ""} selected &bull;{" "}
-              {selectedRgNames.length} Resource Group{selectedRgNames.length !== 1 ? "s" : ""} &bull;{" "}
-              {selectedWorkspaceIds.length} Databricks Workspace{selectedWorkspaceIds.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 self-end md:self-auto">
-          <span className="text-[11px] text-slate-500">
-            {selectedSubIds.length > 0 && selectedWorkspaceIds.length > 0
-              ? "Combined Azure + Databricks Scope"
-              : selectedWorkspaceIds.length > 0
-              ? "Databricks-Only Scope"
-              : "Azure-Only Scope"}
-          </span>
+      {/* SECTION TABS / PILLS */}
+      <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs overflow-x-auto">
+        {[
+          { id: "all" as const, label: "All Scope Sections", count: selectedSubIds.length + selectedRgNames.length + selectedWorkspaceIds.length + selectedFabricWorkspaceIds.length },
+          { id: "subscriptions" as const, label: "1. Subscriptions", count: selectedSubIds.length },
+          { id: "rgs" as const, label: "2. Resource Groups", count: selectedRgNames.length },
+          { id: "databricks" as const, label: "3. Databricks Workspaces", count: selectedWorkspaceIds.length },
+          { id: "fabric" as const, label: "4. Microsoft Fabric", count: selectedFabricWorkspaceIds.length },
+          { id: "other" as const, label: "5. Other Resources", count: selectedOtherResources.length },
+        ].map((tab) => (
           <button
+            key={tab.id}
             type="button"
-            onClick={handleApplySelection}
-            className="px-3 py-1 rounded bg-navy-900 hover:bg-navy-800 text-white font-semibold text-xs transition"
+            onClick={() => setActiveSection(tab.id)}
+            className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1.5 whitespace-nowrap ${
+              activeSection === tab.id
+                ? "bg-white text-navy-950 shadow-2xs"
+                : "text-slate-600 hover:text-navy-900"
+            }`}
           >
-            Update Analytics View &rarr;
-          </button>
-        </div>
-      </div>
-
-      {/* SEARCH & FILTER BAR */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            placeholder="Search subscriptions, resource groups, workspaces, or IDs..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-full bg-white focus:outline-brand-500"
-          />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Filter className="w-3.5 h-3.5 text-slate-400" />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 text-slate-700"
-          >
-            <option value="all">All Statuses</option>
-            <option value="enabled">Enabled Only</option>
-            <option value="connected">Connected Only</option>
-          </select>
-        </div>
-      </div>
-
-      {/* ===================================================================== */}
-      {/* TAB 1: HIERARCHICAL TREE VIEW (Parent-Child Selection UX) */}
-      {/* ===================================================================== */}
-      {activeTab === "hierarchy" && (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-            <h3 className="text-sm font-bold text-navy-900">
-              Multi-Cloud Resource Hierarchy
-            </h3>
-            <span className="text-[11px] text-slate-400">
-              Check parent to include all children, or select specific leaf workspaces
+            <span>{tab.label}</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                activeSection === tab.id ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-700"
+              }`}
+            >
+              {tab.count}
             </span>
+          </button>
+        ))}
+      </div>
+
+      {/* SECTION B: AZURE SUBSCRIPTION SELECTION */}
+      {(activeSection === "all" || activeSection === "subscriptions") && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-bold text-navy-950 flex items-center gap-2">
+                <FolderTree className="w-4 h-4 text-blue-600" />
+                <span>Azure Subscriptions Selection</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Select one or more subscriptions accessible via this account to define the baseline discovery scope.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectAllSubs}
+                className="px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 rounded-lg border border-blue-200 transition"
+              >
+                Select All
+              </button>
+              <button
+                type="button"
+                onClick={handleClearAllSubs}
+                className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 rounded-lg border border-slate-200 transition"
+              >
+                Clear All
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-3">
-            {filteredSubscriptions.map((sub) => {
-              const isSubSelected = selectedSubIds.includes(sub.id);
-              const isExpanded = expandedNodes[sub.id] ?? true;
-
+          {/* Subscriptions List */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {subscriptionsData.map((sub) => {
+              const isChecked = selectedSubIds.includes(sub.subscription_id);
               return (
                 <div
-                  key={sub.id}
-                  className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50"
+                  key={sub.subscription_id}
+                  onClick={() => handleToggleSubscription(sub.subscription_id)}
+                  className={`p-4 rounded-xl border transition cursor-pointer flex items-start gap-3 ${
+                    isChecked
+                      ? "border-blue-500 bg-blue-50/30 ring-1 ring-blue-500/20"
+                      : "border-slate-200 hover:border-slate-300 bg-white"
+                  }`}
                 >
-                  {/* Subscription Root Node */}
-                  <div className="p-3.5 bg-slate-100/70 border-b border-slate-200 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <button
-                        type="button"
-                        onClick={() => toggleNode(sub.id)}
-                        className="text-slate-500 hover:text-navy-900 p-0.5"
-                      >
-                        {isExpanded ? (
-                          <ChevronDown className="w-4 h-4" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4" />
-                        )}
-                      </button>
-
-                      <input
-                        type="checkbox"
-                        checked={isSubSelected}
-                        onChange={() => handleToggleSubscription(sub.id)}
-                        className="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 border-slate-300"
-                      />
-
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-xs text-navy-900 truncate">
-                            {sub.name}
-                          </span>
-                          <span className="text-[10px] font-mono text-slate-400">
-                            {sub.subscription_id}
-                          </span>
-                          <ConnectionStatusIndicator status={sub.status} size="sm" />
-                        </div>
-                        <span className="text-[11px] text-slate-500 block">
-                          Tenant: {sub.tenant_id} &bull; {sub.resource_groups.length} Resource Groups &bull;{" "}
-                          {sub.resource_count} Resources
-                        </span>
-                      </div>
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => {}} // handled by parent onClick
+                    className="mt-1 rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-xs text-navy-950 truncate">{sub.name}</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        {sub.status}
+                      </span>
                     </div>
-
-                    <span className="text-[11px] font-semibold text-slate-500 shrink-0">
-                      {sub.resource_count} resources
-                    </span>
+                    <div className="text-[11px] font-mono text-slate-500 mt-1 truncate">
+                      {sub.subscription_id}
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-2">
+                      <span>{sub.resource_count} Total Resources</span>
+                      <span>&bull;</span>
+                      <span>{sub.resource_groups.length} Resource Groups</span>
+                    </div>
                   </div>
-
-                  {/* Resource Groups Container */}
-                  {isExpanded && (
-                    <div className="p-3 space-y-2.5 pl-8">
-                      {sub.resource_groups.map((rg) => {
-                        const isRgSelected = selectedRgNames.includes(rg.name);
-                        const isRgExpanded = expandedNodes[rg.name] ?? true;
-
-                        return (
-                          <div
-                            key={rg.name}
-                            className={`border rounded-lg p-3 transition ${
-                              isRgSelected
-                                ? "border-brand-200 bg-brand-50/30"
-                                : "border-slate-200 bg-white"
-                            }`}
-                          >
-                            {/* Resource Group Header */}
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                {rg.workspaces.length > 0 && (
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleNode(rg.name)}
-                                    className="text-slate-400 hover:text-slate-600"
-                                  >
-                                    {isRgExpanded ? (
-                                      <ChevronDown className="w-3.5 h-3.5" />
-                                    ) : (
-                                      <ChevronRight className="w-3.5 h-3.5" />
-                                    )}
-                                  </button>
-                                )}
-
-                                <input
-                                  type="checkbox"
-                                  checked={isRgSelected}
-                                  onChange={() => handleToggleRg(rg.name, sub.id)}
-                                  className="w-3.5 h-3.5 rounded text-brand-600 focus:ring-brand-500 border-slate-300"
-                                />
-
-                                <Building2 className="w-3.5 h-3.5 text-blue-600" />
-                                <span className="font-semibold text-xs text-navy-900 font-mono">
-                                  {rg.name}
-                                </span>
-                                <span className="text-[10px] text-slate-400">({rg.region})</span>
-                              </div>
-
-                              <span className="text-[11px] text-slate-500">
-                                {rg.resource_count} resources
-                              </span>
-                            </div>
-
-                            {/* Databricks Workspaces under this RG */}
-                            {isRgExpanded && rg.workspaces.length > 0 && (
-                              <div className="mt-2.5 ml-6 pl-3 border-l border-slate-200 space-y-2">
-                                {rg.workspaces.map((ws) => {
-                                  const isWsSelected = selectedWorkspaceIds.includes(ws.workspace_id);
-
-                                  return (
-                                    <div
-                                      key={ws.workspace_id}
-                                      className={`p-2.5 rounded-lg border flex items-center justify-between gap-3 transition ${
-                                        isWsSelected
-                                          ? "border-orange-300 bg-orange-50/40 ring-1 ring-orange-200"
-                                          : "border-slate-200 bg-slate-50/50 hover:bg-slate-100/50"
-                                      }`}
-                                    >
-                                      <div className="flex items-center gap-2.5 min-w-0">
-                                        <input
-                                          type="checkbox"
-                                          checked={isWsSelected}
-                                          onChange={() =>
-                                            handleToggleWorkspace(ws.workspace_id, rg.name, sub.id)
-                                          }
-                                          className="w-3.5 h-3.5 rounded text-orange-600 focus:ring-orange-500 border-slate-300"
-                                        />
-                                        <Server className="w-4 h-4 text-orange-500 shrink-0" />
-                                        <div className="min-w-0">
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="font-bold text-xs text-navy-900">
-                                              {ws.name}
-                                            </span>
-                                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-orange-100 text-orange-800 font-semibold">
-                                              ID: {ws.workspace_id}
-                                            </span>
-                                          </div>
-                                          <span className="text-[10px] text-slate-400 font-mono block truncate">
-                                            {ws.workspace_url}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      <div className="flex items-center gap-2 shrink-0">
-                                        <ConnectionStatusIndicator status={ws.status} size="sm" />
-                                        {onNavigateToDatabricksModule && (
-                                          <button
-                                            type="button"
-                                            onClick={() => onNavigateToDatabricksModule("overview")}
-                                            className="text-xs text-brand-600 hover:underline font-semibold flex items-center gap-1"
-                                          >
-                                            <span>Explore</span>
-                                            <ExternalLink className="w-3 h-3" />
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -779,182 +688,414 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
         </div>
       )}
 
-      {/* ===================================================================== */}
-      {/* TAB 2: SUBSCRIPTIONS DEDICATED SELECTOR */}
-      {/* ===================================================================== */}
-      {activeTab === "subscriptions" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredSubscriptions.map((sub) => {
-            const isSubSelected = selectedSubIds.includes(sub.id);
+      {/* SECTION C: RESOURCE GROUP SELECTION (FILTERED STRICTLY BY SELECTED SUBSCRIPTIONS) */}
+      {(activeSection === "all" || activeSection === "rgs") && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-bold text-navy-950 flex items-center gap-2">
+                <Layers className="w-4 h-4 text-indigo-600" />
+                <span>Resource Group Selection</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Displays only resource groups belonging to your selected subscriptions ({selectedSubIds.length} subscriptions selected).
+              </p>
+            </div>
 
-            return (
-              <div
-                key={sub.id}
-                className={`p-5 rounded-xl border transition space-y-3 ${
-                  isSubSelected
-                    ? "border-brand-600 bg-brand-50/30 ring-1 ring-brand-500 shadow-2xs"
-                    : "border-slate-200 bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      checked={isSubSelected}
-                      onChange={() => handleToggleSubscription(sub.id)}
-                      className="w-4 h-4 rounded text-brand-600 focus:ring-brand-500 border-slate-300"
-                    />
-                    <div>
-                      <h4 className="font-bold text-sm text-navy-900">{sub.name}</h4>
-                      <span className="font-mono text-[10px] text-slate-400 block">{sub.subscription_id}</span>
-                    </div>
-                  </div>
-                  <ConnectionStatusIndicator status={sub.status} size="sm" />
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/60">
-                    <span className="text-[10px] text-slate-400 block uppercase font-bold">Resource Groups</span>
-                    <span className="font-bold text-navy-900 text-sm mt-0.5 block">{sub.resource_groups.length}</span>
-                  </div>
-                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/60">
-                    <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Resources</span>
-                    <span className="font-bold text-navy-900 text-sm mt-0.5 block">{sub.resource_count}</span>
-                  </div>
-                </div>
-
-                <div className="text-[11px] text-slate-500 pt-1">
-                  Tenant: <span className="font-mono text-slate-700">{sub.tenant_id}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ===================================================================== */}
-      {/* TAB 3: DATABRICKS WORKSPACES DEDICATED SELECTOR */}
-      {/* ===================================================================== */}
-      {activeTab === "workspaces" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {allWorkspaces.map((ws) => {
-            const isWsSelected = selectedWorkspaceIds.includes(ws.workspace_id);
-
-            return (
-              <div
-                key={ws.workspace_id}
-                className={`p-5 rounded-xl border transition space-y-3 ${
-                  isWsSelected
-                    ? "border-orange-500 bg-orange-50/30 ring-1 ring-orange-400 shadow-2xs"
-                    : "border-slate-200 bg-white hover:border-slate-300"
-                }`}
-              >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <input
-                      type="checkbox"
-                      checked={isWsSelected}
-                      onChange={() => handleToggleWorkspace(ws.workspace_id, ws.resource_group, ws.subscription_id)}
-                      className="w-4 h-4 rounded text-orange-600 focus:ring-orange-500 border-slate-300"
-                    />
-                    <div>
-                      <h4 className="font-bold text-sm text-navy-900">{ws.name}</h4>
-                      <span className="font-mono text-[10px] text-slate-400 block">{ws.workspace_id}</span>
-                    </div>
-                  </div>
-                  <ConnectionStatusIndicator status={ws.status} size="sm" />
-                </div>
-
-                <div className="text-xs space-y-1.5 p-3 rounded-lg bg-slate-50 border border-slate-200/60 font-mono text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Resource Group:</span>
-                    <span className="font-semibold text-navy-900">{ws.resource_group}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Subscription:</span>
-                    <span className="font-semibold text-navy-900">{ws.subscription_id}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Pricing Tier:</span>
-                    <span className="font-semibold text-navy-900">{ws.pricing_tier}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Region:</span>
-                    <span className="font-semibold text-navy-900">{ws.region}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-[10px] text-slate-400 font-mono truncate max-w-[220px]">
-                    {ws.workspace_url}
-                  </span>
-                  {onNavigateToDatabricksModule && (
-                    <button
-                      type="button"
-                      onClick={() => onNavigateToDatabricksModule("overview")}
-                      className="px-2.5 py-1 rounded bg-orange-600 text-white font-semibold text-xs hover:bg-orange-700 transition"
-                    >
-                      Open Workspace &rarr;
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Diagnostics Modal */}
-      {isDiagnosticsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl border border-slate-200 max-w-lg w-full p-5 shadow-2xl space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                <h3 className="font-bold text-sm text-navy-900">
-                  Read-Only Permission &amp; Scope Diagnostics
-                </h3>
-              </div>
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setIsDiagnosticsOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                onClick={handleSelectAllRgs}
+                disabled={availableResourceGroups.length === 0}
+                className="px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 rounded-lg border border-blue-200 transition disabled:opacity-40"
               >
-                <XCircle className="w-4 h-4" />
+                Select All
+              </button>
+              <button
+                type="button"
+                onClick={handleClearAllRgs}
+                disabled={availableResourceGroups.length === 0}
+                className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 rounded-lg border border-slate-200 transition disabled:opacity-40"
+              >
+                Clear All
               </button>
             </div>
+          </div>
 
-            <div className="space-y-2 text-xs">
-              <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-1">
-                <span className="font-bold block">100% Read-Only Security Boundary</span>
-                <p className="text-[11px] leading-relaxed">
-                  The application executes strictly read-only operations. Service Principal and Azure CLI credentials are verified with <span className="font-semibold font-mono">Reader</span> and <span className="font-semibold font-mono">Cost Management Reader</span> roles.
-                </p>
-              </div>
+          {availableResourceGroups.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500 mx-auto" />
+              <p className="font-semibold text-slate-700">No Resource Groups Available</p>
+              <p>Select at least one subscription above to load and filter its resource groups.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {availableResourceGroups.map((rg) => {
+                const isChecked = selectedRgNames.includes(rg.name);
+                return (
+                  <div
+                    key={rg.name}
+                    onClick={() => handleToggleRg(rg.name)}
+                    className={`p-3.5 rounded-xl border transition cursor-pointer flex items-start gap-2.5 ${
+                      isChecked
+                        ? "border-indigo-500 bg-indigo-50/20 ring-1 ring-indigo-500/20"
+                        : "border-slate-200 hover:border-slate-300 bg-white"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => {}}
+                      className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                    />
+                    <div className="min-w-0 flex-1 text-xs">
+                      <span className="font-bold text-navy-950 block truncate font-mono text-[11px]">{rg.name}</span>
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-1">
+                        <span className="font-mono bg-slate-100 px-1 py-0.2 rounded">{rg.region}</span>
+                        <span>&bull;</span>
+                        <span>{rg.resource_count} resources</span>
+                      </div>
+                      {rg.workspaces.length > 0 && (
+                        <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200">
+                          <Database className="w-3 h-3 text-orange-600" />
+                          <span>Contains Databricks</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1.5 font-mono text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">ARM Endpoint:</span>
-                  <span className="text-navy-900 font-semibold">https://management.azure.com</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Zero Mutation:</span>
-                  <span className="text-emerald-700 font-semibold">ENFORCED (No write permissions)</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Active Warehouses:</span>
-                  <span className="text-amber-700 font-semibold">STOPPED (Compute resumed only on approval)</span>
-                </div>
+      {/* SECTION D: AZURE DATABRICKS WORKSPACES */}
+      {(activeSection === "all" || activeSection === "databricks") && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-navy-950 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-orange-600" />
+                  <span>Azure Databricks Workspaces</span>
+                </h2>
+                <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700 border border-orange-200">
+                  Ecosystem Service
+                </span>
               </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Workspaces discovered under your selected Azure subscriptions. Note: Telemetry access requires independent workspace-level authentication.
+              </p>
             </div>
 
-            <div className="pt-2 flex justify-end">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setIsDiagnosticsOpen(false)}
-                className="px-4 py-1.5 rounded-lg bg-navy-900 text-white font-semibold text-xs hover:bg-navy-800 transition"
+                onClick={handleSelectAllWorkspaces}
+                disabled={availableDatabricksWorkspaces.length === 0}
+                className="px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 rounded-lg border border-blue-200 transition disabled:opacity-40"
               >
-                Close Diagnostics
+                Select All
+              </button>
+              <button
+                type="button"
+                onClick={handleClearAllWorkspaces}
+                disabled={availableDatabricksWorkspaces.length === 0}
+                className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 rounded-lg border border-slate-200 transition disabled:opacity-40"
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
+
+          {availableDatabricksWorkspaces.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200 space-y-2">
+              <Database className="w-5 h-5 text-slate-400 mx-auto" />
+              <p className="font-semibold text-slate-700">No Databricks Workspaces in Selected Subscriptions</p>
+              <p>Select subscriptions containing Databricks workspaces to enable Lakehouse analytics.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {availableDatabricksWorkspaces.map((ws) => {
+                const isChecked = selectedWorkspaceIds.includes(ws.workspace_id);
+                return (
+                  <div
+                    key={ws.workspace_id}
+                    onClick={() => handleToggleWorkspace(ws.workspace_id)}
+                    className={`p-4 rounded-xl border transition cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                      isChecked
+                        ? "border-orange-500 bg-orange-50/20 ring-1 ring-orange-500/20"
+                        : "border-slate-200 hover:border-slate-300 bg-white"
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        className="mt-1 rounded text-orange-600 focus:ring-orange-500 w-4 h-4"
+                      />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-navy-950">{ws.name}</span>
+                          <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
+                            ID: {ws.workspace_id}
+                          </span>
+                          <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            {ws.pricing_tier}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap items-center gap-2">
+                          <span>RG: <code className="font-mono text-slate-700">{ws.resource_group}</code></span>
+                          <span>&bull;</span>
+                          <span>Region: <code className="font-mono text-slate-700">{ws.region}</code></span>
+                          <span>&bull;</span>
+                          <a
+                            href={ws.workspace_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-brand-600 hover:underline flex items-center gap-0.5"
+                          >
+                            <span>Open Console</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-start md:self-auto">
+                      <span className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        System Tables Live
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION E: MICROSOFT FABRIC WORKSPACES & CAPACITIES */}
+      {(activeSection === "all" || activeSection === "fabric") && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-navy-950 flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-teal-600" />
+                  <span>Microsoft Fabric Workspaces &amp; Capacities</span>
+                </h2>
+                <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                  Azure Ecosystem Service
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Fabric Lakehouse and Capacity telemetry configured as an integrated service under your Azure tenant.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSelectAllFabric}
+                className="px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 rounded-lg border border-blue-200 transition"
+              >
+                Select All
+              </button>
+              <button
+                type="button"
+                onClick={handleClearAllFabric}
+                className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 rounded-lg border border-slate-200 transition"
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
+
+          {/* Capacities Pill */}
+          <div className="p-3 bg-teal-50/60 rounded-xl border border-teal-200/80 flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-teal-600 shrink-0" />
+              <span>
+                <strong>Fabric Capacity:</strong> <code className="font-mono font-bold text-teal-900">{fabricCapacitiesData[0].name}</code> ({fabricCapacitiesData[0].sku})
+              </span>
+            </div>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-teal-800 border border-teal-300">
+              Provisioned &bull; East US
+            </span>
+          </div>
+
+          {/* Workspaces List */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {fabricWorkspacesData.map((fws) => {
+              const isChecked = selectedFabricWorkspaceIds.includes(fws.id);
+              return (
+                <div
+                  key={fws.id}
+                  onClick={() => handleToggleFabricWorkspace(fws.id)}
+                  className={`p-4 rounded-xl border transition cursor-pointer flex items-start gap-3 ${
+                    isChecked
+                      ? "border-teal-500 bg-teal-50/20 ring-1 ring-teal-500/20"
+                      : "border-slate-200 hover:border-slate-300 bg-white"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => {}}
+                    className="mt-1 rounded text-teal-600 focus:ring-teal-500 w-4 h-4"
+                  />
+                  <div className="min-w-0 flex-1 text-xs">
+                    <span className="font-bold text-navy-950 block truncate">{fws.name}</span>
+                    <span className="font-mono text-[10px] text-slate-400 block mt-0.5">ID: {fws.id}</span>
+                    <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-2">
+                      <span>{fws.lakehouse_count} Lakehouse Tables</span>
+                      <span>&bull;</span>
+                      <span className="text-teal-700 font-semibold">{fws.capacity_name}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION F: OTHER SUPPORTED AZURE RESOURCES */}
+      {(activeSection === "all" || activeSection === "other") && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-bold text-navy-950 flex items-center gap-2">
+                <Server className="w-4 h-4 text-slate-700" />
+                <span>Other Supported Azure Resources</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Virtual machines, storage accounts, and networking infrastructure discovered in selected resource groups.
+              </p>
+            </div>
+          </div>
+
+          {availableOtherResources.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+              No additional standalone resources in currently selected resource groups.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {availableOtherResources.map((res) => {
+                const isChecked = selectedOtherResources.includes(res.id);
+                return (
+                  <div
+                    key={res.id}
+                    onClick={() => handleToggleOtherResource(res.id)}
+                    className={`p-3 rounded-xl border transition cursor-pointer flex items-center gap-2.5 text-xs ${
+                      isChecked
+                        ? "border-slate-500 bg-slate-50 ring-1 ring-slate-400/20"
+                        : "border-slate-200 hover:border-slate-300 bg-white"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => {}}
+                      className="rounded text-slate-700 focus:ring-slate-500 w-4 h-4"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <span className="font-semibold text-navy-900 block truncate">{res.name}</span>
+                      <span className="text-[10px] text-slate-400 block truncate">{res.type.split("/")[1]}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION 6: DYNAMIC CONFIGURATION SUMMARY BAR (STICKY BOTTOM ACTION STRIP) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 py-3.5 px-4 sm:px-8 shadow-xl">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
+          {/* Dynamic Selection Counts */}
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <span className="font-bold text-navy-950 uppercase tracking-wider text-[11px]">
+              Selection Scope:
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-blue-50 text-blue-800 border border-blue-200 font-semibold">
+              {selectedSubIds.length} Subscriptions
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 font-semibold">
+              {selectedRgNames.length} Resource Groups
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-orange-50 text-orange-800 border border-orange-200 font-semibold">
+              {selectedWorkspaceIds.length} Databricks
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-teal-50 text-teal-800 border border-teal-200 font-semibold">
+              {selectedFabricWorkspaceIds.length} Fabric
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200 font-medium">
+              {selectedOtherResources.length} Other Resources
+            </span>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsClearConfirmOpen(true)}
+              className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold transition"
+            >
+              Clear Selection
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveConfiguration}
+              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition shadow-2xs"
+            >
+              Save Configuration
+            </button>
+            <button
+              type="button"
+              onClick={handleProceedToDashboard}
+              className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-md flex items-center gap-1.5"
+            >
+              <span>Continue to Dashboard</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* MODAL: CLEAR CONFIRMATION */}
+      {isClearConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 pb-2 border-b border-slate-100">
+              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+              <h3 className="font-bold text-sm text-navy-950">Clear Resource Selection?</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              This will unselect all subscriptions, resource groups, and workspace integrations. You will need to select at least one resource before running FinOps analytics.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsClearConfirmOpen(false)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleClearAllSubs();
+                  setIsClearConfirmOpen(false);
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-700"
+              >
+                Clear All
               </button>
             </div>
           </div>

@@ -31,8 +31,8 @@ export function SectionMultiCloudCompare({
   currentAssumptions,
   currentBufferPct,
 }: SectionMultiCloudCompareProps) {
-  const [azureRegion, setAzureRegion] = useState<string>("eastus");
-  const [gcpRegion, setGcpRegion] = useState<string>("us-central1");
+  const [azureRegion] = useState<string>("eastus");
+  const [gcpRegion] = useState<string>("us-central1");
   const [isComparing, setIsComparing] = useState<boolean>(false);
   const [comparison, setComparison] = useState<MultiCloudComparisonResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -134,34 +134,20 @@ export function SectionMultiCloudCompare({
             <label className="block text-[11px] font-medium text-slate-600 uppercase mb-1">
               Azure Target Region
             </label>
-            <select
-              value={azureRegion}
-              onChange={(e) => setAzureRegion(e.target.value)}
-              disabled={isComparing}
-              className="w-full text-xs rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-slate-800"
-            >
-              <option value="eastus">East US (eastus)</option>
-              <option value="westus2">West US 2 (westus2)</option>
-              <option value="westeurope">West Europe (westeurope)</option>
-              <option value="centralindia">Central India (centralindia)</option>
-            </select>
+            <div className="w-full text-xs rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-slate-700 flex items-center justify-between">
+              <span>East US (eastus)</span>
+              <span className="text-[10px] text-slate-400 font-sans">Primary Baseline</span>
+            </div>
           </div>
 
           <div>
             <label className="block text-[11px] font-medium text-slate-600 uppercase mb-1">
               GCP Target Region
             </label>
-            <select
-              value={gcpRegion}
-              onChange={(e) => setGcpRegion(e.target.value)}
-              disabled={isComparing}
-              className="w-full text-xs rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-slate-800"
-            >
-              <option value="us-central1">Iowa (us-central1)</option>
-              <option value="us-east1">South Carolina (us-east1)</option>
-              <option value="europe-west1">Belgium (europe-west1)</option>
-              <option value="asia-south1">Mumbai (asia-south1)</option>
-            </select>
+            <div className="w-full text-xs rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-slate-700 flex items-center justify-between">
+              <span>Iowa (us-central1)</span>
+              <span className="text-[10px] text-slate-400 font-sans">Cross-Cloud Baseline</span>
+            </div>
           </div>
 
           <div>

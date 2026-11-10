@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { FinOpsAiAnalysis, FinOpsDecisionItem } from "@/types";
 import { getFinOpsAiAnalysis } from "@/lib/api";
+import { formatDeterministicTime } from "@/lib/dateTimeFormat";
 
 interface FinOpsAiAnalysisSectionProps {
   moduleId: string;
@@ -389,7 +390,7 @@ export const FinOpsAiAnalysisSection: React.FC<FinOpsAiAnalysisSectionProps> = (
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               Zero-execution guardrails enforced: human authorization required before changes
             </span>
-            <span>Refreshed: {new Date(analysis.analysis_timestamp).toLocaleTimeString()}</span>
+            <span>Refreshed: {formatDeterministicTime(analysis.analysis_timestamp)}</span>
           </div>
         </div>
       )}

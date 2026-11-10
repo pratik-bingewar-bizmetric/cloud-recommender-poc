@@ -6,6 +6,7 @@ import {
   MonitoringOverviewResponse,
   ResourceHealthRecord,
 } from "@/types";
+import { formatDeterministicTime } from "@/lib/dateTimeFormat";
 import {
   X,
   Activity,
@@ -244,10 +245,7 @@ export const TelemetryCoverageDrawer: React.FC<TelemetryCoverageDrawerProps> = (
                   <Clock className="w-3 h-3" />
                   <span>
                     Last Polled:{" "}
-                    {new Date(overview.query_timestamp).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {formatDeterministicTime(overview.query_timestamp)}
                   </span>
                 </span>
               )}

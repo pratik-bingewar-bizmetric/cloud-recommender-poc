@@ -11,8 +11,8 @@ import {
   SystemTablesExplorerData,
 } from "@/types";
 import { DatabricksModuleId, CloudScope, ChildResourceScope } from "@/types/navigation";
-import { getDatabricksModules } from "@/lib/navigationRegistry";
 import { getFinOpsSystemTables, getFinOpsQueryHistory } from "@/lib/api";
+import { formatDeterministicTime, formatDeterministicDateTime } from "@/lib/dateTimeFormat";
 import { ResourceDetailDrawer } from "@/components/shared/ResourceDetailDrawer";
 import { QueryDurationHistogram } from "@/components/shared/QueryDurationHistogram";
 import {
@@ -200,8 +200,28 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   const [isQueryModalOpen, setIsQueryModalOpen] = useState<boolean>(false);
   const [isCopiedSql, setIsCopiedSql] = useState<boolean>(false);
 
+  // Module-specific search and filter states
+  const [clusterSearch, setClusterSearch] = useState<string>("");
+  const [clusterStatusFilter, setClusterStatusFilter] = useState<string>("all");
+
+  const [whSearch, setWhSearch] = useState<string>("");
+  const [whStateFilter, setWhStateFilter] = useState<string>("all");
+
+  const [jobSearch, setJobSearch] = useState<string>("");
+  const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
+
+  const [pipelineSearch, setPipelineSearch] = useState<string>("");
+  const [pipelineStateFilter, setPipelineStateFilter] = useState<string>("all");
+
+  const [servingStatusFilter, setServingStatusFilter] = useState<string>("all");
+
+  const [appSearch, setAppSearch] = useState<string>("");
+  const [appStatusFilter, setAppStatusFilter] = useState<string>("all");
+
   // Billing Module State
   const [billingPeriod, setBillingPeriod] = useState<string>("mtd");
+  const [customBillingStartDate, setCustomBillingStartDate] = useState<string>("2026-10-01");
+  const [customBillingEndDate, setCustomBillingEndDate] = useState<string>("2026-11-08");
   const [billingChartMetric, setBillingChartMetric] = useState<"dbu" | "spend">("dbu");
 
   // Unity Catalog Explorer State
@@ -441,7 +461,59 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       ? resources.filter((r) => r.resource_type === "app")
       : defaultApps;
 
-  const modules = getDatabricksModules();
+  const filteredClusters = clusters.filter((c) => {
+    if (clusterStatusFilter !== "all" && (c.status || "TERMINATED") !== clusterStatusFilter) return false;
+    if (clusterSearch) {
+      const q = clusterSearch.toLowerCase();
+      if (!c.name.toLowerCase().includes(q) && !c.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredWarehouses = warehouses.filter((w) => {
+    if (whStateFilter !== "all" && (w.status || "STOPPED") !== whStateFilter) return false;
+    if (whSearch) {
+      const q = whSearch.toLowerCase();
+      if (!w.name.toLowerCase().includes(q) && !w.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredJobs = jobs.filter((j) => {
+    if (jobStatusFilter !== "all" && (j.status || "SUCCESS") !== jobStatusFilter) return false;
+    if (jobSearch) {
+      const q = jobSearch.toLowerCase();
+      if (!j.name.toLowerCase().includes(q) && !j.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredPipelines = pipelines.filter((p) => {
+    if (pipelineStateFilter !== "all" && (p.status || "ACTIVE") !== pipelineStateFilter) return false;
+    if (pipelineSearch) {
+      const q = pipelineSearch.toLowerCase();
+      if (!p.name.toLowerCase().includes(q) && !p.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredServingEndpoints = servingEndpoints.filter((s) => {
+    if (servingStatusFilter !== "all" && (s.status || "READY") !== servingStatusFilter) return false;
+    if (filterQuery) {
+      const q = filterQuery.toLowerCase();
+      if (!s.name.toLowerCase().includes(q) && !s.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredApps = apps.filter((a) => {
+    if (appStatusFilter !== "all" && (a.status || "DEPLOYED") !== appStatusFilter) return false;
+    if (appSearch) {
+      const q = appSearch.toLowerCase();
+      if (!a.name.toLowerCase().includes(q) && !a.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 
   const handleOpenResourceDrawer = (resource: DiscoveredResourceItem) => {
     setDrawerResource(resource);
@@ -751,43 +823,6 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
             </button>
           </div>
         </div>
-
-        {/* 14-Module Navigation Strip */}
-        <div className="mt-5 border-t border-slate-100 pt-3 flex items-center gap-1 overflow-x-auto pb-1 scrollbar-thin">
-          {modules.map((m) => {
-            const isActive = currentTab === m.id;
-            return (
-              <button
-                key={m.id}
-                onClick={() => handleTabChange(m.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition flex items-center gap-1.5 ${
-                  isActive
-                    ? "bg-navy-900 text-white font-semibold shadow-2xs"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-navy-900"
-                }`}
-              >
-                <span>{m.shortTitle}</span>
-                {m.badge && (
-                  <span
-                    className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
-                      isActive
-                        ? "bg-white/20 text-white"
-                        : m.badgeColor === "emerald"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : m.badgeColor === "purple"
-                        ? "bg-purple-50 text-purple-700"
-                        : m.badgeColor === "slate"
-                        ? "bg-slate-100 text-slate-700"
-                        : "bg-blue-50 text-blue-700"
-                    }`}
-                  >
-                    {m.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       {/* MODULE 1: WORKSPACE OVERVIEW */}
@@ -901,7 +936,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                   <dt className="text-slate-500">Last Discovered At</dt>
                   <dd className="font-semibold text-navy-900">
                     {discovery?.discovered_at
-                      ? new Date(discovery.discovered_at).toLocaleString()
+                      ? formatDeterministicDateTime(discovery.discovered_at)
                       : "Recently"}
                   </dd>
                 </div>
@@ -918,15 +953,39 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 2: COMPUTE CLUSTERS */}
       {currentTab === "clusters" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Discovered Compute Clusters</h3>
               <p className="text-xs text-slate-500">
                 Click any cluster to inspect configuration, utilization, and cost breakdown.
               </p>
             </div>
-            <div className="text-xs text-slate-500 font-medium">
-              Total Clusters: <span className="font-bold text-navy-900">{clusters.length}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search clusters..."
+                  value={clusterSearch}
+                  onChange={(e) => setClusterSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search clusters"
+                />
+              </div>
+              <select
+                value={clusterStatusFilter}
+                onChange={(e) => setClusterStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Cluster status filter"
+              >
+                <option value="all">All States</option>
+                <option value="RUNNING">RUNNING</option>
+                <option value="TERMINATED">TERMINATED</option>
+                <option value="PENDING">PENDING</option>
+              </select>
+              <span className="text-xs text-slate-500 font-medium">
+                Total: <span className="font-bold text-navy-900">{filteredClusters.length}</span>
+              </span>
             </div>
           </div>
 
@@ -944,7 +1003,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {clusters.map((c) => (
+                {filteredClusters.map((c) => (
                   <tr
                     key={c.id}
                     onClick={() => handleOpenResourceDrawer(c)}
@@ -1010,16 +1069,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-bold text-navy-900">SQL Warehouses Inventory</h3>
                 <p className="text-xs text-slate-500">
                   Click warehouse row to inspect sizing, historical queries, and zero-execution status.
                 </p>
               </div>
-              <span className="text-xs text-slate-500 font-medium">
-                Discovered: {warehouses.length}
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search warehouses..."
+                    value={whSearch}
+                    onChange={(e) => setWhSearch(e.target.value)}
+                    className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                    aria-label="Search warehouses"
+                  />
+                </div>
+                <select
+                  value={whStateFilter}
+                  onChange={(e) => setWhStateFilter(e.target.value)}
+                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                  aria-label="Warehouse state filter"
+                >
+                  <option value="all">All States</option>
+                  <option value="STOPPED">STOPPED</option>
+                  <option value="RUNNING">RUNNING</option>
+                  <option value="STARTING">STARTING</option>
+                </select>
+                <span className="text-xs text-slate-500 font-medium">
+                  Discovered: <span className="font-bold text-navy-900">{filteredWarehouses.length}</span>
+                </span>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -1036,7 +1119,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {warehouses.map((w) => (
+                  {filteredWarehouses.map((w) => (
                     <tr
                       key={w.id}
                       onClick={() => handleOpenResourceDrawer(w)}
@@ -1088,14 +1171,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 4: JOBS & WORKFLOWS */}
       {currentTab === "jobs" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Multi-Task Jobs &amp; Workflows</h3>
               <p className="text-xs text-slate-500">
                 Click any workflow to inspect multi-task DAGs and run executions.
               </p>
             </div>
-            <span className="text-xs text-slate-500 font-medium">Discovered: {jobs.length}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search jobs..."
+                  value={jobSearch}
+                  onChange={(e) => setJobSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search jobs"
+                />
+              </div>
+              <select
+                value={jobStatusFilter}
+                onChange={(e) => setJobStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Job status filter"
+              >
+                <option value="all">All Statuses</option>
+                <option value="SUCCESS">SUCCESS</option>
+                <option value="FAILED">FAILED</option>
+                <option value="RUNNING">RUNNING</option>
+              </select>
+              <span className="text-xs text-slate-500 font-medium">
+                Discovered: <span className="font-bold text-navy-900">{filteredJobs.length}</span>
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -1111,7 +1220,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {jobs.map((j) => (
+                {filteredJobs.map((j) => (
                   <tr
                     key={j.id}
                     onClick={() => handleOpenResourceDrawer(j)}
@@ -1157,14 +1266,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 5: PIPELINES (Delta Live Tables) */}
       {currentTab === "pipelines" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Delta Live Tables (DLT) Pipelines</h3>
               <p className="text-xs text-slate-500">
                 Click any pipeline to inspect data quality expectations, continuous sync, and storage.
               </p>
             </div>
-            <span className="text-xs text-slate-500 font-medium">Discovered: {pipelines.length}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search pipelines..."
+                  value={pipelineSearch}
+                  onChange={(e) => setPipelineSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search pipelines"
+                />
+              </div>
+              <select
+                value={pipelineStateFilter}
+                onChange={(e) => setPipelineStateFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Pipeline state filter"
+              >
+                <option value="all">All States</option>
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="IDLE">IDLE</option>
+                <option value="FAILED">FAILED</option>
+              </select>
+              <span className="text-xs text-slate-500 font-medium">
+                Discovered: <span className="font-bold text-navy-900">{filteredPipelines.length}</span>
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -1180,7 +1315,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {pipelines.map((p) => (
+                {filteredPipelines.map((p) => (
                   <tr
                     key={p.id}
                     onClick={() => handleOpenResourceDrawer(p)}
@@ -1240,15 +1375,29 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 Foundation models, fine-tuned LLMs, and embeddings. Click any endpoint to inspect token economics.
               </p>
             </div>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-              <input
-                type="text"
-                placeholder="Filter models..."
-                value={filterQuery}
-                onChange={(e) => setFilterQuery(e.target.value)}
-                className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-full sm:w-56 focus:outline-brand-500"
-              />
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Filter models..."
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-full sm:w-44 focus:outline-brand-500"
+                  aria-label="Filter models"
+                />
+              </div>
+              <select
+                value={servingStatusFilter}
+                onChange={(e) => setServingStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Model serving status filter"
+              >
+                <option value="all">All Statuses</option>
+                <option value="READY">READY</option>
+                <option value="UPDATING">UPDATING</option>
+                <option value="FAILED">FAILED</option>
+              </select>
             </div>
           </div>
 
@@ -1265,11 +1414,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {servingEndpoints
-                  .filter((m) =>
-                    filterQuery ? m.name.toLowerCase().includes(filterQuery.toLowerCase()) : true
-                  )
-                  .map((m, idx) => (
+                {filteredServingEndpoints.map((m, idx) => (
                     <tr
                       key={m.id || idx}
                       onClick={() => handleOpenResourceDrawer(m)}
@@ -1526,16 +1671,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 8: DATABRICKS APPS */}
       {currentTab === "apps" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Databricks Apps</h3>
               <p className="text-xs text-slate-500">
                 Discovered native Databricks compute applications and serverless runtime state.
               </p>
             </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-              {apps.length} Discovered Apps
-            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search apps..."
+                  value={appSearch}
+                  onChange={(e) => setAppSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search apps"
+                />
+              </div>
+              <select
+                value={appStatusFilter}
+                onChange={(e) => setAppStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="App status filter"
+              >
+                <option value="all">All Statuses</option>
+                <option value="DEPLOYED">DEPLOYED</option>
+                <option value="STOPPED">STOPPED</option>
+                <option value="CRASHED">CRASHED</option>
+              </select>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                {filteredApps.length} Apps
+              </span>
+            </div>
           </div>
 
           {/* Unattributed Cost Callout */}
@@ -1554,7 +1723,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {apps.map((app, idx) => (
+            {filteredApps.map((app, idx) => (
               <div
                 key={idx}
                 onClick={() => handleOpenResourceDrawer(app)}
@@ -1889,7 +2058,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                           {q.query_id.slice(0, 12)}...
                         </td>
                         <td className="py-2.5 px-3 text-slate-500 text-[11px]">
-                          {new Date(q.start_time).toLocaleTimeString()}
+                          {formatDeterministicTime(q.start_time)}
                         </td>
                         <td className="py-2.5 px-3 text-slate-700 font-semibold">{q.duration_formatted}</td>
                         <td className="py-2.5 px-3">
@@ -2054,11 +2223,38 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 value={billingPeriod}
                 onChange={(e) => setBillingPeriod(e.target.value)}
                 className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-2xs"
+                aria-label="Billing period selection"
               >
                 <option value="mtd">Period: Month-to-Date (MTD)</option>
+                <option value="7d">Period: Last 7 Days</option>
+                <option value="14d">Period: Last 14 Days</option>
                 <option value="30d">Period: Last 30 Days</option>
+                <option value="90d">Period: Last 90 Days</option>
+                <option value="last_month">Period: Last Month</option>
                 <option value="quarter">Period: Current Quarter</option>
+                <option value="ytd">Period: Year to Date (YTD)</option>
+                <option value="custom">Period: Custom Range</option>
               </select>
+
+              {billingPeriod === "custom" && (
+                <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-2 py-0.5 rounded-lg text-xs shadow-2xs">
+                  <input
+                    type="date"
+                    value={customBillingStartDate}
+                    onChange={(e) => setCustomBillingStartDate(e.target.value)}
+                    className="border-0 p-0 text-xs text-slate-700 focus:outline-none"
+                    aria-label="Billing start date"
+                  />
+                  <span className="text-slate-400">→</span>
+                  <input
+                    type="date"
+                    value={customBillingEndDate}
+                    onChange={(e) => setCustomBillingEndDate(e.target.value)}
+                    className="border-0 p-0 text-xs text-slate-700 focus:outline-none"
+                    aria-label="Billing end date"
+                  />
+                </div>
+              )}
 
               <span className="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md text-xs font-semibold border border-slate-200">
                 Currency: USD ($)

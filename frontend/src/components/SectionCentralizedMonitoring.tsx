@@ -29,6 +29,7 @@ import { TelemetryCoverageDrawer } from "@/components/TelemetryCoverageDrawer";
 import { FinancialKpiDrawer } from "@/components/FinancialKpiDrawer";
 import { buildCanonicalFinancialSummary } from "@/lib/financials";
 import { FinancialKpiType } from "@/types/financials";
+import { formatDeterministicTime, formatDeterministicDateTime } from "@/lib/dateTimeFormat";
 import {
   Activity,
   AlertTriangle,
@@ -185,6 +186,7 @@ export function SectionCentralizedMonitoring({
   initialConnection,
   activeTab,
   onTabChange,
+  onSwitchConnection,
 }: SectionCentralizedMonitoringProps) {
   // Provider and Scope Selection
   const [provider, setProvider] = useState<CloudProvider>(
@@ -264,18 +266,6 @@ export function SectionCentralizedMonitoring({
       url.searchParams.set("tab", newTab);
       window.history.replaceState({}, "", url.toString());
     }
-  };
-
-  // Safe Provider Switcher: Clears scope to prevent Azure UUID leakage into GCP
-  const handleSwitchProvider = (newProvider: CloudProvider) => {
-    if (newProvider === provider) return;
-    setProvider(newProvider);
-    setSelectedScopeId("");
-    setSelectedScopeName("");
-    setSelectedGroupFilter("");
-    setOverview(null);
-    setAnalysisData(null);
-    setErrorMsg(null);
   };
 
   // Sync with initialConnection when changed from outside
@@ -639,7 +629,7 @@ export function SectionCentralizedMonitoring({
                 stroke={strokeColor}
                 strokeWidth="2"
               >
-                <title>{`${new Date(p.timestamp).toLocaleTimeString()}: ${
+                <title>{`${formatDeterministicTime(p.timestamp)}: ${
                   p.value
                 }${series.unit === "Percent" ? "%" : ""}`}</title>
               </circle>
@@ -753,30 +743,22 @@ export function SectionCentralizedMonitoring({
 
           {/* Provider & Scope Switchers */}
           <div className="flex flex-wrap items-center gap-2.5">
-            {/* Provider Switcher */}
-            <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200/80">
-              <button
-                type="button"
-                onClick={() => handleSwitchProvider("azure")}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                  provider === "azure"
-                    ? "bg-white text-blue-700 shadow-xs border border-slate-200/60"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Microsoft Azure
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSwitchProvider("gcp")}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                  provider === "gcp"
-                    ? "bg-white text-indigo-700 shadow-xs border border-slate-200/60"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Google Cloud
-              </button>
+            {/* Connected Provider Badge & Centralized Switch */}
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-100/90 rounded-xl border border-slate-200/80 text-xs">
+              <span className="flex items-center gap-1.5 font-semibold text-slate-800">
+                <span className={`w-2 h-2 rounded-full ${provider === "azure" ? "bg-blue-600" : "bg-indigo-600"}`} />
+                <span>{provider === "azure" ? "Microsoft Azure" : "Google Cloud"}</span>
+              </span>
+              {onSwitchConnection && (
+                <button
+                  type="button"
+                  onClick={onSwitchConnection}
+                  className="ml-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-white text-brand-700 hover:bg-brand-50 border border-brand-200 transition shadow-2xs"
+                  title="Switch cloud connection scope"
+                >
+                  Switch
+                </button>
+              )}
             </div>
 
             {/* Scope Selector */}
@@ -1566,7 +1548,7 @@ export function SectionCentralizedMonitoring({
                         {rec.affected_resources.join(", ")}
                       </td>
                       <td className="py-2.5 px-3 text-slate-400">
-                        {new Date(rec.last_seen).toLocaleTimeString()}
+                        {formatDeterministicTime(rec.last_seen)}
                       </td>
                     </tr>
                   ))}
@@ -2125,7 +2107,7 @@ export function SectionCentralizedMonitoring({
                         className="hover:bg-slate-50/80 transition"
                       >
                         <td className="py-2.5 px-3 text-slate-500 whitespace-nowrap">
-                          {new Date(l.timestamp).toLocaleString()}
+                          {formatDeterministicDateTime(l.timestamp)}
                         </td>
                         <td className="py-2.5 px-3">
                           <span
@@ -2380,7 +2362,7 @@ export function SectionCentralizedMonitoring({
                             {resourceDetail.logs.map((l) => (
                               <tr key={l.id} className="hover:bg-slate-50/60">
                                 <td className="py-2 px-3 whitespace-nowrap text-slate-400">
-                                  {new Date(l.timestamp).toLocaleTimeString()}
+                                  {formatDeterministicTime(l.timestamp)}
                                 </td>
                                 <td className="py-2 px-3">
                                   <span

@@ -715,6 +715,15 @@ export type ConnectionStatus =
   | "scope_not_found"
   | "simulation_fixture";
 
+export interface ServiceIntegration {
+  service_type: "arm" | "databricks" | "fabric" | "gcp_core";
+  display_name: string;
+  status: "connected" | "ready_to_connect" | "standby" | "unauthorized" | "not_configured";
+  auth_method: string;
+  capabilities: string[];
+  details?: string;
+}
+
 export interface CloudConnection {
   id: string;
   name: string;
@@ -728,6 +737,7 @@ export interface CloudConnection {
   is_live: boolean;
   capabilities: string[];
   access_limitations: string[];
+  service_integrations?: ServiceIntegration[];
 }
 
 export interface ValidateConnectionRequest {

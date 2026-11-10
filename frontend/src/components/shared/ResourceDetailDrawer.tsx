@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { DiscoveredResourceItem } from "@/types";
 import { ChildResourceScope } from "@/types/navigation";
+import { formatDeterministicDateTime } from "@/lib/dateTimeFormat";
 
 interface ResourceDetailDrawerProps {
   isOpen: boolean;
@@ -525,7 +526,7 @@ export const ResourceDetailDrawer: React.FC<ResourceDetailDrawerProps> = ({
                   <div className="flex justify-between py-1.5 border-b border-slate-200">
                     <span className="text-slate-500">Discovered At:</span>
                     <span className="font-semibold text-navy-900">
-                      {new Date(resource.discovered_at).toLocaleString()}
+                      {formatDeterministicDateTime(resource.discovered_at)}
                     </span>
                   </div>
                   {resType === "cluster" && (

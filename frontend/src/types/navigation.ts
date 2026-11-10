@@ -25,6 +25,8 @@ export interface ChildResourceScope {
 export interface CloudScope {
   provider: "azure" | "databricks" | "aws" | "gcp" | "mixed";
   scope_type: CloudScopeType;
+  account_id?: string;
+  tenant_id?: string;
   subscription_id?: string;
   subscription_ids?: string[];
   subscription_name?: string;
@@ -34,6 +36,9 @@ export interface CloudScope {
   workspace_ids?: string[];
   workspace_name?: string;
   workspace_url?: string;
+  fabric_workspace_ids?: string[];
+  fabric_capacity_ids?: string[];
+  other_resource_count?: number;
   region?: string;
   display_name: string;
   resource_count?: number;

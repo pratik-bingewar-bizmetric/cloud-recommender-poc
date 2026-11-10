@@ -28,6 +28,7 @@ import {
   History,
   Clock,
   GitBranch,
+  Cloud,
 } from "lucide-react";
 
 import { ENABLE_AI_ARCHITECT } from "@/config/features";
@@ -45,7 +46,8 @@ export type ViewMode =
   | "compare"
   | "configuration"
   | "databricks"
-  | "finops";
+  | "finops"
+  | "connections";
 
 interface SidebarProps {
   currentView: ViewMode;
@@ -232,9 +234,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-xs text-navy-900 tracking-tight truncate">
                     FinOps Platform
-                  </span>
-                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-blue-50 text-brand-600 border border-blue-200">
-                    POC
                   </span>
                 </div>
                 <span className="text-[10px] text-slate-400 block truncate">
@@ -552,6 +551,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* 3. Bottom Footer Controls (Fixed at bottom, non-scrolling) */}
         <div className="shrink-0 p-2 border-t border-slate-200 space-y-1 bg-white">
+          {/* Switch Cloud Connection button */}
+          <button
+            type="button"
+            onClick={() => onViewChange("connections")}
+            title={isCollapsed ? "Switch Cloud Scope" : undefined}
+            className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold text-emerald-800 bg-emerald-50/70 hover:bg-emerald-100/80 border border-emerald-200/80 transition ${
+              isCollapsed ? "justify-center" : ""
+            }`}
+          >
+            <Cloud className="w-4 h-4 text-emerald-600 shrink-0" />
+            {!isCollapsed && <span className="truncate">Cloud Accounts &amp; Switch</span>}
+          </button>
+
           {/* Settings button */}
           <button
             type="button"
