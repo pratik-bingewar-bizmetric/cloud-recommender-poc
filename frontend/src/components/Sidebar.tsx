@@ -3,7 +3,6 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import {
-  Layers,
   LayoutDashboard,
   Sparkles,
   FolderTree,
@@ -26,16 +25,17 @@ import {
   Cpu,
   Workflow,
   History,
-  Clock,
   GitBranch,
   Cloud,
+  ChartNoAxesCombined,
+  Lightbulb,
+  FileText,
 } from "lucide-react";
 
 import { ENABLE_AI_ARCHITECT } from "@/config/features";
 import { MonitoringSubTab } from "./SectionCentralizedMonitoring";
 import { CloudScope, DatabricksModuleId } from "@/types/navigation";
 import { FinOpsModule } from "@/types";
-import { getDatabricksModules } from "@/lib/navigationRegistry";
 
 export type ViewMode =
   | "home"
@@ -74,6 +74,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeScope,
   currentDatabricksModule = "overview",
   onSelectDatabricksModule,
+  currentFinOpsModule = "overview",
+  onSelectFinOpsModule,
   onOpenSettings,
   isCollapsed,
   onToggleCollapse,
@@ -83,7 +85,126 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isMonitoringOpen, setIsMonitoringOpen] = useState<boolean>(true);
   const [isDatabricksOpen, setIsDatabricksOpen] = useState<boolean>(true);
 
-  const databricksModules = getDatabricksModules();
+  // Section A: WORKSPACE & OPERATIONS (Modules 1-11)
+  const workspaceOperationsNav: {
+    id: DatabricksModuleId;
+    label: string;
+    icon: React.ReactNode;
+  }[] = [
+    {
+      id: "overview",
+      label: "Overview",
+      icon: <LayoutDashboard className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "clusters",
+      label: "Clusters",
+      icon: <Cpu className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "warehouses",
+      label: "Warehouses",
+      icon: <Database className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "jobs",
+      label: "Jobs & Workflows",
+      icon: <Workflow className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "pipelines",
+      label: "Pipelines",
+      icon: <GitBranch className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "serving",
+      label: "Model Serving",
+      icon: <Sparkles className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "catalog",
+      label: "Unity Catalog",
+      icon: <FolderTree className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "apps",
+      label: "Databricks Apps",
+      icon: <Server className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "system_tables",
+      label: "System Tables",
+      icon: <Terminal className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "query_history",
+      label: "Query History",
+      icon: <History className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "audit",
+      label: "Audit & Governance",
+      icon: <ShieldCheck className="w-3.5 h-3.5" />,
+    },
+  ];
+
+  // Section B: FINOPS & COST INTELLIGENCE (Modules 12-21)
+  const finopsIntelligenceNav: {
+    id: FinOpsModule;
+    label: string;
+    icon: React.ReactNode;
+  }[] = [
+    {
+      id: "overview",
+      label: "Executive Overview",
+      icon: <BarChart3 className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "cost",
+      label: "Cost Explorer",
+      icon: <TrendingDown className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "allocation",
+      label: "Cost Allocation",
+      icon: <FolderTree className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "chargeback",
+      label: "Cost & Billing",
+      icon: <Coins className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "forecast",
+      label: "Forecast & Budgets",
+      icon: <ChartNoAxesCombined className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "anomaly",
+      label: "Anomaly Detection",
+      icon: <BellRing className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "recommend",
+      label: "Optimization Advisor",
+      icon: <Lightbulb className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "ai",
+      label: "AI Economics",
+      icon: <Cpu className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "governance",
+      label: "Governance & Policies",
+      icon: <ShieldCheck className="w-3.5 h-3.5" />,
+    },
+    {
+      id: "reports",
+      label: "Reports & Audit",
+      icon: <FileText className="w-3.5 h-3.5" />,
+    },
+  ];
 
   const monitoringSubNav: { id: MonitoringSubTab; label: string; icon: React.ReactNode }[] = [
     {
@@ -133,7 +254,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (viewId === "monitoring") {
       setIsMonitoringOpen(true);
     }
-    if (viewId === "databricks" || viewId === "finops") {
+    if (viewId === "finops" || viewId === "databricks") {
       setIsDatabricksOpen(true);
     }
     if (isMobileOpen && onCloseMobile && viewId !== "monitoring" && viewId !== "databricks" && viewId !== "finops") {
@@ -151,6 +272,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const handleFinOpsModuleClick = (moduleId: FinOpsModule) => {
+    onViewChange("finops");
+    if (onSelectFinOpsModule) {
+      onSelectFinOpsModule(moduleId);
+    }
+    if (isMobileOpen && onCloseMobile) {
+      onCloseMobile();
+    }
+  };
+
   const handleDatabricksModuleClick = (moduleId: DatabricksModuleId) => {
     onViewChange("databricks");
     if (onSelectDatabricksModule) {
@@ -158,41 +289,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
     if (isMobileOpen && onCloseMobile) {
       onCloseMobile();
-    }
-  };
-
-  const getDatabricksIcon = (iconName: string) => {
-    switch (iconName) {
-      case "Cpu":
-        return <Cpu className="w-3.5 h-3.5" />;
-      case "Database":
-        return <Database className="w-3.5 h-3.5" />;
-      case "Workflow":
-        return <Workflow className="w-3.5 h-3.5" />;
-      case "GitBranch":
-        return <GitBranch className="w-3.5 h-3.5" />;
-      case "Layers":
-        return <Layers className="w-3.5 h-3.5" />;
-      case "Sparkles":
-        return <Sparkles className="w-3.5 h-3.5" />;
-      case "FolderTree":
-        return <FolderTree className="w-3.5 h-3.5" />;
-      case "Server":
-        return <Server className="w-3.5 h-3.5" />;
-      case "Terminal":
-        return <Terminal className="w-3.5 h-3.5" />;
-      case "History":
-        return <History className="w-3.5 h-3.5" />;
-      case "Coins":
-        return <Coins className="w-3.5 h-3.5" />;
-      case "ShieldCheck":
-        return <ShieldCheck className="w-3.5 h-3.5" />;
-      case "TrendingDown":
-        return <TrendingDown className="w-3.5 h-3.5" />;
-      case "Clock":
-        return <Clock className="w-3.5 h-3.5" />;
-      default:
-        return <LayoutDashboard className="w-3.5 h-3.5" />;
     }
   };
 
@@ -452,13 +548,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
 
-            {/* DYNAMIC CONTEXTUAL SECTION: DATABRICKS WORKSPACE */}
+            {/* UNIFIED DATABRICKS WORKSPACE NAVIGATION GROUP */}
             <div className="pt-2">
               <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
                 {!isCollapsed && <span>Databricks Workspace</span>}
                 {!isCollapsed && (
-                  <span className="text-[9px] font-bold text-orange-600 font-mono">
-                    642006393507276
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-[9px] font-bold text-orange-600 font-mono">
+                      {activeScope?.workspace_id || "642006393507276"}
+                    </span>
                   </span>
                 )}
               </div>
@@ -469,7 +568,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   if (isCollapsed) {
                     onViewChange("databricks");
                   } else {
-                    if (currentView !== "databricks" && currentView !== "finops") {
+                    if (!isDatabricksActive) {
                       onViewChange("databricks");
                       setIsDatabricksOpen(true);
                     } else {
@@ -492,57 +591,84 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
 
                 {!isCollapsed && (
-                  <ChevronDown
-                    className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
-                      isDatabricksOpen ? "rotate-180" : ""
-                    }`}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                      Connected
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
+                        isDatabricksOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </div>
                 )}
               </button>
 
               {/* Sub-Nav: Single Continuous Flow (NO nested scrollbar, NO max-h) */}
               {!isCollapsed && isDatabricksOpen && (
-                <div className="mt-1 ml-3 pl-2.5 border-l border-orange-200 space-y-0.5">
-                  {/* 1. FinOps Command Center · Azure Databricks (PRIMARY FIRST ITEM) */}
-                  <button
-                    type="button"
-                    onClick={() => handleNavClick("finops")}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition ${
-                      currentView === "finops"
-                        ? "bg-brand-50 text-brand-700 font-bold border border-brand-200/60"
-                        : "text-brand-700 hover:bg-brand-50/60 hover:text-brand-900 font-semibold"
-                    }`}
-                    title="FinOps Command Center · Azure Databricks"
-                  >
-                    <span className={currentView === "finops" ? "text-brand-600" : "text-brand-600/80"}>
-                      <BarChart3 className="w-3.5 h-3.5" />
-                    </span>
-                    <span className="truncate">FinOps Command Center · Azure Databricks</span>
-                  </button>
+                <div className="mt-1 ml-2.5 pl-2 border-l border-orange-200 space-y-1">
+                  {/* Section A: WORKSPACE & OPERATIONS */}
+                  <div className="pt-1.5 pb-1 px-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block" />
+                    <span>WORKSPACE &amp; OPERATIONS</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {workspaceOperationsNav.map((item) => {
+                      const isSubActive =
+                        currentView === "databricks" && currentDatabricksModule === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleDatabricksModuleClick(item.id)}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition ${
+                            isSubActive
+                              ? "bg-orange-100/70 text-orange-950 font-bold"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-navy-900"
+                          }`}
+                          title={item.label}
+                        >
+                          <span className={isSubActive ? "text-orange-600" : "text-slate-400"}>
+                            {item.icon}
+                          </span>
+                          <span className="truncate">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                  {/* 2. Overview through 14. Discovery History (All badges removed) */}
-                  {databricksModules.map((mod) => {
-                    const isModActive =
-                      currentView === "databricks" && currentDatabricksModule === mod.id;
-                    return (
-                      <button
-                        key={mod.id}
-                        type="button"
-                        onClick={() => handleDatabricksModuleClick(mod.id)}
-                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition ${
-                          isModActive
-                            ? "bg-orange-100/70 text-orange-950 font-bold"
-                            : "text-slate-600 hover:bg-slate-50 hover:text-navy-900"
-                        }`}
-                        title={mod.title}
-                      >
-                        <span className={isModActive ? "text-orange-600" : "text-slate-400"}>
-                          {getDatabricksIcon(mod.iconName)}
-                        </span>
-                        <span className="truncate">{mod.shortTitle}</span>
-                      </button>
-                    );
-                  })}
+                  {/* Subtle Divider */}
+                  <div className="my-2 border-t border-slate-200 mr-1" />
+
+                  {/* Section B: FINOPS & COST INTELLIGENCE */}
+                  <div className="pb-1 px-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-brand-500 inline-block" />
+                    <span>FINOPS &amp; COST INTELLIGENCE</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    {finopsIntelligenceNav.map((item) => {
+                      const isSubActive =
+                        currentView === "finops" && currentFinOpsModule === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleFinOpsModuleClick(item.id)}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[11px] font-medium transition ${
+                            isSubActive
+                              ? "bg-brand-50 text-brand-700 font-bold"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-navy-900"
+                          }`}
+                          title={item.label}
+                        >
+                          <span className={isSubActive ? "text-brand-600" : "text-slate-400"}>
+                            {item.icon}
+                          </span>
+                          <span className="truncate">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>

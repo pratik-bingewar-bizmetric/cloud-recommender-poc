@@ -1282,6 +1282,8 @@ export interface FinOpsDecisionItem {
   complexity?: string;
   validation_method?: string;
   lifecycle_stage?: string;
+  calculation_methodology?: string;
+  recommended_action?: string;
 }
 
 export interface ExecutiveOverviewData {

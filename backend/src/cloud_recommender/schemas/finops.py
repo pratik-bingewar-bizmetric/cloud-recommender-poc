@@ -130,6 +130,12 @@ class DecisionItem(BaseModel):
         default="Detected",
         description="Lifecycle: Detected, Analyzed, Approved, Scheduled, Implemented, Verified, Rejected, Deferred",
     )
+    calculation_methodology: str = Field(
+        default="", description="Formula and telemetry source used to calculate estimated savings"
+    )
+    recommended_action: str = Field(
+        default="", description="Specific procedural action recommended"
+    )
 
 
 class ExecutiveOverviewResponse(BaseModel):

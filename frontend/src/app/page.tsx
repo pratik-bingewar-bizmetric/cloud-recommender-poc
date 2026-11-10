@@ -88,6 +88,25 @@ export default function Home() {
     subscription_id: "sub-prod-01",
     resource_group: "rg-finops-eastus",
     display_name: "rg-finops-eastus",
+    workspace_id: "642006393507276",
+    workspace_name: "Azure Databricks Dev",
+    workspace_url: "https://adb-642006393507276.16.azuredatabricks.net",
+    tenant_id: "tenant-bizmetric-prod",
+    region: "northcentralus",
+    status: "connected",
+    auth_status: "authenticated",
+    connection_verification_status: "verified",
+    date_range: { start: "2026-11-01", end: "2026-11-30" },
+    environment: "Production",
+    data_freshness: "2026-11-10T12:00:00Z",
+    source_availability: {
+      system_tables: true,
+      discovery: true,
+      cost_management: true,
+      query_history: true,
+      audit_logs: true,
+      token_economics: true,
+    },
   });
   const [activeDatabricksModule, setActiveDatabricksModule] =
     useState<DatabricksModuleId>("overview");
@@ -111,7 +130,7 @@ export default function Home() {
         const savedScope = sessionStorage.getItem("finops_active_scope");
         if (savedScope) {
           const parsed = JSON.parse(savedScope) as CloudScope;
-          setActiveCloudScope(parsed);
+          setActiveCloudScope((prev) => ({ ...prev, ...parsed }));
         }
       } catch (err) {
         console.warn("Could not parse saved active scope from sessionStorage", err);
@@ -120,14 +139,42 @@ export default function Home() {
   }, []);
 
   const handleUpdateCloudScope = useCallback((newScope: CloudScope) => {
-    setActiveCloudScope(newScope);
-    if (typeof window !== "undefined") {
-      try {
-        sessionStorage.setItem("finops_active_scope", JSON.stringify(newScope));
-      } catch (err) {
-        console.warn("Could not save active scope to sessionStorage", err);
+    setActiveCloudScope((prev) => {
+      const merged: CloudScope = {
+        ...prev,
+        ...newScope,
+        workspace_id: newScope.workspace_id || prev.workspace_id || "642006393507276",
+        workspace_name: newScope.workspace_name || prev.workspace_name || "Azure Databricks Dev",
+        workspace_url:
+          newScope.workspace_url ||
+          prev.workspace_url ||
+          "https://adb-642006393507276.16.azuredatabricks.net",
+        tenant_id: newScope.tenant_id || prev.tenant_id || "tenant-bizmetric-prod",
+        region: newScope.region || prev.region || "northcentralus",
+        auth_status: newScope.auth_status || prev.auth_status || "authenticated",
+        connection_verification_status:
+          newScope.connection_verification_status || prev.connection_verification_status || "verified",
+        date_range: newScope.date_range || prev.date_range || { start: "2026-11-01", end: "2026-11-30" },
+        environment: newScope.environment || prev.environment || "Production",
+        data_freshness: newScope.data_freshness || prev.data_freshness || "2026-11-10T12:00:00Z",
+        source_availability: newScope.source_availability || prev.source_availability || {
+          system_tables: true,
+          discovery: true,
+          cost_management: true,
+          query_history: true,
+          audit_logs: true,
+          token_economics: true,
+        },
+      };
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("finops_active_scope", JSON.stringify(merged));
+        } catch (err) {
+          console.warn("Could not save active scope to sessionStorage", err);
+        }
       }
-    }
+      return merged;
+    });
   }, []);
 
   const handleSelectSubscriptionFromLanding = useCallback(
@@ -1111,7 +1158,7 @@ export default function Home() {
             />
           )}
 
-          {/* SCREEN 11: Azure Databricks Multi-Module Workspace View (14 Modules) */}
+          {/* SCREEN 11: Azure Databricks Multi-Module Workspace View (11 Operations Modules) */}
           {activeView === "databricks" && (
             <DatabricksWorkspaceDetailView
               connection={{
@@ -1129,12 +1176,39 @@ export default function Home() {
               }}
               discovery={databricksDiscovery}
               activeModuleId={activeDatabricksModule}
-              onSelectModule={(mod) => setActiveDatabricksModule(mod)}
+              onSelectModule={(mod) => {
+                const finopsMap: Record<string, FinOpsModule> = {
+                  exec_overview: "overview",
+                  cost_explorer: "cost",
+                  cost: "cost",
+                  cost_allocation: "allocation",
+                  allocation: "allocation",
+                  cost_billing: "chargeback",
+                  chargeback: "chargeback",
+                  billing: "chargeback",
+                  forecast: "forecast",
+                  anomaly: "anomaly",
+                  recommend: "recommend",
+                  ai_economics: "ai",
+                  ai: "ai",
+                  governance: "governance",
+                  reports: "reports",
+                };
+                if (mod in finopsMap) {
+                  setActiveFinOpsModule(finopsMap[mod]);
+                  setActiveView("finops");
+                } else {
+                  setActiveDatabricksModule(mod as DatabricksModuleId);
+                }
+              }}
               isLoading={isDiscoveringDatabricks}
               onBack={() => setActiveView("configuration")}
               onRefresh={handleRefreshDatabricks}
               activeScope={activeCloudScope}
-              onSelectScope={(scope) => setActiveCloudScope(scope)}
+              onSelectScope={(scope) => {
+                handleUpdateCloudScope(scope);
+                handleRefreshDatabricks();
+              }}
               onFocusScope={(child) => {
                 setActiveCloudScope((prev) => ({
                   ...prev,
@@ -1146,14 +1220,36 @@ export default function Home() {
             />
           )}
 
-          {/* SCREEN 12: FinOps Command Center (15 Full Modules) */}
+          {/* SCREEN 12: FinOps Command Center (10 Cost Intelligence Modules) */}
           {activeView === "finops" && (
             <FinOpsCommandCenterView
               activeModule={activeFinOpsModule}
-              onSelectModule={(mod) => setActiveFinOpsModule(mod)}
-              selectedWorkspaceId={activeCloudScope.workspace_id || "databricks-azure-dev"}
+              onSelectModule={(mod) => {
+                const opsModules = [
+                  "clusters",
+                  "warehouses",
+                  "jobs",
+                  "pipelines",
+                  "serving",
+                  "catalog",
+                  "apps",
+                  "system_tables",
+                  "query_history",
+                  "audit",
+                ];
+                if (opsModules.includes(mod)) {
+                  setActiveDatabricksModule(mod as DatabricksModuleId);
+                  setActiveView("databricks");
+                } else {
+                  setActiveFinOpsModule(mod as FinOpsModule);
+                }
+              }}
+              selectedWorkspaceId={activeCloudScope.workspace_id || "642006393507276"}
               activeScope={activeCloudScope}
-              onSelectScope={(scope) => setActiveCloudScope(scope)}
+              onSelectScope={(scope) => {
+                handleUpdateCloudScope(scope);
+                handleRefreshDatabricks();
+              }}
             />
           )}
         </main>
