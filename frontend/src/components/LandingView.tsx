@@ -17,10 +17,11 @@ import {
 } from "lucide-react";
 
 interface LandingViewProps {
-  onNavigate: (view: "architect" | "dashboard" | "inventory" | "monitoring" | "compare") => void;
+  onNavigate: (view: "architect" | "dashboard" | "inventory" | "monitoring" | "compare" | "configuration") => void;
   monthlyTotal?: string | null;
   connectedScope?: string | null;
   potentialSavings?: string | null;
+  onSelectSubscription?: (subscriptionId: string, subscriptionName: string) => void;
 }
 
 export const LandingView: React.FC<LandingViewProps> = ({
@@ -28,6 +29,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
   monthlyTotal,
   connectedScope,
   potentialSavings,
+  onSelectSubscription,
 }) => {
   return (
     <div className="space-y-12 pb-16">
@@ -261,6 +263,160 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   <span className="text-[11px] text-slate-500">Retail Prices Meter Confidence</span>
                   <span className="text-xs font-bold text-accent-emerald font-mono">100% Verified</span>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Azure Subscriptions — Quick Scope Selection */}
+      <section className="max-w-5xl mx-auto px-4">
+        <div className="bg-gradient-to-br from-blue-50/70 via-white to-indigo-50/40 border border-blue-200/80 rounded-2xl p-6 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-blue-100">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-2xs">
+                  Az
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-navy-950 tracking-tight">
+                    Select Azure Subscription to Configure Scope
+                  </h2>
+                  <p className="text-xs text-navy-600">
+                    Select an authorized subscription to navigate to the Configuration page and define resource groups and workspaces.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onNavigate("configuration")}
+              className="px-3.5 py-1.5 rounded-lg border border-blue-300 bg-white hover:bg-blue-50 text-brand-700 text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs shrink-0 self-start sm:self-auto"
+            >
+              <span>Multi-Scope Configuration</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Subscription 1: Production */}
+            <div
+              onClick={() => {
+                if (onSelectSubscription) {
+                  onSelectSubscription("sub-prod-01", "Azure Production Subscription");
+                } else {
+                  onNavigate("configuration");
+                }
+              }}
+              className="app-card-interactive p-5 bg-white border border-slate-200 hover:border-brand-500 rounded-xl cursor-pointer transition flex flex-col justify-between group shadow-2xs"
+            >
+              <div>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-50 text-brand-600 flex items-center justify-center font-bold text-xs">
+                      Az
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-navy-900 group-hover:text-brand-700 transition">
+                        Azure Production Subscription
+                      </h3>
+                      <span className="font-mono text-[10px] text-slate-400 block">
+                        f718c261-ab85-49fd-907e-99c022cc2aeb &bull; (sub-prod-01)
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-brand-600 border border-blue-200">
+                    Production
+                  </span>
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Resource Groups</span>
+                    <span className="font-bold text-navy-900 text-sm mt-0.5 block">3 RGs</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Resources</span>
+                    <span className="font-bold text-navy-900 text-sm mt-0.5 block">98</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Databricks</span>
+                    <span className="font-bold text-orange-600 text-sm mt-0.5 block">1 Workspace</span>
+                  </div>
+                </div>
+
+                <div className="mt-3 text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Region: <strong className="text-navy-900 font-mono">eastus</strong></span>
+                  <span className="font-mono text-[10px] text-slate-400">Tenant: fe82a67c...</span>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-xs font-semibold text-brand-600 group-hover:underline flex items-center gap-1">
+                  Configure Scope &rarr;
+                </span>
+                <span className="text-[10px] text-slate-400">Preselects sub-prod-01</span>
+              </div>
+            </div>
+
+            {/* Subscription 2: Analytics & Dev */}
+            <div
+              onClick={() => {
+                if (onSelectSubscription) {
+                  onSelectSubscription("sub-dev-02", "Azure Analytics & Dev Subscription");
+                } else {
+                  onNavigate("configuration");
+                }
+              }}
+              className="app-card-interactive p-5 bg-white border border-slate-200 hover:border-brand-500 rounded-xl cursor-pointer transition flex flex-col justify-between group shadow-2xs"
+            >
+              <div>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-xs">
+                      Az
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-sm text-navy-900 group-hover:text-brand-700 transition">
+                        Azure Analytics &amp; Dev Subscription
+                      </h3>
+                      <span className="font-mono text-[10px] text-slate-400 block">
+                        e827a192-3bc1-49e0-812d-11c033bb1fea &bull; (sub-dev-02)
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-200">
+                    Analytics / Dev
+                  </span>
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Resource Groups</span>
+                    <span className="font-bold text-navy-900 text-sm mt-0.5 block">2 RGs</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Resources</span>
+                    <span className="font-bold text-navy-900 text-sm mt-0.5 block">56</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] text-slate-400 block font-semibold">Databricks</span>
+                    <span className="font-bold text-orange-600 text-sm mt-0.5 block">1 Workspace</span>
+                  </div>
+                </div>
+
+                <div className="mt-3 text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Region: <strong className="text-navy-900 font-mono">eastus</strong></span>
+                  <span className="font-mono text-[10px] text-slate-400">Tenant: fe82a67c...</span>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                <span className="text-xs font-semibold text-brand-600 group-hover:underline flex items-center gap-1">
+                  Configure Scope &rarr;
+                </span>
+                <span className="text-[10px] text-slate-400">Preselects sub-dev-02</span>
               </div>
             </div>
           </div>

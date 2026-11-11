@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Clock, Filter, X, BarChart3 } from "lucide-react";
 import { QueryHistoryItem } from "@/types";
 
@@ -19,13 +19,13 @@ interface QueryDurationHistogramProps {
   isLoading?: boolean;
 }
 
-const BUCKET_DEFINITIONS: Array<{ bucket: string; minMs: number; maxMs: number }> = [
-  { bucket: "< 1s", minMs: 0, maxMs: 1000 },
-  { bucket: "1s - 5s", minMs: 1000, maxMs: 5000 },
-  { bucket: "5s - 15s", minMs: 5000, maxMs: 15000 },
-  { bucket: "15s - 60s", minMs: 15000, maxMs: 60000 },
-  { bucket: "1m - 5m", minMs: 60000, maxMs: 300000 },
-  { bucket: "> 5m", minMs: 300000, maxMs: Infinity },
+export const BUCKET_DEFINITIONS: Array<{ bucket: string; displayLabel: string; minMs: number; maxMs: number }> = [
+  { bucket: "< 1s", displayLabel: "< 1s", minMs: 0, maxMs: 1000 },
+  { bucket: "1s - 5s", displayLabel: "1s – 5s", minMs: 1000, maxMs: 5000 },
+  { bucket: "5s - 15s", displayLabel: "5s – 15s", minMs: 5000, maxMs: 15000 },
+  { bucket: "15s - 60s", displayLabel: "15s – 60s", minMs: 15000, maxMs: 60000 },
+  { bucket: "1m - 5m", displayLabel: "1m – 5m", minMs: 60000, maxMs: 300000 },
+  { bucket: "> 5m", displayLabel: "> 5m", minMs: 300000, maxMs: Infinity },
 ];
 
 export const formatDurationMs = (ms: number): string => {
@@ -42,16 +42,14 @@ export const QueryDurationHistogram: React.FC<QueryDurationHistogramProps> = ({
   onSelectBucket,
   isLoading = false,
 }) => {
+  const [hoveredBucket, setHoveredBucket] = useState<string | null>(null);
+
   if (isLoading) {
     return (
       <div className="p-6 rounded-xl border border-slate-200 bg-white space-y-4 animate-pulse">
         <div className="h-4 bg-slate-200 rounded w-1/4" />
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-16 bg-slate-100 rounded-lg" />
-          ))}
-        </div>
-        <div className="h-40 bg-slate-100 rounded-xl" />
+        <div className="h-10 bg-slate-100 rounded-lg" />
+        <div className="h-52 bg-slate-100 rounded-xl" />
       </div>
     );
   }
@@ -93,29 +91,42 @@ export const QueryDurationHistogram: React.FC<QueryDurationHistogramProps> = ({
 
   const maxBucketCount = Math.max(...buckets.map((b) => b.count), 1);
 
+  // Y-axis ticks (4 ticks: 100%, 75%, 50%, 25%)
+  const yTicks = [
+    maxBucketCount,
+    Math.round(maxBucketCount * 0.75),
+    Math.round(maxBucketCount * 0.5),
+    Math.round(maxBucketCount * 0.25),
+  ];
+
   return (
-    <div className="p-5 rounded-xl border border-slate-200 bg-white space-y-5 shadow-2xs">
+    <div className="p-5 rounded-xl border border-slate-200 bg-white space-y-4 shadow-2xs">
       {/* Header and Filter Badge */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">
             <BarChart3 className="w-4 h-4" />
           </div>
           <div>
             <h4 className="text-xs font-bold text-navy-900 uppercase tracking-wider">
-              Query Execution Duration Histogram
+              Query Execution Duration Distribution
             </h4>
             <p className="text-[11px] text-slate-500">
-              Distribution of query runtimes across 6 latency buckets · Click bar to filter
+              Distribution of query runtimes across 6 latency buckets &bull; Click bar to filter
             </p>
           </div>
         </div>
 
         {selectedBucket && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 self-start sm:self-auto">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-brand-50 text-brand-700 border border-brand-200">
               <Filter className="w-3 h-3 text-brand-600" />
-              <span>Filtered by: {selectedBucket}</span>
+              <span>
+                Filtered by:{" "}
+                <span className="font-mono">
+                  {BUCKET_DEFINITIONS.find((b) => b.bucket === selectedBucket)?.displayLabel || selectedBucket}
+                </span>
+              </span>
               <button
                 type="button"
                 onClick={() => onSelectBucket(null)}
@@ -130,119 +141,135 @@ export const QueryDurationHistogram: React.FC<QueryDurationHistogramProps> = ({
               onClick={() => onSelectBucket(null)}
               className="text-xs font-semibold text-slate-500 hover:text-navy-900 underline"
             >
-              Clear Filter
+              Clear filter
             </button>
           </div>
         )}
       </div>
 
-      {/* Latency Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-3 rounded-lg border border-slate-100 bg-slate-50/70">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            Median Duration
-          </span>
-          <div className="text-base font-extrabold text-navy-900 mt-0.5">
-            {formatDurationMs(medianDuration)}
-          </div>
-          <span className="text-[10px] text-slate-500">P50 runtime</span>
+      {/* Compact Horizontal Inline Summary Stats Row */}
+      <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+        <div className="flex items-center gap-1.5 px-2">
+          <span className="text-[10px] uppercase font-bold text-slate-400">Total Queries:</span>
+          <span className="font-bold text-navy-900 font-mono tabular-nums">{totalQueries}</span>
         </div>
-
-        <div className="p-3 rounded-lg border border-slate-100 bg-slate-50/70">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            Average Duration
-          </span>
-          <div className="text-base font-extrabold text-blue-700 mt-0.5">
-            {formatDurationMs(avgDuration)}
-          </div>
-          <span className="text-[10px] text-slate-500">Mean across all queries</span>
+        <div className="hidden sm:block text-slate-300">&bull;</div>
+        <div className="flex items-center gap-1.5 px-2">
+          <span className="text-[10px] uppercase font-bold text-slate-400">Median (P50):</span>
+          <span className="font-bold text-navy-900 font-mono tabular-nums">{formatDurationMs(medianDuration)}</span>
         </div>
-
-        <div className="p-3 rounded-lg border border-slate-100 bg-slate-50/70">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            P95 Duration
-          </span>
-          <div className="text-base font-extrabold text-amber-700 mt-0.5">
-            {formatDurationMs(p95Duration)}
-          </div>
-          <span className="text-[10px] text-slate-500">95th percentile SLA</span>
+        <div className="hidden sm:block text-slate-300">&bull;</div>
+        <div className="flex items-center gap-1.5 px-2">
+          <span className="text-[10px] uppercase font-bold text-slate-400">Average:</span>
+          <span className="font-bold text-blue-700 font-mono tabular-nums">{formatDurationMs(avgDuration)}</span>
         </div>
-
-        <div className="p-3 rounded-lg border border-slate-100 bg-slate-50/70">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-            Max Duration
-          </span>
-          <div className="text-base font-extrabold text-rose-700 mt-0.5">
-            {formatDurationMs(maxDuration)}
-          </div>
-          <span className="text-[10px] text-slate-500">Longest single execution</span>
+        <div className="hidden sm:block text-slate-300">&bull;</div>
+        <div className="flex items-center gap-1.5 px-2">
+          <span className="text-[10px] uppercase font-bold text-slate-400">P95 SLA:</span>
+          <span className="font-bold text-amber-700 font-mono tabular-nums">{formatDurationMs(p95Duration)}</span>
+        </div>
+        <div className="hidden sm:block text-slate-300">&bull;</div>
+        <div className="flex items-center gap-1.5 px-2">
+          <span className="text-[10px] uppercase font-bold text-slate-400">Max Duration:</span>
+          <span className="font-bold text-rose-700 font-mono tabular-nums">{formatDurationMs(maxDuration)}</span>
         </div>
       </div>
 
-      {/* Vertical Histogram Bars */}
-      <div className="pt-2">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+      {/* Unified Vertical Bar Chart Container */}
+      <div className="relative pt-6 pb-2">
+        {/* Background Y-Axis Reference Grid Lines */}
+        <div className="absolute inset-x-8 top-6 bottom-10 flex flex-col justify-between pointer-events-none">
+          {yTicks.map((tick, idx) => (
+            <div key={idx} className="w-full flex items-center gap-2 border-b border-dashed border-slate-100">
+              <span className="text-[9px] font-mono text-slate-300 tabular-nums w-5 text-right -ml-7 select-none">
+                {tick}
+              </span>
+            </div>
+          ))}
+          <div className="w-full border-b border-slate-200" />
+        </div>
+
+        {/* 6 Vertical Bars */}
+        <div className="relative h-48 flex items-end justify-between gap-2 sm:gap-4 px-8 pb-8">
           {buckets.map((b) => {
             const isSelected = selectedBucket === b.bucket;
-            const barHeightPct = Math.max((b.count / maxBucketCount) * 100, 6);
+            const isHovered = hoveredBucket === b.bucket;
+            const barHeightPct = totalQueries > 0 && b.count > 0
+              ? Math.max(Math.round((b.count / maxBucketCount) * 100), 8)
+              : 2;
+
+            const def = BUCKET_DEFINITIONS.find((defItem) => defItem.bucket === b.bucket);
+            const label = def?.displayLabel || b.bucket;
 
             return (
-              <button
+              <div
                 key={b.bucket}
-                type="button"
+                className="flex-1 flex flex-col items-center justify-end h-full relative group cursor-pointer"
                 onClick={() => onSelectBucket(isSelected ? null : b.bucket)}
-                className={`p-3 rounded-xl border text-left transition flex flex-col justify-between group cursor-pointer ${
-                  isSelected
-                    ? "border-brand-500 bg-brand-50/60 ring-2 ring-brand-400/30"
-                    : "border-slate-200 bg-slate-50/50 hover:border-brand-300 hover:bg-white hover:shadow-sm"
-                }`}
+                onMouseEnter={() => setHoveredBucket(b.bucket)}
+                onMouseLeave={() => setHoveredBucket(null)}
               >
-                {/* Bucket Label and Count */}
-                <div className="flex items-center justify-between w-full mb-2">
-                  <span
-                    className={`text-xs font-bold truncate ${
-                      isSelected ? "text-brand-900" : "text-navy-900 group-hover:text-brand-700"
-                    }`}
-                  >
-                    {b.bucket}
-                  </span>
-                  <span
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                      isSelected
-                        ? "bg-brand-600 text-white"
-                        : "bg-slate-200/80 text-slate-700 group-hover:bg-brand-100 group-hover:text-brand-800"
-                    }`}
-                  >
-                    {b.count}
-                  </span>
-                </div>
-
-                {/* Vertical Bar Visual */}
-                <div className="h-28 w-full flex items-end justify-center py-1">
-                  <div className="w-10 bg-slate-200/60 rounded-t-md relative flex items-end justify-center h-full overflow-hidden">
-                    <div
-                      className={`w-full rounded-t-md transition-all duration-300 ${
-                        isSelected
-                          ? "bg-brand-600"
-                          : b.count > 0
-                          ? "bg-brand-500 group-hover:bg-brand-600"
-                          : "bg-slate-300"
-                      }`}
-                      style={{ height: `${barHeightPct}%` }}
-                    />
+                {/* Tooltip on Hover */}
+                {isHovered && (
+                  <div className="absolute -top-14 z-30 px-2.5 py-1.5 bg-navy-950 text-white text-[11px] rounded-lg shadow-xl pointer-events-none whitespace-nowrap animate-in fade-in zoom-in-95 duration-150">
+                    <div className="font-bold font-mono">{label}</div>
+                    <div className="text-slate-300 text-[10px]">
+                      <span className="font-semibold text-white">{b.count}</span> queries ({b.percentage.toFixed(1)}%)
+                    </div>
+                    {/* Tooltip Arrow */}
+                    <div className="w-2 h-2 bg-navy-950 rotate-45 absolute -bottom-1 left-1/2 -translate-x-1/2" />
                   </div>
+                )}
+
+                {/* Numeric Count Label Directly Above Bar */}
+                <span
+                  className={`text-xs font-mono font-bold mb-1 transition-all tabular-nums ${
+                    isSelected
+                      ? "text-brand-700 font-extrabold text-sm"
+                      : isHovered
+                      ? "text-navy-900 font-bold"
+                      : b.count > 0
+                      ? "text-slate-600"
+                      : "text-slate-300"
+                  }`}
+                >
+                  {b.count}
+                </span>
+
+                {/* Vertical Bar Rising from Common Baseline */}
+                <div className="w-full max-w-[64px] flex items-end justify-center h-full">
+                  <div
+                    style={{ height: `${barHeightPct}%` }}
+                    className={`w-full rounded-t-md transition-all duration-300 shadow-2xs ${
+                      isSelected
+                        ? "bg-gradient-to-t from-brand-700 to-brand-500 ring-2 ring-brand-500 ring-offset-2 shadow-md"
+                        : isHovered
+                        ? "bg-gradient-to-t from-brand-600 to-brand-400 opacity-95"
+                        : b.count > 0
+                        ? "bg-gradient-to-t from-brand-600/90 to-brand-500/80"
+                        : "bg-slate-200"
+                    }`}
+                  />
                 </div>
 
-                {/* Percentage & Range Details */}
-                <div className="mt-2 pt-2 border-t border-slate-200/60 w-full text-center">
-                  <span className="text-[11px] font-bold text-slate-700 block">
-                    {b.percentage.toFixed(1)}%
+                {/* X-Axis Bucket Label Below Baseline */}
+                <div className="absolute -bottom-6 w-full text-center">
+                  <span
+                    className={`text-[11px] font-mono transition-colors block truncate ${
+                      isSelected
+                        ? "font-bold text-brand-700"
+                        : isHovered
+                        ? "font-semibold text-navy-950"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {label}
                   </span>
-                  <span className="text-[9px] text-slate-400 block mt-0.5 truncate">
-                    {b.count} of {totalQueries}
+                  <span className="text-[9px] text-slate-400 font-mono block">
+                    {b.percentage.toFixed(0)}%
                   </span>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -257,4 +284,3 @@ export const QueryDurationHistogram: React.FC<QueryDurationHistogramProps> = ({
     </div>
   );
 };
-

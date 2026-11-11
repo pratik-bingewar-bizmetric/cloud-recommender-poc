@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     db_pool_pre_ping: bool = Field(
         default=True, description="Enable connection health check pre-ping"
     )
+    db_pool_timeout: int = Field(
+        default=30, ge=5, le=120, description="Database connection pool checkout timeout in seconds"
+    )
+    db_pool_recycle: int = Field(
+        default=1800, ge=60, le=7200, description="Recycle database connections after N seconds (prevents firewall drops)"
+    )
+    db_ssl_mode: Literal["disable", "prefer", "require", "verify-ca", "verify-full"] = Field(
+        default="prefer",
+        description="TLS/SSL mode for PostgreSQL. Set to 'require' for Azure PostgreSQL Flexible Server.",
+    )
 
     # LLM & Agent Orchestration (LangGraph)
     llm_provider: Literal["mock", "azure_openai", "openai", "gemini", "anthropic"] = Field(

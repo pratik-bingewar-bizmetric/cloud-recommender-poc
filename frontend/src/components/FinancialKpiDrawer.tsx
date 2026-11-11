@@ -23,6 +23,7 @@ import {
   FinancialKpiType,
 } from "@/types/financials";
 import { formatFinancialCurrency } from "@/lib/financials";
+import { formatDeterministicTime } from "@/lib/dateTimeFormat";
 
 interface FinancialKpiDrawerProps {
   isOpen: boolean;
@@ -475,11 +476,7 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
               <div>
                 <span className="text-slate-400 block">Audit Timestamp:</span>
                 <span className="font-mono text-slate-600">
-                  {new Date(financials.last_updated).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })}
+                  {formatDeterministicTime(financials.last_updated, { showSeconds: true })}
                 </span>
               </div>
             </div>

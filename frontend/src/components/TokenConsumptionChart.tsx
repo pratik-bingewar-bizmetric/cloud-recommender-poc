@@ -17,6 +17,11 @@ import {
   Maximize2,
   TrendingUp,
 } from "lucide-react";
+import {
+  formatDeterministicTime,
+  formatDeterministicDate,
+  formatDeterministicDateTime,
+} from "@/lib/dateTimeFormat";
 
 interface TokenConsumptionChartProps {
   trendPoints: TokenTrendPoint[];
@@ -171,12 +176,12 @@ export const TokenConsumptionChart: React.FC<TokenConsumptionChartProps> = ({
   const formatTickLabel = useCallback(
     (d: Date): string => {
       if (timeWindow === "1h" || timeWindow === "24h") {
-        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        return formatDeterministicTime(d, { includeTz: false });
       }
       if (timeWindow === "7d") {
-        return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
+        return formatDeterministicDate(d, { includeWeekday: true });
       }
-      return d.toLocaleDateString([], { month: "short", day: "numeric" });
+      return formatDeterministicDate(d);
     },
     [timeWindow]
   );
@@ -746,14 +751,7 @@ export const TokenConsumptionChart: React.FC<TokenConsumptionChartProps> = ({
           >
             <div className="text-[10px] text-slate-300 font-medium border-b border-slate-800 pb-1 flex items-center justify-between gap-4">
               <span>
-                {hoveredPoint.date.toLocaleDateString([], {
-                  month: "short",
-                  day: "numeric",
-                })}{" "}
-                {hoveredPoint.date.toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+                {formatDeterministicDateTime(hoveredPoint.date)}
               </span>
               <span className="font-mono text-emerald-400 font-semibold">
                 ${hoveredPoint.costUsd.toFixed(4)}

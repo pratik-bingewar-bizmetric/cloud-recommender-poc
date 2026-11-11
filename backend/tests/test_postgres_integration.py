@@ -20,7 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from alembic import command
 from cloud_recommender.catalog.seeds import seed_catalog
 from cloud_recommender.core.config import get_settings
+from cloud_recommender.db.models import Base
 from cloud_recommender.db.repositories.catalog_repo import CatalogRepository
+from cloud_recommender.db.repositories.configuration_repo import (
+    ResourceConfigurationRepository,
+)
 from cloud_recommender.db.repositories.workload_repo import WorkloadRepository
 from cloud_recommender.schemas.catalog import CatalogServiceFilter
 from cloud_recommender.schemas.common import (
@@ -28,6 +32,11 @@ from cloud_recommender.schemas.common import (
     CloudProvider,
     ServiceCategory,
     WorkloadCategory,
+)
+from cloud_recommender.schemas.configuration import (
+    ConfiguredScopeItemCreate,
+    ScopeType,
+    SelectionState,
 )
 from cloud_recommender.schemas.workload import WorkloadProfileCreate
 
@@ -294,3 +303,125 @@ async def test_postgres_catalog_seeding_and_verified_protection(isolated_pg_db: 
         assert "Kubernetes and KEDA" in aca_forced.description
 
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_postgres_resource_configuration_persistence_and_versioning(
+    isolated_pg_db: str,
+) -> None:
+    """Verify ResourceConfigurationRepository lifecycle against real native PostgreSQL.
+
+    Tests:
+    1. Saving initial configuration (v1, active).
+    2. Storing hierarchical scope items (Subscription, RG, Databricks, Fabric).
+    3. Retrieving active configuration by connection ID.
+    4. Saving version 2 and verifying version incrementing and archival of v1.
+    """
+    engine = create_async_engine(isolated_pg_db, echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    conn_id = "conn-azure-pg-test-01"
+
+    # Step 1: Save Version 1 with Sub, RG, and Databricks Workspace
+    async with session_factory() as session:
+        repo = ResourceConfigurationRepository(session)
+
+        items_v1 = [
+            ConfiguredScopeItemCreate(
+                scope_type=ScopeType.SUBSCRIPTION.value,
+                scope_identifier="f718c261-ab85-49fd-907e-99c022cc2aeb",
+                display_name="Azure Production Subscription",
+                selection_state=SelectionState.INCLUDED.value,
+                metadata={"tenant_id": "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41"},
+            ),
+            ConfiguredScopeItemCreate(
+                scope_type=ScopeType.RESOURCE_GROUP.value,
+                scope_identifier="/subscriptions/f718c261-ab85-49fd-907e-99c022cc2aeb/resourceGroups/rg-finops-eastus",
+                parent_scope_identifier="f718c261-ab85-49fd-907e-99c022cc2aeb",
+                display_name="rg-finops-eastus",
+                region="eastus",
+                selection_state=SelectionState.INCLUDED.value,
+            ),
+            ConfiguredScopeItemCreate(
+                scope_type=ScopeType.DATABRICKS_WORKSPACE.value,
+                scope_identifier="/subscriptions/f718c261-ab85-49fd-907e-99c022cc2aeb/resourceGroups/rg-finops-eastus/providers/Microsoft.Databricks/workspaces/adb-lakehouse-eastus",
+                parent_scope_identifier="rg-finops-eastus",
+                display_name="adb-lakehouse-eastus",
+                region="eastus",
+                selection_state=SelectionState.INCLUDED.value,
+                metadata={"workspace_id": "642006393507276", "pricing_tier": "Premium"},
+            ),
+        ]
+
+        cfg_v1 = await repo.save_configuration(
+            connection_id=conn_id,
+            provider="azure",
+            scope_items=items_v1,
+            created_by="auditor@bizmetric.com",
+        )
+        await session.commit()
+        assert cfg_v1.configuration_version == 1
+        assert cfg_v1.active_status == "active"
+        assert len(cfg_v1.scope_items) == 3
+
+    # Step 2: Retrieve Active Configuration from PostgreSQL
+    async with session_factory() as session:
+        repo = ResourceConfigurationRepository(session)
+        retrieved = await repo.get_active_configuration(conn_id)
+        assert retrieved is not None
+        assert retrieved.connection_id == conn_id
+        assert retrieved.configuration_version == 1
+        assert retrieved.active_status == "active"
+        assert len(retrieved.scope_items) == 3
+
+        # Verify Databricks workspace metadata was stored and retrieved correctly
+        ws_items = [i for i in retrieved.scope_items if i.scope_type == ScopeType.DATABRICKS_WORKSPACE.value]
+        assert len(ws_items) == 1
+        assert ws_items[0].display_name == "adb-lakehouse-eastus"
+        assert ws_items[0].metadata_json.get("workspace_id") == "642006393507276"
+
+    # Step 3: Save Version 2 (with additional RG & Fabric workspace)
+    async with session_factory() as session:
+        repo = ResourceConfigurationRepository(session)
+
+        items_v2 = items_v1 + [
+            ConfiguredScopeItemCreate(
+                scope_type="fabric_workspace",
+                scope_identifier="ws-fabric-analytics-01",
+                display_name="Fabric Analytics Lakehouse",
+                selection_state=SelectionState.INCLUDED.value,
+                metadata={"capacity_id": "F64-EastUS"},
+            )
+        ]
+
+        cfg_v2 = await repo.save_configuration(
+            connection_id=conn_id,
+            provider="azure",
+            scope_items=items_v2,
+            created_by="auditor@bizmetric.com",
+        )
+        await session.commit()
+        assert cfg_v2.configuration_version == 2
+        assert cfg_v2.active_status == "active"
+        assert len(cfg_v2.scope_items) == 4
+
+    # Step 4: Verify Monotonic Versioning & Archival in PostgreSQL
+    async with session_factory() as session:
+        repo = ResourceConfigurationRepository(session)
+        active_cfg = await repo.get_active_configuration(conn_id)
+        assert active_cfg is not None
+        assert active_cfg.configuration_version == 2
+        assert len(active_cfg.scope_items) == 4
+
+        # Verify history holds both versions
+        history = await repo.list_versions(conn_id)
+        assert len(history) == 2
+        v1_record = next(c for c in history if c.configuration_version == 1)
+        v2_record = next(c for c in history if c.configuration_version == 2)
+        assert v1_record.active_status == "archived"
+        assert v2_record.active_status == "active"
+
+    await engine.dispose()
+

@@ -4,7 +4,6 @@ import { CloudProvider } from "@/types";
 import { ENABLE_AI_ARCHITECT } from "@/config/features";
 import {
   Search,
-  Globe,
   Sparkles,
   Calculator,
   AlertTriangle,
@@ -18,8 +17,8 @@ interface TopNavProps {
   aiStatus: "standby" | "busy" | "verified" | "error";
   pricingStatus: "standby" | "verified" | "warning";
   monthlyTotal: string | null;
-  targetRegion: string;
-  onRegionChange: (region: string) => void;
+  targetRegion?: string;
+  onRegionChange?: (region: string) => void;
   onOpenMobileMenu: () => void;
   onScrollToCost: () => void;
   searchQuery: string;
@@ -33,8 +32,6 @@ export const TopNav: React.FC<TopNavProps> = ({
   aiStatus,
   pricingStatus,
   monthlyTotal,
-  targetRegion,
-  onRegionChange,
   onOpenMobileMenu,
   onScrollToCost,
   searchQuery,
@@ -42,14 +39,6 @@ export const TopNav: React.FC<TopNavProps> = ({
   connectedScope,
   onSwitchConnection,
 }) => {
-  const regions = [
-    { id: "eastus", label: "East US (eastus)" },
-    { id: "westeurope", label: "West Europe (westeurope)" },
-    { id: "centralus", label: "Central US (centralus)" },
-    { id: "southeastasia", label: "Southeast Asia (southeastasia)" },
-    { id: "centralindia", label: "Central India (centralindia)" },
-  ];
-
   return (
     <header className="topbar-surface sticky top-0 z-30 h-14 px-4 sm:px-6 flex items-center justify-between gap-3">
       {/* Left: Mobile Menu & Search Input */}
@@ -106,22 +95,6 @@ export const TopNav: React.FC<TopNavProps> = ({
           </div>
         ) : null}
 
-        {/* Region Selector */}
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-slate-200 bg-white text-xs">
-          <Globe className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-          <select
-            value={targetRegion}
-            onChange={(e) => onRegionChange(e.target.value)}
-            aria-label="Cloud Region Selector"
-            className="bg-transparent text-navy-800 font-medium text-xs focus:outline-none cursor-pointer pr-1"
-          >
-            {regions.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </div>
 
         {/* Foundry Status Pill (Only if AI Architect is enabled) */}
         {ENABLE_AI_ARCHITECT && (

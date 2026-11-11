@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useEffect } from "react";
+import Image from "next/image";
 import { Sidebar, ViewMode } from "@/components/Sidebar";
 import { TopNav } from "@/components/TopNav";
 import { LandingView } from "@/components/LandingView";
@@ -23,6 +24,7 @@ import { SettingsModal } from "@/components/SettingsModal";
 import { ConfigurationView } from "@/components/ConfigurationView";
 import { DatabricksWorkspaceDetailView } from "@/components/DatabricksWorkspaceDetailView";
 import { FinOpsCommandCenterView } from "@/components/FinOpsCommandCenterView";
+import { TopLoadingProgressBar } from "@/components/shared/TopLoadingProgressBar";
 import { CloudScope, DatabricksModuleId } from "@/types/navigation";
 import {
   ApiErrorDetail,
@@ -54,7 +56,6 @@ import {
   ArrowRight,
   ArrowLeft,
   ShieldCheck,
-  Layers,
 } from "lucide-react";
 
 const DEFAULT_ASSUMPTIONS: WorkloadAssumptions = {
@@ -87,6 +88,25 @@ export default function Home() {
     subscription_id: "sub-prod-01",
     resource_group: "rg-finops-eastus",
     display_name: "rg-finops-eastus",
+    workspace_id: "642006393507276",
+    workspace_name: "Azure Databricks Dev",
+    workspace_url: "https://adb-642006393507276.16.azuredatabricks.net",
+    tenant_id: "tenant-bizmetric-prod",
+    region: "northcentralus",
+    status: "connected",
+    auth_status: "authenticated",
+    connection_verification_status: "verified",
+    date_range: { start: "2026-11-01", end: "2026-11-30" },
+    environment: "Production",
+    data_freshness: "2026-11-10T12:00:00Z",
+    source_availability: {
+      system_tables: true,
+      discovery: true,
+      cost_management: true,
+      query_history: true,
+      audit_logs: true,
+      token_economics: true,
+    },
   });
   const [activeDatabricksModule, setActiveDatabricksModule] =
     useState<DatabricksModuleId>("overview");
@@ -102,6 +122,81 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Session storage persistence for activeCloudScope
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedScope = sessionStorage.getItem("finops_active_scope");
+        if (savedScope) {
+          const parsed = JSON.parse(savedScope) as CloudScope;
+          setActiveCloudScope((prev) => ({ ...prev, ...parsed }));
+        }
+      } catch (err) {
+        console.warn("Could not parse saved active scope from sessionStorage", err);
+      }
+    }
+  }, []);
+
+  const handleUpdateCloudScope = useCallback((newScope: CloudScope) => {
+    setActiveCloudScope((prev) => {
+      const merged: CloudScope = {
+        ...prev,
+        ...newScope,
+        workspace_id: newScope.workspace_id || prev.workspace_id || "642006393507276",
+        workspace_name: newScope.workspace_name || prev.workspace_name || "Azure Databricks Dev",
+        workspace_url:
+          newScope.workspace_url ||
+          prev.workspace_url ||
+          "https://adb-642006393507276.16.azuredatabricks.net",
+        tenant_id: newScope.tenant_id || prev.tenant_id || "tenant-bizmetric-prod",
+        region: newScope.region || prev.region || "northcentralus",
+        auth_status: newScope.auth_status || prev.auth_status || "authenticated",
+        connection_verification_status:
+          newScope.connection_verification_status || prev.connection_verification_status || "verified",
+        date_range: newScope.date_range || prev.date_range || { start: "2026-11-01", end: "2026-11-30" },
+        environment: newScope.environment || prev.environment || "Production",
+        data_freshness: newScope.data_freshness || prev.data_freshness || "2026-11-10T12:00:00Z",
+        source_availability: newScope.source_availability || prev.source_availability || {
+          system_tables: true,
+          discovery: true,
+          cost_management: true,
+          query_history: true,
+          audit_logs: true,
+          token_economics: true,
+        },
+      };
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("finops_active_scope", JSON.stringify(merged));
+        } catch (err) {
+          console.warn("Could not save active scope to sessionStorage", err);
+        }
+      }
+      return merged;
+    });
+  }, []);
+
+  const handleSelectSubscriptionFromLanding = useCallback(
+    (subId: string, subName: string) => {
+      const isProd = subId === "sub-prod-01" || subId.includes("prod");
+      const targetRg = isProd ? "rg-finops-eastus" : "rg-analytics-databricks";
+      const newScope: CloudScope = {
+        provider: "azure",
+        scope_type: "azure_subscription",
+        subscription_ids: [subId],
+        subscription_id: subId,
+        resource_groups: [targetRg],
+        resource_group: targetRg,
+        display_name: `${subName} (${targetRg})`,
+        is_multi_scope: false,
+        status: "connected",
+      };
+      handleUpdateCloudScope(newScope);
+      setActiveView("configuration");
+    },
+    [handleUpdateCloudScope]
+  );
 
   // Initial load of Databricks discovery snapshot
   useEffect(() => {
@@ -505,29 +600,33 @@ export default function Home() {
     return (
       <div className="min-h-screen bg-background text-navy-900 flex flex-col">
         {/* Connection Onboarding Top Header */}
-        <header className="topbar-surface sticky top-0 z-30 h-14 px-4 sm:px-6 flex items-center justify-between border-b border-slate-200 bg-white">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-brand-600 text-white flex items-center justify-center font-bold shadow-2xs">
-              <Layers className="w-4 h-4" />
+        <header className="topbar-surface sticky top-0 z-30 h-16 px-4 sm:px-6 flex items-center justify-between border-b border-slate-200 bg-white">
+          <div className="flex items-center gap-3">
+            <div className="relative h-9 w-32 flex items-center shrink-0">
+              <Image
+                src="/bizmetric-logo.png"
+                alt="Bizmetric Logo"
+                width={130}
+                height={36}
+                className="object-contain"
+                priority
+              />
             </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-xs text-navy-900 tracking-tight">
+            <div className="border-l border-slate-200 pl-3">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-navy-950 tracking-tight">
                   FinOps &amp; Infrastructure Intelligence Platform
                 </span>
-                <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-blue-50 text-brand-600 border border-blue-200">
-                  POC
-                </span>
               </div>
-              <span className="text-[10px] text-slate-400 block">
-                Connect your cloud account to begin
+              <span className="text-xs text-slate-500 block">
+                Connect your cloud account to begin.
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-medium">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-semibold">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
               <span>Strictly Read-Only &bull; Zero-Execution Policy</span>
             </span>
           </div>
@@ -538,23 +637,50 @@ export default function Home() {
           <ConnectCloudView
             onConnectionSelected={(conn) => {
               setActiveConnection(conn);
-              setActiveView("monitoring");
+              const isGcp = conn.provider === "gcp";
+              const newScope: CloudScope = {
+                provider: isGcp ? "gcp" : "azure",
+                scope_type: isGcp ? "all" : "azure_subscription",
+                account_id: conn.id,
+                tenant_id: conn.tenant_or_org_id || undefined,
+                subscription_ids: !isGcp ? [conn.scope_id] : undefined,
+                subscription_id: !isGcp ? conn.scope_id : undefined,
+                display_name: conn.display_name || conn.name,
+                is_multi_scope: false,
+                status: "connected",
+              };
+              handleUpdateCloudScope(newScope);
+              setActiveView("configuration");
             }}
             onContinueToDemo={() => {
-              setActiveConnection({
-                id: "conn-azure-reference",
-                name: "Azure Reference Tenant",
+              const demoConn: CloudConnection = {
+                id: "conn-azure-prod",
+                name: "Azure Production Account",
                 provider: "azure",
                 scope_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-                display_name: "Azure Sponsorship (f718c261...)",
+                display_name: "Azure Production Account (sub-prod-01)",
+                tenant_or_org_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
                 auth_method: "azure_cli_credentials",
                 status: "connected",
                 is_live: true,
-                capabilities: ["inventory", "monitoring", "pricing"],
+                capabilities: ["inventory", "monitoring", "pricing", "system_tables", "onelake"],
                 access_limitations: [],
-                last_verified_at: new Date().toISOString(),
-              });
-              setActiveView("monitoring");
+                last_verified_at: "2026-11-08T12:00:00.000Z",
+              };
+              setActiveConnection(demoConn);
+              const newScope: CloudScope = {
+                provider: "azure",
+                scope_type: "azure_subscription",
+                account_id: demoConn.id,
+                tenant_id: demoConn.tenant_or_org_id || undefined,
+                subscription_ids: [demoConn.scope_id],
+                subscription_id: demoConn.scope_id,
+                display_name: demoConn.display_name,
+                is_multi_scope: false,
+                status: "connected",
+              };
+              handleUpdateCloudScope(newScope);
+              setActiveView("configuration");
             }}
           />
         </main>
@@ -621,8 +747,11 @@ export default function Home() {
               activeConnection?.scope_id ||
               "rg-finops-eastus",
           }}
-          onSwitchConnection={() => setActiveView("configuration")}
+          onSwitchConnection={() => setActiveView("connections")}
         />
+
+        {/* Global Loading and Progress Indicator */}
+        <TopLoadingProgressBar />
 
         {/* Main Content Viewport — Full-Width Responsive Container */}
         <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 pt-6 pb-16 min-w-0">
@@ -643,6 +772,7 @@ export default function Home() {
                   setActiveView(v);
                 }
               }}
+              onSelectSubscription={handleSelectSubscriptionFromLanding}
               monthlyTotal={costBreakdown?.total_monthly || null}
               connectedScope={
                 activeConnection
@@ -971,7 +1101,7 @@ export default function Home() {
               initialConnection={activeConnection}
               activeTab={activeMonitoringTab}
               onTabChange={handleSelectMonitoringTab}
-              onSwitchConnection={() => setActiveConnection(null)}
+              onSwitchConnection={() => setActiveView("connections")}
             />
           )}
 
@@ -991,7 +1121,7 @@ export default function Home() {
             <ConfigurationView
               activeScope={activeCloudScope}
               onSelectScope={(scope) => {
-                setActiveCloudScope(scope);
+                handleUpdateCloudScope(scope);
                 if (scope.provider === "databricks") {
                   setActiveView("databricks");
                 } else {
@@ -1005,7 +1135,30 @@ export default function Home() {
             />
           )}
 
-          {/* SCREEN 11: Azure Databricks Multi-Module Workspace View (14 Modules) */}
+          {/* SCREEN 10B: Dedicated Cloud Connection Management */}
+          {activeView === "connections" && (
+            <ConnectCloudView
+              currentActiveConnectionId={activeConnection?.id || "conn-azure-prod"}
+              onConnectionSelected={(conn) => {
+                setActiveConnection(conn);
+                const isGcp = conn.provider === "gcp";
+                const newScope: CloudScope = {
+                  provider: isGcp ? "gcp" : "azure",
+                  scope_type: isGcp ? "all" : "azure_subscription",
+                  subscription_ids: !isGcp ? [conn.scope_id] : undefined,
+                  subscription_id: !isGcp ? conn.scope_id : undefined,
+                  display_name: conn.display_name || conn.name,
+                  is_multi_scope: false,
+                  status: "connected",
+                };
+                handleUpdateCloudScope(newScope);
+                setActiveView("configuration");
+              }}
+              onCancel={() => setActiveView("configuration")}
+            />
+          )}
+
+          {/* SCREEN 11: Azure Databricks Multi-Module Workspace View (11 Operations Modules) */}
           {activeView === "databricks" && (
             <DatabricksWorkspaceDetailView
               connection={{
@@ -1023,12 +1176,39 @@ export default function Home() {
               }}
               discovery={databricksDiscovery}
               activeModuleId={activeDatabricksModule}
-              onSelectModule={(mod) => setActiveDatabricksModule(mod)}
+              onSelectModule={(mod) => {
+                const finopsMap: Record<string, FinOpsModule> = {
+                  exec_overview: "overview",
+                  cost_explorer: "cost",
+                  cost: "cost",
+                  cost_allocation: "allocation",
+                  allocation: "allocation",
+                  cost_billing: "chargeback",
+                  chargeback: "chargeback",
+                  billing: "chargeback",
+                  forecast: "forecast",
+                  anomaly: "anomaly",
+                  recommend: "recommend",
+                  ai_economics: "ai",
+                  ai: "ai",
+                  governance: "governance",
+                  reports: "reports",
+                };
+                if (mod in finopsMap) {
+                  setActiveFinOpsModule(finopsMap[mod]);
+                  setActiveView("finops");
+                } else {
+                  setActiveDatabricksModule(mod as DatabricksModuleId);
+                }
+              }}
               isLoading={isDiscoveringDatabricks}
               onBack={() => setActiveView("configuration")}
               onRefresh={handleRefreshDatabricks}
               activeScope={activeCloudScope}
-              onSelectScope={(scope) => setActiveCloudScope(scope)}
+              onSelectScope={(scope) => {
+                handleUpdateCloudScope(scope);
+                handleRefreshDatabricks();
+              }}
               onFocusScope={(child) => {
                 setActiveCloudScope((prev) => ({
                   ...prev,
@@ -1040,14 +1220,36 @@ export default function Home() {
             />
           )}
 
-          {/* SCREEN 12: FinOps Command Center (15 Full Modules) */}
+          {/* SCREEN 12: FinOps Command Center (10 Cost Intelligence Modules) */}
           {activeView === "finops" && (
             <FinOpsCommandCenterView
               activeModule={activeFinOpsModule}
-              onSelectModule={(mod) => setActiveFinOpsModule(mod)}
-              selectedWorkspaceId={activeCloudScope.workspace_id || "databricks-azure-dev"}
+              onSelectModule={(mod) => {
+                const opsModules = [
+                  "clusters",
+                  "warehouses",
+                  "jobs",
+                  "pipelines",
+                  "serving",
+                  "catalog",
+                  "apps",
+                  "system_tables",
+                  "query_history",
+                  "audit",
+                ];
+                if (opsModules.includes(mod)) {
+                  setActiveDatabricksModule(mod as DatabricksModuleId);
+                  setActiveView("databricks");
+                } else {
+                  setActiveFinOpsModule(mod as FinOpsModule);
+                }
+              }}
+              selectedWorkspaceId={activeCloudScope.workspace_id || "642006393507276"}
               activeScope={activeCloudScope}
-              onSelectScope={(scope) => setActiveCloudScope(scope)}
+              onSelectScope={(scope) => {
+                handleUpdateCloudScope(scope);
+                handleRefreshDatabricks();
+              }}
             />
           )}
         </main>

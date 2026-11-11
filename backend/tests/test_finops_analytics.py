@@ -482,3 +482,119 @@ def test_finops_ai_analysis_and_anomaly_status(service: FinOpsAnalyticsService) 
     assert target_anom.status == "Investigating"
     assert target_anom.percentage_deviation == "+180.9%"
     assert len(target_anom.root_cause_hypotheses) > 0
+
+
+def test_savings_reconciliation_hierarchy_and_lifecycle(service: FinOpsAnalyticsService) -> None:
+    """Verify exact 5-tier savings reconciliation according to FinOps standards.
+
+    Checks:
+    - Potential savings ($31,340) is NOT conflated with approved savings ($24,530).
+    - Estimated savings ($31,280) is NOT conflated with approved savings ($24,530).
+    - Realized savings is strictly $0.00 under zero-execution.
+    - Implemented savings is strictly $0.00 under zero-execution.
+    - All 5 recommendations contain full evidence, methodology, and action descriptions.
+    """
+    advisor = service.get_optimization_advisor(connection_id="databricks-azure-dev")
+    kpis = advisor.kpis
+
+    # 1. Verify exact reconciled values
+    assert kpis["potential_savings"].value == 31340.0
+    assert kpis["potential_savings"].formatted_value == "$31,340"
+
+    assert kpis["estimated_savings"].value == 31280.0
+    assert kpis["estimated_savings"].formatted_value == "$31,280"
+
+    assert kpis["approved_savings"].value == 24530.0
+    assert kpis["approved_savings"].formatted_value == "$24,530"
+
+    assert kpis["implemented_savings"].value == 0.0
+    assert kpis["implemented_savings"].formatted_value == "$0.00"
+
+    assert kpis["realized_savings"].value == 0.0
+    assert kpis["realized_savings"].formatted_value == "$0.00"
+
+    # 2. Strict non-conflation assertions
+    assert kpis["potential_savings"].value != kpis["approved_savings"].value
+    assert kpis["estimated_savings"].value != kpis["approved_savings"].value
+    assert kpis["realized_savings"].value == 0.0
+    assert kpis["approved_savings"].value != kpis["realized_savings"].value
+
+    # 3. Sum of all 5 recommendations must exactly equal approved savings ($24,530)
+    recs = advisor.recommendations
+    assert len(recs) == 5
+    assert sum(r.estimated_savings_monthly for r in recs) == 24530.0
+
+    # 4. Forensic verification of each recommendation's 10 required attributes
+    for r in recs:
+        assert r.resource_name, f"Recommendation {r.id} missing resource_name"
+        assert r.resource_id, f"Recommendation {r.id} missing resource_id"
+        assert r.finding, f"Recommendation {r.id} missing finding"
+        assert r.recommended_action, f"Recommendation {r.id} missing recommended_action"
+        assert r.calculation_methodology, f"Recommendation {r.id} missing calculation_methodology"
+        assert r.confidence_pct > 0, f"Recommendation {r.id} missing confidence_pct"
+        assert r.effort in ("Low", "Medium", "High"), f"Recommendation {r.id} invalid effort"
+        assert r.risk in ("Low", "Medium", "High"), f"Recommendation {r.id} invalid risk"
+        assert r.status in ("Approval required", "New", "Approved", "Deferred")
+        assert r.verified_realized_savings == 0.0, f"Recommendation {r.id} non-zero realized savings"
+
+
+def test_forecast_and_budget_calculations_and_accuracy(service: FinOpsAnalyticsService) -> None:
+    """Verify budget utilization, overrun calculation, scenario simulator, and accuracy metrics."""
+    fc = service.get_forecast_budgets(connection_id="databricks-azure-dev")
+    kpis = fc.kpis
+
+    # 1. Budget utilization arithmetic: 284,620 / 300,000 = 94.873% -> 94.9%
+    assert kpis["approved_budget"].value == 300000.0
+    assert kpis["actual_mtd"].value == 284620.0
+    assert kpis["budget_utilization"].value == 94.9
+    assert kpis["budget_utilization"].formatted_value == "94.9%"
+
+    # 2. Overrun calculation: 319,500 - 300,000 = 19,500
+    assert kpis["forecast_month_end"].value == 319500.0
+    assert kpis["projected_overrun"].value == 19500.0
+    assert kpis["projected_overrun"].formatted_value == "+$19,500"
+    assert kpis["projected_overrun"].is_favorable is False
+
+    # 3. Forecast accuracy metric: MUST display NOT AVAILABLE when insufficient 90d baseline
+    assert kpis["forecast_accuracy"].value is None
+    assert kpis["forecast_accuracy"].formatted_value == "NOT AVAILABLE"
+    assert kpis["forecast_accuracy"].status == KpiStatus.UNAVAILABLE
+    assert "Insufficient 90-day" in str(kpis["forecast_accuracy"].limitations)
+
+    # 4. Statistical confidence metric
+    assert kpis["forecast_confidence"].value == 87.0
+    assert kpis["forecast_confidence"].formatted_value == "87%"
+
+    # 5. Scenario simulator dynamic arithmetic
+    from cloud_recommender.schemas.finops import ScenarioSimulationRequest
+
+    # Test Case A: Aggressive optimization (30% compute, 50% token, 0% growth)
+    # 319500 - (91420 * 0.3) - (38460 * 0.5) = 319500 - 27426 - 19230 = 272844
+    sim_a = service.simulate_forecast_scenario(
+        ScenarioSimulationRequest(compute_save_pct=30.0, token_save_pct=50.0, growth_pct=0.0)
+    )
+    assert sim_a.adjusted_spend == 272844
+    assert sim_a.savings_vs_baseline == 46656
+    assert sim_a.is_favorable is True
+    assert "Under budget" in sim_a.delta_label
+
+    # Test Case B: High growth without optimization (0% compute, 0% token, +20% growth)
+    # 319500 * 1.2 = 383400
+    sim_b = service.simulate_forecast_scenario(
+        ScenarioSimulationRequest(compute_save_pct=0.0, token_save_pct=0.0, growth_pct=20.0)
+    )
+    assert sim_b.adjusted_spend == 383400
+    assert sim_b.savings_vs_baseline == -63900
+    assert sim_b.is_favorable is False
+    assert "Over budget" in sim_b.delta_label
+
+    # 6. Scope propagation: Unknown resource filter returns graceful empty states
+    empty_fc = service.get_forecast_budgets(
+        connection_id="databricks-azure-dev",
+        resource_id="unknown-resource-999",
+        resource_type="cluster",
+    )
+    assert empty_fc.kpis["approved_budget"].value is None
+    assert empty_fc.kpis["actual_mtd"].value is None
+    assert len(empty_fc.budget_controls) == 0
+

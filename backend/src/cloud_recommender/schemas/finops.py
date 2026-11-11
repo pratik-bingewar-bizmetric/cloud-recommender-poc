@@ -25,6 +25,11 @@ class KpiStatus(StrEnum):
     ESTIMATED = "ESTIMATED"
     STOPPED_WAREHOUSE = "STOPPED_WAREHOUSE"
     UNAVAILABLE = "UNAVAILABLE"
+    SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
+    NOT_AUTHORIZED = "NOT_AUTHORIZED"
+    NO_DATA_AVAILABLE = "NO_DATA_AVAILABLE"
+    INSUFFICIENT_HISTORY = "INSUFFICIENT_HISTORY"
+    NOT_ATTRIBUTABLE = "NOT_ATTRIBUTABLE"
 
 
 class KpiMetric(BaseModel):
@@ -129,6 +134,12 @@ class DecisionItem(BaseModel):
     lifecycle_stage: str = Field(
         default="Detected",
         description="Lifecycle: Detected, Analyzed, Approved, Scheduled, Implemented, Verified, Rejected, Deferred",
+    )
+    calculation_methodology: str = Field(
+        default="", description="Formula and telemetry source used to calculate estimated savings"
+    )
+    recommended_action: str = Field(
+        default="", description="Specific procedural action recommended"
     )
 
 

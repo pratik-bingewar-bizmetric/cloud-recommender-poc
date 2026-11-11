@@ -1,0 +1,56 @@
+# ==============================================================================
+# Azure Databricks Apps Manifest: Bizmetric FinOps Platform
+# Workspace: https://adb-642006393507276.16.azuredatabricks.net (Workspace ID: 642006393507276)
+# Application Name: bizmetric-finops
+# ==============================================================================
+# Security Policy:
+# - 100% Read-Only RBAC (Reader / Monitoring Reader / Account User)
+# - Zero-Execution Enforced (Zero automated cloud mutations, stopped warehouse remains stopped)
+# - Deterministic Billing Engine & Safe Fallback
+# ==============================================================================
+
+version: 1
+
+# Production startup entry point
+command:
+  - "python"
+  - "run_databricks_app.py"
+
+# Environment configuration
+env:
+  # Databricks Application Core
+  - name: "APP_NAME"
+    value: "bizmetric-finops"
+  - name: "APP_ENV"
+    value: "production"
+  - name: "DATABRICKS_HOST"
+    value: "https://adb-642006393507276.16.azuredatabricks.net"
+  - name: "DATABRICKS_WAREHOUSE_ID"
+    value: "05ed10a52697a344"
+  - name: "ZERO_EXECUTION_ENFORCED"
+    value: "true"
+
+  # Engine & Pricing Modes
+  - name: "LLM_PROVIDER"
+    value: "mock"
+  - name: "OFFLINE_PRICING_MODE"
+    value: "true"
+
+  # Database Security & TLS Configuration
+  # In production, set DATABASE_URL to your external Azure Database for PostgreSQL Flexible Server
+  # e.g. postgresql+asyncpg://finops_app_user:{{secrets/finops-secrets/pg-password}}@psql-finops-prod.postgres.database.azure.com:5432/cloud_recommender?ssl=require
+  - name: "DB_SSL_MODE"
+    value: "require"
+  - name: "DB_POOL_SIZE"
+    value: "10"
+  - name: "DB_MAX_OVERFLOW"
+    value: "10"
+  - name: "DB_POOL_RECYCLE"
+    value: "1800"
+
+  # Azure Integration (Read-Only)
+  - name: "AZURE_AUTH_METHOD"
+    value: "service_principal"
+  - name: "AZURE_ARM_BASE_URL"
+    value: "https://management.azure.com"
+

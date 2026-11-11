@@ -12,6 +12,7 @@ import {
   ServiceTokenBreakdown,
 } from "@/types";
 import { getTokenEconomics } from "@/lib/api";
+import { formatDeterministicTime } from "@/lib/dateTimeFormat";
 import { TokenConsumptionChart } from "@/components/TokenConsumptionChart";
 import {
   Coins,
@@ -974,11 +975,7 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
               {data?.generated_at && (
                 <span className="ml-2 text-slate-400">
                   &bull; Last updated:{" "}
-                  {new Date(data.generated_at).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  })}
+                  {formatDeterministicTime(data.generated_at, { showSeconds: true })}
                 </span>
               )}
             </p>
@@ -1744,10 +1741,7 @@ export const SectionTokenEconomics: React.FC<SectionTokenEconomicsProps> = ({
                 {activeData.usage_records.map((rec, i) => (
                   <tr key={i} className="hover:bg-slate-50/70 transition">
                     <td className="py-2.5 px-4 text-slate-500">
-                      {new Date(rec.timestamp).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                      {formatDeterministicTime(rec.timestamp)}
                     </td>
                     <td className="py-2.5 px-4 font-sans font-semibold text-navy-900">
                       {rec.model_name}

@@ -1,3 +1,5 @@
+import { globalLoadingManager } from "./loadingManager";
+
 import {
   ApiErrorDetail,
   ArchitectureComponent,
@@ -15,7 +17,9 @@ import {
   WorkloadProfile,
 } from "@/types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined" ? "/api/v1" : "http://127.0.0.1:8000/api/v1");
 
 export class ApiError extends Error {
   status: number;
@@ -26,6 +30,22 @@ export class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
+  }
+}
+
+async function appFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const finish = globalLoadingManager.startRequest();
+  try {
+    const res = await fetch(input, init);
+    if (!res.ok) {
+      globalLoadingManager.finishRequest(true, `HTTP ${res.status}`);
+    } else {
+      finish();
+    }
+    return res;
+  } catch (err) {
+    globalLoadingManager.finishRequest(true, err instanceof Error ? err.message : "Request failed");
+    throw err;
   }
 }
 
@@ -53,7 +73,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 export async function checkBackendHealth(): Promise<{ status: string }> {
   const rootUrl = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
-  const res = await fetch(`${rootUrl}/health`);
+  const res = await appFetch(`${rootUrl}/health`);
   return handleResponse<{ status: string }>(res);
 }
 
@@ -62,7 +82,7 @@ export async function analyzeRequirements(
   targetRegion: string = "eastus",
   customerPreset?: number
 ): Promise<RequirementsAnalysisResponse> {
-  const res = await fetch(`${API_BASE_URL}/analysis/requirements`, {
+  const res = await appFetch(`${API_BASE_URL}/analysis/requirements`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -80,7 +100,7 @@ export async function generateArchitecture(
   clarifications: ClarifyingAnswer[],
   targetRegion: string = "eastus"
 ): Promise<RecommendationReport> {
-  const res = await fetch(`${API_BASE_URL}/architecture/generate`, {
+  const res = await appFetch(`${API_BASE_URL}/architecture/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -110,7 +130,7 @@ export async function simulatePricing(
   targetRegion: string = "eastus",
   safetyBufferPercentage: string = "15.00"
 ): Promise<CostSimulationResponse> {
-  const res = await fetch(`${API_BASE_URL}/pricing/simulate`, {
+  const res = await appFetch(`${API_BASE_URL}/pricing/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -133,12 +153,12 @@ import type {
 } from "@/types";
 
 export async function getProvidersStatus(): Promise<ProviderConnectionStatus[]> {
-  const res = await fetch(`${API_BASE_URL}/inventory/providers/status`);
+  const res = await appFetch(`${API_BASE_URL}/inventory/providers/status`);
   return handleResponse<ProviderConnectionStatus[]>(res);
 }
 
 export async function listAzureSubscriptions(): Promise<CloudScopeSummary[]> {
-  const res = await fetch(`${API_BASE_URL}/inventory/azure/subscriptions`);
+  const res = await appFetch(`${API_BASE_URL}/inventory/azure/subscriptions`);
   return handleResponse<CloudScopeSummary[]>(res);
 }
 
@@ -150,7 +170,7 @@ export async function analyzeAzureSubscription(payload: {
   metric_window_days?: number;
   refresh_telemetry?: boolean;
 }): Promise<SubscriptionOrProjectAnalysis> {
-  const res = await fetch(`${API_BASE_URL}/inventory/azure/analyze`, {
+  const res = await appFetch(`${API_BASE_URL}/inventory/azure/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -166,7 +186,7 @@ export async function analyzeAzureSubscription(payload: {
 }
 
 export async function listGcpProjects(): Promise<CloudScopeSummary[]> {
-  const res = await fetch(`${API_BASE_URL}/inventory/gcp/projects`);
+  const res = await appFetch(`${API_BASE_URL}/inventory/gcp/projects`);
   return handleResponse<CloudScopeSummary[]>(res);
 }
 
@@ -177,7 +197,7 @@ export async function analyzeGcpProject(payload: {
   metric_window_days?: number;
   refresh_telemetry?: boolean;
 }): Promise<SubscriptionOrProjectAnalysis> {
-  const res = await fetch(`${API_BASE_URL}/inventory/gcp/analyze`, {
+  const res = await appFetch(`${API_BASE_URL}/inventory/gcp/analyze`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -194,7 +214,7 @@ export async function analyzeGcpProject(payload: {
 export async function compareMultiCloud(
   payload: MultiCloudComparisonRequest
 ): Promise<MultiCloudComparisonResponse> {
-  const res = await fetch(`${API_BASE_URL}/inventory/compare`, {
+  const res = await appFetch(`${API_BASE_URL}/inventory/compare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -210,7 +230,7 @@ export async function getMonitoringOverview(
   payload: MonitoringQueryRequest,
   signal?: AbortSignal
 ): Promise<MonitoringOverviewResponse> {
-  const res = await fetch(`${API_BASE_URL}/monitoring/overview`, {
+  const res = await appFetch(`${API_BASE_URL}/monitoring/overview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -222,7 +242,7 @@ export async function getMonitoringOverview(
 export async function getResourceMonitoringDetail(
   payload: MonitoringQueryRequest
 ): Promise<ResourceDetailMonitoringResponse> {
-  const res = await fetch(`${API_BASE_URL}/monitoring/resource`, {
+  const res = await appFetch(`${API_BASE_URL}/monitoring/resource`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -233,7 +253,7 @@ export async function getResourceMonitoringDetail(
 export async function searchMonitoringLogs(
   payload: LogSearchRequest
 ): Promise<LogSearchResponse> {
-  const res = await fetch(`${API_BASE_URL}/monitoring/logs`, {
+  const res = await appFetch(`${API_BASE_URL}/monitoring/logs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -242,7 +262,7 @@ export async function searchMonitoringLogs(
 }
 
 export async function getMonitoringSources(): Promise<MonitoringSourcesResponse> {
-  const res = await fetch(`${API_BASE_URL}/monitoring/sources`, {
+  const res = await appFetch(`${API_BASE_URL}/monitoring/sources`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -254,7 +274,7 @@ export async function getMonitoringSources(): Promise<MonitoringSourcesResponse>
 // ----------------------------------------------------------------------------
 
 export async function listConnections(): Promise<import("@/types").CloudConnection[]> {
-  const res = await fetch(`${API_BASE_URL}/connections`, {
+  const res = await appFetch(`${API_BASE_URL}/connections`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -264,7 +284,7 @@ export async function listConnections(): Promise<import("@/types").CloudConnecti
 export async function validateConnection(
   payload: import("@/types").ValidateConnectionRequest
 ): Promise<import("@/types").ConnectionValidationResponse> {
-  const res = await fetch(`${API_BASE_URL}/connections/validate`, {
+  const res = await appFetch(`${API_BASE_URL}/connections/validate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -275,7 +295,7 @@ export async function validateConnection(
 export async function createConnection(
   payload: import("@/types").CreateConnectionRequest
 ): Promise<import("@/types").CloudConnection> {
-  const res = await fetch(`${API_BASE_URL}/connections`, {
+  const res = await appFetch(`${API_BASE_URL}/connections`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -291,7 +311,7 @@ export async function getTokenEconomics(
   payload: MonitoringQueryRequest,
   signal?: AbortSignal
 ): Promise<import("@/types").TokenEconomicsSummary> {
-  const res = await fetch(`${API_BASE_URL}/monitoring/token-economics`, {
+  const res = await appFetch(`${API_BASE_URL}/monitoring/token-economics`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -308,7 +328,7 @@ export async function discoverScopes(
   connectionId: string,
   provider = "azure"
 ): Promise<import("@/types").ScopeDiscoveryResponse> {
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/configuration/scopes/discover?connection_id=${encodeURIComponent(connectionId)}&provider=${encodeURIComponent(provider)}`,
     {
       method: "GET",
@@ -321,7 +341,7 @@ export async function discoverScopes(
 export async function getConfiguration(
   connectionId: string
 ): Promise<import("@/types").ResourceConfigurationResponse | null> {
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/configuration?connection_id=${encodeURIComponent(connectionId)}`,
     {
       method: "GET",
@@ -335,7 +355,7 @@ export async function getConfiguration(
 export async function saveConfiguration(
   data: import("@/types").ResourceConfigurationCreate
 ): Promise<import("@/types").ResourceConfigurationResponse> {
-  const res = await fetch(`${API_BASE_URL}/configuration`, {
+  const res = await appFetch(`${API_BASE_URL}/configuration`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -346,7 +366,7 @@ export async function saveConfiguration(
 export async function getConfigurationStatus(
   connectionId: string
 ): Promise<import("@/types").ConfigurationStatusResponse> {
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/configuration/status?connection_id=${encodeURIComponent(connectionId)}`,
     {
       method: "GET",
@@ -359,7 +379,7 @@ export async function getConfigurationStatus(
 export async function checkIngestionReadiness(
   connectionId: string
 ): Promise<import("@/types").IngestionReadinessResponse> {
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/ingestion/readiness?connection_id=${encodeURIComponent(connectionId)}`,
     {
       method: "GET",
@@ -373,7 +393,7 @@ export async function triggerIngestionRun(
   connectionId: string,
   triggeredBy = "operator"
 ): Promise<import("@/types").IngestionRunResponse> {
-  const res = await fetch(`${API_BASE_URL}/ingestion/runs`, {
+  const res = await appFetch(`${API_BASE_URL}/ingestion/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ connection_id: connectionId, triggered_by: triggeredBy }),
@@ -385,7 +405,7 @@ export async function listIngestionRuns(
   connectionId: string,
   limit = 10
 ): Promise<import("@/types").IngestionRunSummaryResponse[]> {
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/ingestion/runs?connection_id=${encodeURIComponent(connectionId)}&limit=${limit}`,
     {
       method: "GET",
@@ -398,7 +418,7 @@ export async function listIngestionRuns(
 export async function retryIngestionRun(
   runId: string
 ): Promise<import("@/types").IngestionRunResponse> {
-  const res = await fetch(`${API_BASE_URL}/ingestion/runs/${encodeURIComponent(runId)}/retry`, {
+  const res = await appFetch(`${API_BASE_URL}/ingestion/runs/${encodeURIComponent(runId)}/retry`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -410,7 +430,7 @@ export async function retryIngestionRun(
 // ----------------------------------------------------------------------------
 
 export async function listDatabricksConnections(): Promise<import("@/types").DatabricksConnection[]> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections`, {
+  const res = await appFetch(`${API_BASE_URL}/databricks/connections`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -420,7 +440,7 @@ export async function listDatabricksConnections(): Promise<import("@/types").Dat
 export async function getDatabricksConnection(
   connectionId: string
 ): Promise<import("@/types").DatabricksConnection> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}`, {
+  const res = await appFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -430,7 +450,7 @@ export async function getDatabricksConnection(
 export async function testDatabricksConnection(
   connectionId: string
 ): Promise<import("@/types").DatabricksConnectionTestResponse> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/test`, {
+  const res = await appFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -440,7 +460,7 @@ export async function testDatabricksConnection(
 export async function getWorkspaceDiscovery(
   connectionId: string
 ): Promise<import("@/types").DatabricksWorkspaceDiscovery> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery`, {
+  const res = await appFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -450,7 +470,7 @@ export async function getWorkspaceDiscovery(
 export async function refreshWorkspaceDiscovery(
   connectionId: string
 ): Promise<import("@/types").DatabricksWorkspaceDiscovery> {
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery/refresh`,
     {
       method: "POST",
@@ -463,7 +483,7 @@ export async function refreshWorkspaceDiscovery(
 export async function getWorkspaceHealth(
   connectionId: string
 ): Promise<import("@/types").DatabricksConnectionHealth> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/health`, {
+  const res = await appFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/health`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -487,7 +507,7 @@ export async function getFinOpsOverview(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/overview?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/overview?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -504,7 +524,7 @@ export async function getFinOpsCostExplorer(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/cost-explorer?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/cost-explorer?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -524,7 +544,7 @@ export async function getFinOpsQueryHistory(
   if (warehouseId) params.append("warehouse_id", warehouseId);
   if (user) params.append("user", user);
   if (status) params.append("status", status);
-  const res = await fetch(`${API_BASE_URL}/finops/query-history?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/query-history?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -537,7 +557,7 @@ export async function getFinOpsSystemTables(
 ): Promise<import("@/types").SystemTablesExplorerData> {
   const params = new URLSearchParams({ connection_id: connectionId });
   if (workspaceId) params.append("workspace_id", workspaceId);
-  const res = await fetch(`${API_BASE_URL}/finops/system-tables?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/system-tables?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -554,7 +574,7 @@ export async function getFinOpsCostAllocation(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/cost-allocation?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/cost-allocation?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -571,7 +591,7 @@ export async function getFinOpsComputeWarehouses(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/compute-warehouses?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/compute-warehouses?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -588,7 +608,7 @@ export async function getFinOpsAiEconomics(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/ai-economics?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/ai-economics?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -605,7 +625,7 @@ export async function getFinOpsDataStorage(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/data-storage?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/data-storage?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -622,7 +642,7 @@ export async function getFinOpsNetworkCloud(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/network-cloud?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/network-cloud?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -639,7 +659,7 @@ export async function getFinOpsOptimizationAdvisor(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/optimization-advisor?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/optimization-advisor?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -651,7 +671,7 @@ export async function recordFinOpsRecommendationAction(
   action: string,
   notes?: string
 ): Promise<import("@/types").FinOpsDecisionItem> {
-  const res = await fetch(`${API_BASE_URL}/finops/optimization-advisor/${encodeURIComponent(decisionId)}/action`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/optimization-advisor/${encodeURIComponent(decisionId)}/action`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, notes }),
@@ -669,7 +689,7 @@ export async function getFinOpsForecastBudgets(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/forecast-budgets?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/forecast-budgets?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -681,7 +701,7 @@ export async function simulateFinOpsScenario(
   tokenSavePct: number,
   growthPct: number
 ): Promise<import("@/types").ScenarioSimulationResult> {
-  const res = await fetch(`${API_BASE_URL}/finops/forecast-budgets/simulate`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/forecast-budgets/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -703,7 +723,7 @@ export async function getFinOpsAnomalyDetection(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/anomaly-detection?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/anomaly-detection?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -720,7 +740,7 @@ export async function getFinOpsGovernancePolicies(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/governance-policies?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/governance-policies?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -737,7 +757,7 @@ export async function getFinOpsShowbackChargeback(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/showback-chargeback?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/showback-chargeback?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -754,7 +774,7 @@ export async function getFinOpsWorkloadEconomics(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/workload-economics?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/workload-economics?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -771,7 +791,7 @@ export async function getFinOpsReportsAudit(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/reports-audit?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/reports-audit?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -788,7 +808,7 @@ export async function getFinOpsSettingsIntegrations(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(`${API_BASE_URL}/finops/settings-integrations?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/settings-integrations?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -806,7 +826,7 @@ export async function getFinOpsCanonicalKpi(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/finops/kpis/${encodeURIComponent(metricId)}?${params.toString()}`,
     {
       method: "GET",
@@ -824,7 +844,7 @@ export async function getFinOpsIngestionStatus(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").BillingIngestionStatusResponse> {
   const params = new URLSearchParams({ connection_id: connectionId });
-  const res = await fetch(`${API_BASE_URL}/finops/ingestion/status?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/ingestion/status?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -838,7 +858,7 @@ export async function getFinOpsIngestionRuns(
 ): Promise<import("@/types").BillingIngestionRunResponse[]> {
   const params = new URLSearchParams({ connection_id: connectionId, limit: String(limit) });
   if (workspaceId) params.append("workspace_id", workspaceId);
-  const res = await fetch(`${API_BASE_URL}/finops/ingestion/runs?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/ingestion/runs?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -850,7 +870,7 @@ export async function validateFinOpsIngestion(
   warehouseId = "05ed10a52697a344"
 ): Promise<import("@/types").IngestionValidateResponse> {
   const params = new URLSearchParams({ workspace_id: workspaceId, warehouse_id: warehouseId });
-  const res = await fetch(`${API_BASE_URL}/finops/ingestion/validate?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/ingestion/validate?${params.toString()}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -862,7 +882,7 @@ export async function previewFinOpsIngestion(
   limit = 10
 ): Promise<import("@/types").IngestionPreviewResponse> {
   const params = new URLSearchParams({ workspace_id: workspaceId, limit: String(limit) });
-  const res = await fetch(`${API_BASE_URL}/finops/ingestion/preview?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/ingestion/preview?${params.toString()}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -872,7 +892,7 @@ export async function previewFinOpsIngestion(
 export async function runFinOpsIngestion(
   payload: import("@/types").IngestionRunCreateRequest
 ): Promise<import("@/types").BillingIngestionRunResponse> {
-  const res = await fetch(`${API_BASE_URL}/finops/ingestion/run`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/ingestion/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -888,7 +908,7 @@ export async function getFinOpsBillingSummary(
   const params = new URLSearchParams({ connection_id: connectionId });
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
-  const res = await fetch(`${API_BASE_URL}/finops/billing/summary?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/billing/summary?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -911,7 +931,7 @@ export async function getFinOpsBillingUsage(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (recordType) params.append("record_type", recordType);
-  const res = await fetch(`${API_BASE_URL}/finops/billing/usage?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/billing/usage?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -925,7 +945,7 @@ export async function getFinOpsBillingPricing(
 ): Promise<{ total: number; records: import("@/types").BillingPriceRecord[] }> {
   const params = new URLSearchParams({ connection_id: connectionId, limit: String(limit) });
   if (skuName) params.append("sku_name", skuName);
-  const res = await fetch(`${API_BASE_URL}/finops/billing/pricing?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/billing/pricing?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -938,7 +958,7 @@ export async function getFinOpsBillingReconciliation(
 ): Promise<import("@/types").BillingReconciliationResponse> {
   const params = new URLSearchParams({ connection_id: connectionId });
   if (workspaceId) params.append("workspace_id", workspaceId);
-  const res = await fetch(`${API_BASE_URL}/finops/billing/reconciliation?${params.toString()}`, {
+  const res = await appFetch(`${API_BASE_URL}/finops/billing/reconciliation?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
@@ -958,7 +978,7 @@ export async function getFinOpsAiAnalysis(
   });
   if (resourceId) params.append("resource_id", resourceId);
   if (resourceType) params.append("resource_type", resourceType);
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/finops/ai-analysis/${encodeURIComponent(moduleId)}?${params.toString()}`,
     {
       method: "GET",
@@ -972,7 +992,7 @@ export async function updateFinOpsAnomalyStatus(
   anomalyId: string,
   status: string
 ): Promise<{ anomaly_id: string; status: string; updated_at: string }> {
-  const res = await fetch(
+  const res = await appFetch(
     `${API_BASE_URL}/finops/anomalies/${encodeURIComponent(anomalyId)}/status`,
     {
       method: "POST",

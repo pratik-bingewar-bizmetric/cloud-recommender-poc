@@ -32,13 +32,23 @@ def get_engine() -> AsyncEngine:
             "initializing_database_engine",
             pool_size=settings.db_pool_size,
             max_overflow=settings.db_max_overflow,
+            ssl_mode=settings.db_ssl_mode,
+            pool_recycle=settings.db_pool_recycle,
         )
+
+        connect_args: dict[str, Any] = {}
+        if settings.db_ssl_mode in ("require", "verify-ca", "verify-full") and "ssl=" not in settings.database_url:
+            connect_args["ssl"] = "require"
+
         _engine = create_async_engine(
             settings.database_url,
             pool_size=settings.db_pool_size,
             max_overflow=settings.db_max_overflow,
             echo=settings.db_echo,
             pool_pre_ping=settings.db_pool_pre_ping,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            connect_args=connect_args if connect_args else {},
         )
         _session_factory = async_sessionmaker(
             bind=_engine,

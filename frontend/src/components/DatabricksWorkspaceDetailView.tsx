@@ -11,12 +11,13 @@ import {
   SystemTablesExplorerData,
 } from "@/types";
 import { DatabricksModuleId, CloudScope, ChildResourceScope } from "@/types/navigation";
-import { getDatabricksModules } from "@/lib/navigationRegistry";
 import { getFinOpsSystemTables, getFinOpsQueryHistory } from "@/lib/api";
+import { formatDeterministicTime, formatDeterministicDateTime } from "@/lib/dateTimeFormat";
 import { ResourceDetailDrawer } from "@/components/shared/ResourceDetailDrawer";
 import { QueryDurationHistogram } from "@/components/shared/QueryDurationHistogram";
 import {
   ArrowLeft,
+  ArrowRight,
   RefreshCw,
   Server,
   Layers,
@@ -41,6 +42,7 @@ import {
   Target,
   X,
   Lock,
+  Coins,
 } from "lucide-react";
 
 interface DatabricksWorkspaceDetailViewProps {
@@ -55,115 +57,6 @@ interface DatabricksWorkspaceDetailViewProps {
   onSelectScope?: (scope: CloudScope) => void;
   onFocusScope?: (child: ChildResourceScope) => void;
 }
-
-const DEFAULT_SAMPLE_QUERIES: QueryHistoryItem[] = [
-  {
-    query_id: "01efb542-a720-1a6f-b280-36e2f6942001",
-    start_time: "2026-11-06T14:22:00Z",
-    duration_ms: 450,
-    duration_formatted: "450ms",
-    status: "FINISHED",
-    warehouse_id: "05ed10a52697a344",
-    warehouse_name: "Serverless Starter Warehouse",
-    rows_produced: 1420,
-    bytes_read: 842000,
-    bytes_written: 0,
-    user: "pratik.bingewar@bizmetric.com",
-    sql_statement: "SELECT * FROM system.billing.usage ORDER BY usage_start_time DESC LIMIT 100",
-    query_type: "SELECT",
-  },
-  {
-    query_id: "01efb541-9920-11ff-80c1-12a4f6942002",
-    start_time: "2026-11-06T13:45:10Z",
-    duration_ms: 1250,
-    duration_formatted: "1.25s",
-    status: "FINISHED",
-    warehouse_id: "05ed10a52697a344",
-    warehouse_name: "Serverless Starter Warehouse",
-    rows_produced: 320,
-    bytes_read: 2100000,
-    bytes_written: 0,
-    user: "pratik.bingewar@bizmetric.com",
-    sql_statement: "SELECT sku_name, SUM(usage_quantity) FROM system.billing.usage GROUP BY 1",
-    query_type: "SELECT",
-  },
-  {
-    query_id: "01efb540-7710-18de-9102-aa11b8942003",
-    start_time: "2026-11-06T12:10:00Z",
-    duration_ms: 80,
-    duration_formatted: "80ms",
-    status: "FAILED",
-    warehouse_id: "05ed10a52697a344",
-    warehouse_name: "Serverless Starter Warehouse",
-    rows_produced: 0,
-    bytes_read: 0,
-    bytes_written: 0,
-    user: "automation-spn",
-    sql_statement: "SELECT count(*) FROM system.compute.clusters",
-    query_type: "SELECT",
-    error_message: "Cannot run query: SQL warehouse 05ed10a52697a344 is in STOPPED state.",
-  },
-  {
-    query_id: "01efb53f-6610-17ce-8802-cc22b8942004",
-    start_time: "2026-11-06T11:05:00Z",
-    duration_ms: 8400,
-    duration_formatted: "8.40s",
-    status: "FINISHED",
-    warehouse_id: "05ed10a52697a344",
-    warehouse_name: "Serverless Starter Warehouse",
-    rows_produced: 48200,
-    bytes_read: 48900000,
-    bytes_written: 12000,
-    user: "data-eng-pipeline",
-    sql_statement: "MERGE INTO gold.daily_financial_summary AS target USING silver.staged_billing AS source ON target.id = source.id WHEN MATCHED THEN UPDATE SET *",
-    query_type: "MERGE",
-  },
-  {
-    query_id: "01efb53e-5510-16be-7702-bb11a7942005",
-    start_time: "2026-11-06T10:15:30Z",
-    duration_ms: 24500,
-    duration_formatted: "24.5s",
-    status: "FINISHED",
-    warehouse_id: "05ed10a52697a344",
-    warehouse_name: "Serverless Starter Warehouse",
-    rows_produced: 125000,
-    bytes_read: 230000000,
-    bytes_written: 0,
-    user: "powerbi-service-account",
-    sql_statement: "SELECT date, department, sum(amount) FROM enterprise.analytics.cube_spend GROUP BY CUBE(date, department)",
-    query_type: "SELECT",
-  },
-  {
-    query_id: "01efb53d-4410-15ae-6602-aa00a6942006",
-    start_time: "2026-11-06T09:00:15Z",
-    duration_ms: 95000,
-    duration_formatted: "1m 35s",
-    status: "FINISHED",
-    warehouse_id: "05ed10a52697a344",
-    warehouse_name: "Serverless Starter Warehouse",
-    rows_produced: 540000,
-    bytes_read: 980000000,
-    bytes_written: 0,
-    user: "finance-audit-analyst",
-    sql_statement: "SELECT * FROM system.billing.usage u JOIN system.billing.list_prices p ON u.sku_name = p.sku_name WHERE u.usage_date >= '2026-01-01'",
-    query_type: "SELECT",
-  },
-  {
-    query_id: "01efb53c-3310-149e-5502-99ff95942007",
-    start_time: "2026-11-06T08:00:00Z",
-    duration_ms: 340000,
-    duration_formatted: "5m 40s",
-    status: "FINISHED",
-    warehouse_id: "05ed10a52697a344",
-    warehouse_name: "Serverless Starter Warehouse",
-    rows_produced: 1200000,
-    bytes_read: 4200000000,
-    bytes_written: 0,
-    user: "lead-architect@bizmetric.com",
-    sql_statement: "OPTIMIZE gold.telemetry_events ZORDER BY (event_timestamp, tenant_id)",
-    query_type: "OPTIMIZE",
-  },
-];
 
 export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailViewProps> = ({
   connection,
@@ -200,9 +93,24 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   const [isQueryModalOpen, setIsQueryModalOpen] = useState<boolean>(false);
   const [isCopiedSql, setIsCopiedSql] = useState<boolean>(false);
 
-  // Billing Module State
-  const [billingPeriod, setBillingPeriod] = useState<string>("mtd");
-  const [billingChartMetric, setBillingChartMetric] = useState<"dbu" | "spend">("dbu");
+  // Module-specific search and filter states
+  const [clusterSearch, setClusterSearch] = useState<string>("");
+  const [clusterStatusFilter, setClusterStatusFilter] = useState<string>("all");
+
+  const [whSearch, setWhSearch] = useState<string>("");
+  const [whStateFilter, setWhStateFilter] = useState<string>("all");
+
+  const [jobSearch, setJobSearch] = useState<string>("");
+  const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
+
+  const [pipelineSearch, setPipelineSearch] = useState<string>("");
+  const [pipelineStateFilter, setPipelineStateFilter] = useState<string>("all");
+
+  const [servingStatusFilter, setServingStatusFilter] = useState<string>("all");
+
+  const [appSearch, setAppSearch] = useState<string>("");
+  const [appStatusFilter, setAppStatusFilter] = useState<string>("all");
+
 
   // Unity Catalog Explorer State
   const [selectedUcCatalog, setSelectedUcCatalog] = useState<string>("system");
@@ -424,7 +332,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
     makeResource("app-cement-forecasting", "cement-demand-forecasting", "app", "DEPLOYED", "finops-team", {
       runtime: "Python 3.11 / Streamlit",
       desc: "Live enterprise demand forecasting and operational telemetry.",
-      unattributed_cost_note: "Shared app compute is isolated in the Unattributed cost bucket ($1,240).",
+      unattributed_cost_note: "Shared app compute is isolated in the Unattributed cost bucket under FinOps Cost Allocation.",
     }),
     makeResource("app-mcp-ppt", "mcp-generate-ppt", "app", "DEPLOYED", "ai-eng", {
       runtime: "Python 3.11 / FastAPI",
@@ -441,7 +349,59 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       ? resources.filter((r) => r.resource_type === "app")
       : defaultApps;
 
-  const modules = getDatabricksModules();
+  const filteredClusters = clusters.filter((c) => {
+    if (clusterStatusFilter !== "all" && (c.status || "TERMINATED") !== clusterStatusFilter) return false;
+    if (clusterSearch) {
+      const q = clusterSearch.toLowerCase();
+      if (!c.name.toLowerCase().includes(q) && !c.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredWarehouses = warehouses.filter((w) => {
+    if (whStateFilter !== "all" && (w.status || "STOPPED") !== whStateFilter) return false;
+    if (whSearch) {
+      const q = whSearch.toLowerCase();
+      if (!w.name.toLowerCase().includes(q) && !w.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredJobs = jobs.filter((j) => {
+    if (jobStatusFilter !== "all" && (j.status || "SUCCESS") !== jobStatusFilter) return false;
+    if (jobSearch) {
+      const q = jobSearch.toLowerCase();
+      if (!j.name.toLowerCase().includes(q) && !j.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredPipelines = pipelines.filter((p) => {
+    if (pipelineStateFilter !== "all" && (p.status || "ACTIVE") !== pipelineStateFilter) return false;
+    if (pipelineSearch) {
+      const q = pipelineSearch.toLowerCase();
+      if (!p.name.toLowerCase().includes(q) && !p.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredServingEndpoints = servingEndpoints.filter((s) => {
+    if (servingStatusFilter !== "all" && (s.status || "READY") !== servingStatusFilter) return false;
+    if (filterQuery) {
+      const q = filterQuery.toLowerCase();
+      if (!s.name.toLowerCase().includes(q) && !s.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const filteredApps = apps.filter((a) => {
+    if (appStatusFilter !== "all" && (a.status || "DEPLOYED") !== appStatusFilter) return false;
+    if (appSearch) {
+      const q = appSearch.toLowerCase();
+      if (!a.name.toLowerCase().includes(q) && !a.id.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
 
   const handleOpenResourceDrawer = (resource: DiscoveredResourceItem) => {
     setDrawerResource(resource);
@@ -751,43 +711,6 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
             </button>
           </div>
         </div>
-
-        {/* 14-Module Navigation Strip */}
-        <div className="mt-5 border-t border-slate-100 pt-3 flex items-center gap-1 overflow-x-auto pb-1 scrollbar-thin">
-          {modules.map((m) => {
-            const isActive = currentTab === m.id;
-            return (
-              <button
-                key={m.id}
-                onClick={() => handleTabChange(m.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition flex items-center gap-1.5 ${
-                  isActive
-                    ? "bg-navy-900 text-white font-semibold shadow-2xs"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-navy-900"
-                }`}
-              >
-                <span>{m.shortTitle}</span>
-                {m.badge && (
-                  <span
-                    className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
-                      isActive
-                        ? "bg-white/20 text-white"
-                        : m.badgeColor === "emerald"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : m.badgeColor === "purple"
-                        ? "bg-purple-50 text-purple-700"
-                        : m.badgeColor === "slate"
-                        ? "bg-slate-100 text-slate-700"
-                        : "bg-blue-50 text-blue-700"
-                    }`}
-                  >
-                    {m.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       {/* MODULE 1: WORKSPACE OVERVIEW */}
@@ -901,7 +824,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                   <dt className="text-slate-500">Last Discovered At</dt>
                   <dd className="font-semibold text-navy-900">
                     {discovery?.discovered_at
-                      ? new Date(discovery.discovered_at).toLocaleString()
+                      ? formatDeterministicDateTime(discovery.discovered_at)
                       : "Recently"}
                   </dd>
                 </div>
@@ -918,15 +841,39 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 2: COMPUTE CLUSTERS */}
       {currentTab === "clusters" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Discovered Compute Clusters</h3>
               <p className="text-xs text-slate-500">
                 Click any cluster to inspect configuration, utilization, and cost breakdown.
               </p>
             </div>
-            <div className="text-xs text-slate-500 font-medium">
-              Total Clusters: <span className="font-bold text-navy-900">{clusters.length}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search clusters..."
+                  value={clusterSearch}
+                  onChange={(e) => setClusterSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search clusters"
+                />
+              </div>
+              <select
+                value={clusterStatusFilter}
+                onChange={(e) => setClusterStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Cluster status filter"
+              >
+                <option value="all">All States</option>
+                <option value="RUNNING">RUNNING</option>
+                <option value="TERMINATED">TERMINATED</option>
+                <option value="PENDING">PENDING</option>
+              </select>
+              <span className="text-xs text-slate-500 font-medium">
+                Total: <span className="font-bold text-navy-900">{filteredClusters.length}</span>
+              </span>
             </div>
           </div>
 
@@ -944,7 +891,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {clusters.map((c) => (
+                {filteredClusters.map((c) => (
                   <tr
                     key={c.id}
                     onClick={() => handleOpenResourceDrawer(c)}
@@ -1010,16 +957,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-bold text-navy-900">SQL Warehouses Inventory</h3>
                 <p className="text-xs text-slate-500">
                   Click warehouse row to inspect sizing, historical queries, and zero-execution status.
                 </p>
               </div>
-              <span className="text-xs text-slate-500 font-medium">
-                Discovered: {warehouses.length}
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search warehouses..."
+                    value={whSearch}
+                    onChange={(e) => setWhSearch(e.target.value)}
+                    className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                    aria-label="Search warehouses"
+                  />
+                </div>
+                <select
+                  value={whStateFilter}
+                  onChange={(e) => setWhStateFilter(e.target.value)}
+                  className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                  aria-label="Warehouse state filter"
+                >
+                  <option value="all">All States</option>
+                  <option value="STOPPED">STOPPED</option>
+                  <option value="RUNNING">RUNNING</option>
+                  <option value="STARTING">STARTING</option>
+                </select>
+                <span className="text-xs text-slate-500 font-medium">
+                  Discovered: <span className="font-bold text-navy-900">{filteredWarehouses.length}</span>
+                </span>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -1036,7 +1007,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {warehouses.map((w) => (
+                  {filteredWarehouses.map((w) => (
                     <tr
                       key={w.id}
                       onClick={() => handleOpenResourceDrawer(w)}
@@ -1088,14 +1059,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 4: JOBS & WORKFLOWS */}
       {currentTab === "jobs" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Multi-Task Jobs &amp; Workflows</h3>
               <p className="text-xs text-slate-500">
                 Click any workflow to inspect multi-task DAGs and run executions.
               </p>
             </div>
-            <span className="text-xs text-slate-500 font-medium">Discovered: {jobs.length}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search jobs..."
+                  value={jobSearch}
+                  onChange={(e) => setJobSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search jobs"
+                />
+              </div>
+              <select
+                value={jobStatusFilter}
+                onChange={(e) => setJobStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Job status filter"
+              >
+                <option value="all">All Statuses</option>
+                <option value="SUCCESS">SUCCESS</option>
+                <option value="FAILED">FAILED</option>
+                <option value="RUNNING">RUNNING</option>
+              </select>
+              <span className="text-xs text-slate-500 font-medium">
+                Discovered: <span className="font-bold text-navy-900">{filteredJobs.length}</span>
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -1111,7 +1108,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {jobs.map((j) => (
+                {filteredJobs.map((j) => (
                   <tr
                     key={j.id}
                     onClick={() => handleOpenResourceDrawer(j)}
@@ -1157,14 +1154,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 5: PIPELINES (Delta Live Tables) */}
       {currentTab === "pipelines" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Delta Live Tables (DLT) Pipelines</h3>
               <p className="text-xs text-slate-500">
                 Click any pipeline to inspect data quality expectations, continuous sync, and storage.
               </p>
             </div>
-            <span className="text-xs text-slate-500 font-medium">Discovered: {pipelines.length}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search pipelines..."
+                  value={pipelineSearch}
+                  onChange={(e) => setPipelineSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search pipelines"
+                />
+              </div>
+              <select
+                value={pipelineStateFilter}
+                onChange={(e) => setPipelineStateFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Pipeline state filter"
+              >
+                <option value="all">All States</option>
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="IDLE">IDLE</option>
+                <option value="FAILED">FAILED</option>
+              </select>
+              <span className="text-xs text-slate-500 font-medium">
+                Discovered: <span className="font-bold text-navy-900">{filteredPipelines.length}</span>
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -1180,7 +1203,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {pipelines.map((p) => (
+                {filteredPipelines.map((p) => (
                   <tr
                     key={p.id}
                     onClick={() => handleOpenResourceDrawer(p)}
@@ -1240,15 +1263,29 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 Foundation models, fine-tuned LLMs, and embeddings. Click any endpoint to inspect token economics.
               </p>
             </div>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-              <input
-                type="text"
-                placeholder="Filter models..."
-                value={filterQuery}
-                onChange={(e) => setFilterQuery(e.target.value)}
-                className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-full sm:w-56 focus:outline-brand-500"
-              />
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Filter models..."
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-full sm:w-44 focus:outline-brand-500"
+                  aria-label="Filter models"
+                />
+              </div>
+              <select
+                value={servingStatusFilter}
+                onChange={(e) => setServingStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="Model serving status filter"
+              >
+                <option value="all">All Statuses</option>
+                <option value="READY">READY</option>
+                <option value="UPDATING">UPDATING</option>
+                <option value="FAILED">FAILED</option>
+              </select>
             </div>
           </div>
 
@@ -1265,11 +1302,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {servingEndpoints
-                  .filter((m) =>
-                    filterQuery ? m.name.toLowerCase().includes(filterQuery.toLowerCase()) : true
-                  )
-                  .map((m, idx) => (
+                {filteredServingEndpoints.map((m, idx) => (
                     <tr
                       key={m.id || idx}
                       onClick={() => handleOpenResourceDrawer(m)}
@@ -1526,16 +1559,40 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       {/* MODULE 8: DATABRICKS APPS */}
       {currentTab === "apps" && (
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-navy-900">Databricks Apps</h3>
               <p className="text-xs text-slate-500">
                 Discovered native Databricks compute applications and serverless runtime state.
               </p>
             </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-              {apps.length} Discovered Apps
-            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search apps..."
+                  value={appSearch}
+                  onChange={(e) => setAppSearch(e.target.value)}
+                  className="text-xs pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg w-44 focus:outline-brand-500"
+                  aria-label="Search apps"
+                />
+              </div>
+              <select
+                value={appStatusFilter}
+                onChange={(e) => setAppStatusFilter(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white font-medium text-navy-900"
+                aria-label="App status filter"
+              >
+                <option value="all">All Statuses</option>
+                <option value="DEPLOYED">DEPLOYED</option>
+                <option value="STOPPED">STOPPED</option>
+                <option value="CRASHED">CRASHED</option>
+              </select>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                {filteredApps.length} Apps
+              </span>
+            </div>
           </div>
 
           {/* Unattributed Cost Callout */}
@@ -1554,7 +1611,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {apps.map((app, idx) => (
+            {filteredApps.map((app, idx) => (
               <div
                 key={idx}
                 onClick={() => handleOpenResourceDrawer(app)}
@@ -1802,7 +1859,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
 
           {/* Query Duration Histogram Component with 6 Buckets and Summary Statistics */}
           <QueryDurationHistogram
-            queries={queryHistoryData?.records || DEFAULT_SAMPLE_QUERIES}
+            queries={queryHistoryData?.records || []}
             selectedBucket={selectedDurationBucket}
             onSelectBucket={setSelectedDurationBucket}
             isLoading={isLoadingQueryHistory}
@@ -1857,8 +1914,8 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {(queryHistoryData?.records || DEFAULT_SAMPLE_QUERIES)
-                    .filter((q) => {
+                  {(() => {
+                    const filtered = (queryHistoryData?.records || []).filter((q) => {
                       if (queryStatusFilter !== "all" && q.status !== queryStatusFilter) return false;
                       if (selectedDurationBucket) {
                         if (selectedDurationBucket === "< 1s" && q.duration_ms >= 1000) return false;
@@ -1875,8 +1932,24 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                         q.user.toLowerCase().includes(s) ||
                         q.query_id.toLowerCase().includes(s)
                       );
-                    })
-                    .map((q) => (
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center text-slate-500 text-xs">
+                            <div className="space-y-1">
+                              <p className="font-semibold text-slate-700">NO DATA AVAILABLE</p>
+                              <p className="text-[11px] text-slate-400">
+                                Zero queries recorded for selected workspace scope in system.query.history.
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filtered.map((q) => (
                       <tr
                         key={q.query_id}
                         onClick={() => {
@@ -1889,7 +1962,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                           {q.query_id.slice(0, 12)}...
                         </td>
                         <td className="py-2.5 px-3 text-slate-500 text-[11px]">
-                          {new Date(q.start_time).toLocaleTimeString()}
+                          {formatDeterministicTime(q.start_time)}
                         </td>
                         <td className="py-2.5 px-3 text-slate-700 font-semibold">{q.duration_formatted}</td>
                         <td className="py-2.5 px-3">
@@ -1914,7 +1987,8 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                           {q.sql_statement}
                         </td>
                       </tr>
-                    ))}
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -1923,78 +1997,47 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       )}
 
       {/* MODULE 11: AI & TOKEN ECONOMICS */}
+      {/* MODULE 11: AI & TOKEN ECONOMICS (INTEGRATED INTO FINOPS INTELLIGENCE) */}
       {currentTab === "ai_economics" && (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-5">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-sm font-bold text-navy-900">Databricks AI &amp; Token Economics</h3>
-              <p className="text-xs text-slate-500">
-                Model serving consumption, prompt vs completion tokens, and DBU cost breakdown.
-              </p>
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-50 border border-purple-200 flex items-center justify-center text-purple-600 font-bold">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-navy-900">Databricks AI &amp; Token Economics</h3>
+                <p className="text-xs text-slate-500">
+                  Model serving consumption, prompt vs completion tokens, and real DBU cost breakdown.
+                </p>
+              </div>
             </div>
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-              27 Endpoints Active
+              Live FinOps Intelligence
             </span>
           </div>
 
-          {/* Strict Separation Notice */}
-          <div className="bg-purple-50 border border-purple-200 rounded-xl p-3.5 text-xs text-purple-950 flex items-start gap-3">
+          <div className="bg-purple-50/60 border border-purple-200 rounded-xl p-4 text-xs text-purple-950 flex items-start gap-3">
             <Sparkles className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
-            <div>
+            <div className="space-y-1">
               <span className="font-bold block text-purple-950">
-                Unit Separation Principle Enforced
+                Unified FinOps &amp; Cost Intelligence Integration
               </span>
-              <p className="text-purple-800 leading-relaxed mt-0.5">
-                Databricks units (<strong>DBU</strong>) measure billed compute resources on Azure invoices.
-                <strong> Token counts</strong> measure language model input/output volume and are strictly kept
-                separate from DBU consumption.
+              <p className="text-purple-800 leading-relaxed">
+                AI and token economics metrics are unified under <strong>FINOPS &amp; COST INTELLIGENCE &gt; AI Economics</strong>, calculated directly from authorized Azure billing ledgers and Foundation Model Serving endpoints with zero simulated figures.
               </p>
             </div>
           </div>
 
-          {/* 7 AI KPI Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-xs text-slate-500 font-medium">Total AI Spend</span>
-              <div className="text-xl font-bold text-purple-700 mt-1">$38,460 / mo</div>
-              <span className="text-[10px] text-slate-400">Model Serving Provisioned</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-xs text-slate-500 font-medium">Model Serving DBUs</span>
-              <div className="text-xl font-bold text-navy-900 mt-1">6,685 DBU</div>
-              <span className="text-[10px] text-slate-400">Unit: DBUs</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-xs text-slate-500 font-medium">Total Token Volume</span>
-              <div className="text-xl font-bold text-navy-900 mt-1">10.28B</div>
-              <span className="text-[10px] text-emerald-600 font-semibold">+12% vs last month</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-xs text-slate-500 font-medium">Avg Cost / 1K Tokens</span>
-              <div className="text-xl font-bold text-navy-900 mt-1">$0.0037</div>
-              <span className="text-[10px] text-slate-500">Across Foundation Models</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-xs text-slate-500 font-medium">Prompt Tokens</span>
-              <div className="text-xl font-bold text-navy-900 mt-1">8.42B</div>
-              <span className="text-[10px] text-slate-500">81.9% of total volume</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-xs text-slate-500 font-medium">Completion Tokens</span>
-              <div className="text-xl font-bold text-navy-900 mt-1">1.86B</div>
-              <span className="text-[10px] text-slate-500">18.1% generated output</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 col-span-2">
-              <span className="text-xs text-slate-500 font-medium">Token Throughput &amp; P95 Latency</span>
-              <div className="text-xl font-bold text-navy-900 mt-1">142 ms</div>
-              <span className="text-[10px] text-emerald-600 font-semibold">Scale-to-zero operational</span>
-            </div>
+          <div className="pt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => handleTabChange("ai_economics")}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold flex items-center gap-2 shadow-xs transition cursor-pointer"
+            >
+              <span>View Live AI Economics</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}
@@ -2030,429 +2073,51 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
         </div>
       )}
 
-      {/* MODULE 13: COST & BILLING (Comprehensive Enterprise Analytics) */}
+      {/* MODULE 13: COST & BILLING (INTEGRATED INTO FINOPS INTELLIGENCE) */}
       {currentTab === "billing" && (
-        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-6">
-          {/* Header & Controls */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-navy-900 uppercase tracking-wider">
-                  Databricks DBU &amp; Cloud Billing Analytics
-                </h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-brand-100 text-brand-800 border border-brand-200">
-                  Certified Reconciled
-                </span>
+        <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-2xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-brand-50 border border-brand-200 flex items-center justify-center text-brand-600 font-bold">
+                <Coins className="w-5 h-5" />
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Exact DBU consumption, rate card attribution, and multi-cloud infrastructure reconciliation
+              <div>
+                <h3 className="text-base font-bold text-navy-900">Databricks DBU &amp; Cloud Billing Analytics</h3>
+                <p className="text-xs text-slate-500">
+                  Exact DBU consumption, rate card attribution, and multi-cloud infrastructure reconciliation.
+                </p>
+              </div>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-brand-50 text-brand-700 border border-brand-200">
+              Live FinOps Intelligence
+            </span>
+          </div>
+
+          <div className="bg-brand-50/60 border border-brand-200 rounded-xl p-4 text-xs text-brand-950 flex items-start gap-3">
+            <Coins className="w-4 h-4 text-brand-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-bold block text-brand-950">
+                Unified FinOps &amp; Cost Intelligence Integration
+              </span>
+              <p className="text-brand-800 leading-relaxed">
+                Billing analytics, DBU consumption, and rate card reconciliations are unified under <strong>FINOPS &amp; COST INTELLIGENCE &gt; Cost &amp; Billing</strong>, backed by real system tables (<code>system.billing.usage</code>, <code>system.billing.list_prices</code>) and Azure Cost Management.
               </p>
             </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              <select
-                value={billingPeriod}
-                onChange={(e) => setBillingPeriod(e.target.value)}
-                className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-2xs"
-              >
-                <option value="mtd">Period: Month-to-Date (MTD)</option>
-                <option value="30d">Period: Last 30 Days</option>
-                <option value="quarter">Period: Current Quarter</option>
-              </select>
-
-              <span className="bg-slate-100 text-slate-700 px-2.5 py-1 rounded-md text-xs font-semibold border border-slate-200">
-                Currency: USD ($)
-              </span>
-            </div>
           </div>
 
-          {/* 3 Core KPI Analytics Cards */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            {/* KPI 1: DBU Consumption */}
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Total DBU Consumption
-                </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-                  Unit: DBU
-                </span>
-              </div>
-
-              <div>
-                <div className="text-2xl font-extrabold text-navy-900 tracking-tight">
-                  42,180.00 <span className="text-xs font-bold text-slate-500">Net DBUs</span>
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-slate-600 mt-1">
-                  <span>Gross: <strong>42,420.00</strong></span>
-                  <span>•</span>
-                  <span className="text-rose-600 font-semibold">Retractions: -240.00</span>
-                </div>
-              </div>
-
-              <div className="space-y-1.5 pt-2 border-t border-slate-200 text-xs">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Consumption by Compute SKU
-                </span>
-                <div className="grid grid-cols-2 gap-2 text-[11px]">
-                  <div className="p-1.5 rounded bg-white border border-slate-200">
-                    <span className="text-slate-500 block truncate">Interactive Clusters</span>
-                    <strong className="text-navy-900">13,798 DBU (32.7%)</strong>
-                  </div>
-                  <div className="p-1.5 rounded bg-white border border-slate-200">
-                    <span className="text-slate-500 block truncate">Automated Jobs</span>
-                    <strong className="text-navy-900">11,180 DBU (26.5%)</strong>
-                  </div>
-                  <div className="p-1.5 rounded bg-white border border-slate-200">
-                    <span className="text-slate-500 block truncate">Serverless SQL</span>
-                    <strong className="text-navy-900">10,545 DBU (25.0%)</strong>
-                  </div>
-                  <div className="p-1.5 rounded bg-white border border-slate-200">
-                    <span className="text-slate-500 block truncate">Model Serving</span>
-                    <strong className="text-navy-900">6,657 DBU (15.8%)</strong>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* KPI 2: Databricks Platform Spend */}
-            <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Databricks Platform Spend
-                </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                  Rate Card Matched
-                </span>
-              </div>
-
-              <div>
-                <div className="text-2xl font-extrabold text-navy-900 tracking-tight">
-                  $168,834.25 <span className="text-xs font-bold text-slate-500">USD</span>
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-slate-600 mt-1">
-                  <span>Blended rate: <strong>$4.002 / DBU</strong></span>
-                  <span>•</span>
-                  <span className="text-emerald-700 font-semibold">Coverage: 95.5%</span>
-                </div>
-              </div>
-
-              <div className="space-y-1.5 pt-2 border-t border-slate-200 text-xs">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                  Serverless vs Classic Compute
-                </span>
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-slate-600">Serverless Compute (SQL + Serving):</span>
-                    <strong className="text-navy-900">$68,920.00 (40.8%)</strong>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-brand-600 h-1.5 rounded-full" style={{ width: "40.8%" }} />
-                  </div>
-                  <div className="flex justify-between text-[11px] pt-1">
-                    <span className="text-slate-600">Classic Clusters &amp; Jobs (VM Host):</span>
-                    <strong className="text-navy-900">$99,914.25 (59.2%)</strong>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                    <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: "59.2%" }} />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* KPI 3: Estimated Azure Host VM Spend (Strictly Gated with Explicit Banner) */}
-            <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/40 space-y-3 flex flex-col justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
-                    Azure Host VM Spend
-                  </span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 uppercase">
-                    IaaS Scope Gated
-                  </span>
-                </div>
-
-                <div className="p-2.5 rounded-lg border border-amber-300/80 bg-white space-y-1">
-                  <span className="text-xs font-bold text-amber-950 block">
-                    Data unavailable — Azure Cost Management billing source required
-                  </span>
-                  <p className="text-[11px] text-slate-600 leading-relaxed">
-                    This metric represents the underlying Azure Virtual Machines (Standard_D4s_v5, E-series nodes),
-                    managed OS disks, and network egress incurred beneath classic Databricks clusters.
-                  </p>
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-amber-200/60 text-[11px] text-amber-900 space-y-1">
-                <span className="font-semibold block">How to enable:</span>
-                <p className="text-slate-600">
-                  Grant <code className="text-amber-900 font-mono font-semibold">Cost Management Reader</code> role
-                  on subscription <code className="text-slate-700 font-mono">sub-finops-enterprise-01</code> in Azure Portal.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Interactive Visualizations */}
-          <div className="p-5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h4 className="text-xs font-bold text-navy-900 uppercase tracking-wider">
-                  Daily Billing Progression (14 Days)
-                </h4>
-                <p className="text-[11px] text-slate-500">
-                  Daily volume recorded from system.billing.usage
-                </p>
-              </div>
-
-              {/* Toggle DBU vs Spend */}
-              <div className="flex items-center gap-1 p-0.5 rounded-lg bg-white border border-slate-200 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setBillingChartMetric("dbu")}
-                  className={`px-3 py-1 rounded-md font-semibold transition ${
-                    billingChartMetric === "dbu"
-                      ? "bg-brand-600 text-white"
-                      : "text-slate-600 hover:text-navy-900"
-                  }`}
-                >
-                  Daily DBUs
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBillingChartMetric("spend")}
-                  className={`px-3 py-1 rounded-md font-semibold transition ${
-                    billingChartMetric === "spend"
-                      ? "bg-brand-600 text-white"
-                      : "text-slate-600 hover:text-navy-900"
-                  }`}
-                >
-                  Daily Spend ($)
-                </button>
-              </div>
-            </div>
-
-            {/* SVG Visual Progression */}
-            <div className="h-44 w-full flex items-end pt-2">
-              <svg className="w-full h-full overflow-visible" viewBox="0 0 560 140">
-                <line x1="0" y1="140" x2="560" y2="140" stroke="#e2e8f0" strokeWidth="1" />
-                <line x1="0" y1="105" x2="560" y2="105" stroke="#f1f5f9" strokeWidth="1" />
-                <line x1="0" y1="70" x2="560" y2="70" stroke="#f1f5f9" strokeWidth="1" />
-                <line x1="0" y1="35" x2="560" y2="35" stroke="#f1f5f9" strokeWidth="1" />
-
-                {/* 14 Day Bars */}
-                {[
-                  { d: "Oct 24", v: 2800, s: 11200 },
-                  { d: "Oct 25", v: 2950, s: 11800 },
-                  { d: "Oct 26", v: 1900, s: 7600 },
-                  { d: "Oct 27", v: 1850, s: 7400 },
-                  { d: "Oct 28", v: 3100, s: 12400 },
-                  { d: "Oct 29", v: 3350, s: 13400 },
-                  { d: "Oct 30", v: 3420, s: 13680 },
-                  { d: "Oct 31", v: 3200, s: 12800 },
-                  { d: "Nov 01", v: 3150, s: 12600 },
-                  { d: "Nov 02", v: 1950, s: 7800 },
-                  { d: "Nov 03", v: 1880, s: 7520 },
-                  { d: "Nov 04", v: 3300, s: 13200 },
-                  { d: "Nov 05", v: 3450, s: 13800 },
-                  { d: "Nov 06", v: 3800, s: 15200 },
-                ].map((item, idx) => {
-                  const val = billingChartMetric === "dbu" ? item.v : item.s;
-                  const maxVal = billingChartMetric === "dbu" ? 4000 : 16000;
-                  const barH = (val / maxVal) * 120;
-                  const x = idx * 40 + 10;
-                  const y = 140 - barH;
-
-                  return (
-                    <g key={idx} className="group cursor-pointer">
-                      <rect
-                        x={x}
-                        y={y}
-                        width="24"
-                        height={barH}
-                        rx="3"
-                        className="fill-brand-500 hover:fill-brand-600 transition"
-                      />
-                      <text
-                        x={x + 12}
-                        y="152"
-                        textAnchor="middle"
-                        fontSize="8"
-                        className="fill-slate-400 font-sans"
-                      >
-                        {item.d.slice(4)}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-          </div>
-
-          {/* Full Financial Reconciliation Table */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-bold text-navy-900 uppercase tracking-wider">
-                  Full Financial Reconciliation Table
-                </h4>
-                <p className="text-[11px] text-slate-500">
-                  Cross-reconciled ledger: metered compute, rate cards, cloud storage, and discretization variance
-                </p>
-              </div>
-              <span className="text-[10px] font-mono text-slate-400">
-                Formula: Blended Total = Databricks Compute + ADLS Gen2 Storage + Rate Discretization
-              </span>
-            </div>
-
-            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase border-b border-slate-200">
-                  <tr>
-                    <th className="py-2.5 px-3">SKU / Compute Dimension</th>
-                    <th className="py-2.5 px-3 text-right">Gross DBUs</th>
-                    <th className="py-2.5 px-3 text-right">Retractions</th>
-                    <th className="py-2.5 px-3 text-right">Net DBUs</th>
-                    <th className="py-2.5 px-3 text-right">Matched Rate</th>
-                    <th className="py-2.5 px-3 text-right">Databricks Spend</th>
-                    <th className="py-2.5 px-3 text-right">Azure Infra Spend</th>
-                    <th className="py-2.5 px-3 text-right">Total Reconciled</th>
-                    <th className="py-2.5 px-3 text-center">Variance / Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  <tr className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-semibold text-navy-900">
-                      Serverless SQL Warehouse (05ed10a52697a344)
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono">10,600.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-rose-600">-55.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold">10,545.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono">$4.000</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-navy-900">$42,180.00</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">$0.00 (Serverless)</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-extrabold text-navy-900">$42,180.00</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Certified Reconciled
-                      </span>
-                    </td>
-                  </tr>
-
-                  <tr className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-semibold text-navy-900">
-                      Interactive All-Purpose Clusters
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono">13,880.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-rose-600">-82.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold">13,798.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono">$4.000</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-navy-900">$55,194.25</td>
-                    <td className="py-2.5 px-3 text-right text-amber-700 font-medium">Requires Reader</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-extrabold text-navy-900">$55,194.25</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Certified Reconciled
-                      </span>
-                    </td>
-                  </tr>
-
-                  <tr className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-semibold text-navy-900">
-                      Automated Jobs &amp; Workflows
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono">11,240.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-rose-600">-60.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold">11,180.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono">$4.000</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-navy-900">$44,720.00</td>
-                    <td className="py-2.5 px-3 text-right text-amber-700 font-medium">Requires Reader</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-extrabold text-navy-900">$44,720.00</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Certified Reconciled
-                      </span>
-                    </td>
-                  </tr>
-
-                  <tr className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-semibold text-navy-900">
-                      Model Serving &amp; AI Inference Endpoints
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono">6,700.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-rose-600">-43.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold">6,657.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono">$4.017</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-navy-900">$26,740.00</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">$0.00 (Serverless)</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-extrabold text-navy-900">$26,740.00</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Certified Reconciled
-                      </span>
-                    </td>
-                  </tr>
-
-                  <tr className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-semibold text-navy-900">
-                      ADLS Gen2 Hot Storage (Cloud Storage)
-                    </td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-                    <td className="py-2.5 px-3 text-right font-mono">$0.018/GB</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">$0.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-navy-900">$8,000.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-extrabold text-navy-900">$8,000.00</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                        Storage Verified
-                      </span>
-                    </td>
-                  </tr>
-
-                  <tr className="hover:bg-slate-50">
-                    <td className="py-2.5 px-3 font-semibold text-navy-900">
-                      Rate Card Discretization Variance
-                    </td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">—</td>
-                    <td className="py-2.5 px-3 text-right font-mono text-slate-700">$5.75</td>
-                    <td className="py-2.5 px-3 text-right text-slate-400">$0.00</td>
-                    <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-700">$5.75</td>
-                    <td className="py-2.5 px-3 text-center">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">
-                        Discretization Diff
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-
-                <tfoot className="bg-slate-100/90 font-bold text-navy-900 border-t-2 border-slate-300">
-                  <tr>
-                    <td className="py-3 px-3">Total Reconciled Environment</td>
-                    <td className="py-3 px-3 text-right font-mono">42,420.00</td>
-                    <td className="py-3 px-3 text-right font-mono text-rose-600">-240.00</td>
-                    <td className="py-3 px-3 text-right font-mono">42,180.00</td>
-                    <td className="py-3 px-3 text-right font-mono">$4.002 avg</td>
-                    <td className="py-3 px-3 text-right font-mono text-brand-700">$168,834.25</td>
-                    <td className="py-3 px-3 text-right font-mono text-blue-700">$8,000.00</td>
-                    <td className="py-3 px-3 text-right font-mono text-emerald-700 text-sm">$176,840.00</td>
-                    <td className="py-3 px-3 text-center">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                        100.00% Zero Variance
-                      </span>
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
+          <div className="pt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => handleTabChange("cost_billing")}
+              className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold flex items-center gap-2 shadow-xs transition cursor-pointer"
+            >
+              <span>View Live Cost &amp; Billing Analytics</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
           </div>
         </div>
       )}
+
 
       {/* MODULE 14: DISCOVERY HISTORY */}
       {currentTab === "discovery_history" && (
