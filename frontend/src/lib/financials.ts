@@ -19,6 +19,7 @@ export const NO_DATA_LABEL = "No data available";
 /** Why a financial screen has nothing to show. Drives the message, never a number. */
 export type FinancialUnavailableReason =
   | "AUTHENTICATION_REQUIRED"
+  | "ACCESS_DENIED"
   | "FIXTURE_DATA"
   | "NO_BILLING_DATA"
   | "FORECAST_UNAVAILABLE"
@@ -26,15 +27,59 @@ export type FinancialUnavailableReason =
   | "NO_DATA";
 
 export const FINANCIAL_UNAVAILABLE_MESSAGES: Record<FinancialUnavailableReason, string> = {
-  AUTHENTICATION_REQUIRED:
-    "Authentication required. Sign in to Azure (az login) to load live financial data.",
+  AUTHENTICATION_REQUIRED: "Authentication required — run az login.",
+  ACCESS_DENIED: "Access denied — check your Azure permissions.",
   FIXTURE_DATA:
     "The backend returned reference fixture data, which is never shown as live financials. Authentication required.",
-  NO_BILLING_DATA: "No billing data.",
+  NO_BILLING_DATA: "No billing data available.",
   FORECAST_UNAVAILABLE: "Forecast unavailable.",
   API_ERROR: "Financial data could not be loaded (API error).",
   NO_DATA: NO_DATA_LABEL,
 };
+
+/**
+ * Map an HTTP status from a financial API call to a user-facing state. Only a fixed message and the
+ * numeric status are ever shown: raw server text, tokens and stack traces are never surfaced.
+ */
+export function financialErrorFromStatus(
+  status: number | null | undefined,
+  provider: CloudProvider = "azure"
+): { reason: FinancialUnavailableReason; message: string } {
+  const cloud = provider === "gcp" ? "GCP" : "Azure";
+  if (status === 401) {
+    return {
+      reason: "AUTHENTICATION_REQUIRED",
+      message:
+        provider === "gcp"
+          ? "Authentication required — run gcloud auth login."
+          : FINANCIAL_UNAVAILABLE_MESSAGES.AUTHENTICATION_REQUIRED,
+    };
+  }
+  if (status === 403) {
+    return {
+      reason: "ACCESS_DENIED",
+      message:
+        provider === "gcp"
+          ? "Access denied — check your GCP permissions."
+          : FINANCIAL_UNAVAILABLE_MESSAGES.ACCESS_DENIED,
+    };
+  }
+  if (status === null || status === undefined || status === 0) {
+    return {
+      reason: "API_ERROR",
+      message: `${cloud} financial data could not be loaded (network error).`,
+    };
+  }
+  return {
+    reason: "API_ERROR",
+    message: `${cloud} financial data could not be loaded (HTTP ${status}).`,
+  };
+}
+
+/** "/mo", "/yr" etc. only when a real value is shown; empty when the value is unavailable. */
+export function periodSuffix(value: number | null | undefined, suffix: string): string {
+  return value === null || value === undefined || !Number.isFinite(value) ? "" : suffix;
+}
 
 /** Backend provenance labels that mean "not real customer data". */
 export function isFixtureDataSource(source: string | null | undefined): boolean {

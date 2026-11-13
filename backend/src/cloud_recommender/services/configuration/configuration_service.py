@@ -354,7 +354,9 @@ class ConfigurationService:
                 proj_name = proj.display_name
                 org_id = proj.tenant_or_org_id
 
-                # In benchmark mode, simulate sample GCP assets
+                # Sample assets exist only for the labelled demo fixture project; live projects get
+                # no invented children (asset listing is not part of this scope tree).
+                is_fixture_project = proj.data_source == "mock_fixture"
                 assets = [
                     ScopeDiscoveryNode(
                         id=f"//compute.googleapis.com/projects/{proj_id}/zones/us-central1-a/instances/gce-app-01",
@@ -379,6 +381,8 @@ class ConfigurationService:
                         metadata={"database_version": "POSTGRES_15"},
                     ),
                 ]
+                if not is_fixture_project:
+                    assets = []
                 total_resources += len(assets)
 
                 proj_node = ScopeDiscoveryNode(

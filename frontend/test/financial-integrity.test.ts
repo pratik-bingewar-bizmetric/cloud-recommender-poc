@@ -6,10 +6,12 @@ import {
   FINANCIAL_UNAVAILABLE_MESSAGES,
   NO_DATA_LABEL,
   buildCanonicalFinancialSummary,
+  financialErrorFromStatus,
   financialUnavailableReason,
   formatFinancialCurrency,
   isFixtureDataSource,
   percentOf,
+  periodSuffix,
   toFiniteNumber,
 } from "../src/lib/financials";
 
@@ -143,7 +145,7 @@ test("empty billing response (no breakdown, overview without cost) yields null s
   assert.ok(s);
   assert.strictEqual(s.estimated_monthly_spend, null);
   assert.strictEqual(s.included_resources_count, null);
-  assert.strictEqual(FINANCIAL_UNAVAILABLE_MESSAGES.NO_BILLING_DATA, "No billing data.");
+  assert.strictEqual(FINANCIAL_UNAVAILABLE_MESSAGES.NO_BILLING_DATA, "No billing data available.");
 });
 
 test("real source data renders actual values and only the provider's own categories", () => {
@@ -209,4 +211,96 @@ test("greenfield simulation stays labelled as a simulation, never as actual spen
     buildCanonicalFinancialSummary("azure", "", "", "30d", "USD", null, null, { total_monthly: null } as never),
     null
   );
+});
+
+// ---------------------------------------------------------------------------
+// Gap closure: HTTP error states for the Cost & Waste analysis call
+// ---------------------------------------------------------------------------
+test("HTTP 401 maps to the authentication-required message", () => {
+  const e = financialErrorFromStatus(401, "azure");
+  assert.strictEqual(e.reason, "AUTHENTICATION_REQUIRED");
+  assert.strictEqual(e.message, "Authentication required — run az login.");
+  assert.match(financialErrorFromStatus(401, "gcp").message, /gcloud auth login/);
+});
+
+test("HTTP 403 maps to the access-denied message", () => {
+  const e = financialErrorFromStatus(403, "azure");
+  assert.strictEqual(e.reason, "ACCESS_DENIED");
+  assert.strictEqual(e.message, "Access denied — check your Azure permissions.");
+  assert.match(financialErrorFromStatus(403, "gcp").message, /GCP permissions/);
+});
+
+test("other failures give a generic error state with only the status code", () => {
+  for (const status of [400, 404, 500, 502, 503]) {
+    const e = financialErrorFromStatus(status, "azure");
+    assert.strictEqual(e.reason, "API_ERROR");
+    assert.ok(e.message.includes(`HTTP ${status}`));
+  }
+  for (const status of [null, undefined, 0]) {
+    const e = financialErrorFromStatus(status, "azure");
+    assert.strictEqual(e.reason, "API_ERROR");
+    assert.match(e.message, /network error/);
+  }
+});
+
+test("error messages never contain tokens, bearer strings or stack traces", () => {
+  for (const status of [401, 403, 500, null]) {
+    for (const provider of ["azure", "gcp"] as const) {
+      const m = financialErrorFromStatus(status, provider).message;
+      assert.ok(!/bearer|token|secret|traceback|at \w+\.|\n/i.test(m), m);
+    }
+  }
+});
+
+test("empty successful response reads 'No billing data available.'", () => {
+  assert.strictEqual(FINANCIAL_UNAVAILABLE_MESSAGES.NO_BILLING_DATA, "No billing data available.");
+});
+
+test("Monitoring keeps only the HTTP status of a failed analysis call and passes it to Cost & Waste", () => {
+  const text = fs.readFileSync(path.join(SRC, "components/SectionCentralizedMonitoring.tsx"), "utf-8");
+  assert.ok(text.includes("setAnalysisError({ status: err instanceof ApiError ? err.status : null })"));
+  assert.ok(text.includes("analysisError={analysisError}"));
+  const waste = fs.readFileSync(path.join(SRC, "components/SectionCostWaste.tsx"), "utf-8");
+  assert.ok(waste.includes("financialErrorFromStatus(analysisError.status, provider)"));
+  assert.ok(!waste.includes("analysisError.message"), "raw error text must not be rendered");
+});
+
+// ---------------------------------------------------------------------------
+// Gap closure: /mo and /yr suffixes only next to real values
+// ---------------------------------------------------------------------------
+test("period suffix is dropped when the value is unavailable and kept for real values", () => {
+  for (const v of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.strictEqual(periodSuffix(v, "/mo"), "");
+    assert.strictEqual(periodSuffix(v, "/yr"), "");
+  }
+  assert.strictEqual(periodSuffix(12.5, "/mo"), "/mo");
+  assert.strictEqual(periodSuffix(300, "/yr"), "/yr");
+});
+
+test("a legitimate zero keeps both its $0.00 formatting and its suffix", () => {
+  assert.strictEqual(formatFinancialCurrency(0), "$0.00");
+  assert.strictEqual(periodSuffix(0, "/mo"), "/mo");
+});
+
+test("financial cards render suffixes through periodSuffix, never as bare literals next to a value", () => {
+  const files = ["DashboardView", "SectionCostWaste", "FinancialKpiDrawer"];
+  for (const f of files) {
+    const text = fs.readFileSync(path.join(SRC, `components/${f}.tsx`), "utf-8");
+    assert.ok(text.includes("periodSuffix("), `${f} must use periodSuffix`);
+    // The only literal "/mo" after a formatted value is the Dashboard's "Save up to" label, which is
+    // rendered only in the branch where the savings value is known (guarded by `=== null`).
+    const withoutGuarded = text.replace(
+      /savingsAmount === null\s*\? `Savings: \$\{NO_DATA_LABEL\}`\s*: `Save up to \$\{formatFinancialCurrency\([^)]*\)\}\/mo[^`]*`/,
+      ""
+    );
+    assert.ok(!/formatFinancialCurrency\([^)]*\)\}\/mo/.test(withoutGuarded), `${f} has a bare /mo after a formatted value`);
+  }
+});
+
+test("Cost & Waste never claims zero findings or zero opportunities when the analysis did not return", () => {
+  const waste = fs.readFileSync(path.join(SRC, "components/SectionCostWaste.tsx"), "utf-8");
+  assert.ok(waste.includes("const analysisAvailable = analysisData !== null;"));
+  // the 'nothing found' sentence and the numeric counts are only reachable when the analysis returned
+  assert.ok(/analysisAvailable\s*\?\s*"Zero unattached disks/.test(waste));
+  assert.ok(waste.includes("analysisAvailable ? rawFindings.length + techDebtItems.length : NO_DATA_LABEL"));
 });

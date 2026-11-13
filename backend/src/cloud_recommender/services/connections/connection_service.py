@@ -130,8 +130,8 @@ class ConnectionService:
                     )
             except Exception as exc:
                 logger.warning("gcp_list_connections_error", error=str(exc))
-        else:
-            # Verified benchmark fixture
+        elif self.settings.allow_demo_fixtures:
+            # Explicit demo opt-in only: labelled reference benchmark fixture
             connections.append(
                 CloudConnection(
                     id="gcp-smart-expense-prod",

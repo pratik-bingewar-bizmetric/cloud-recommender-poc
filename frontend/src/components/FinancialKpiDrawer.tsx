@@ -22,7 +22,7 @@ import {
   CanonicalFinancialSummary,
   FinancialKpiType,
 } from "@/types/financials";
-import { formatFinancialCurrency, percentOf } from "@/lib/financials";
+import { formatFinancialCurrency, percentOf, periodSuffix } from "@/lib/financials";
 import { formatDeterministicTime } from "@/lib/dateTimeFormat";
 
 interface FinancialKpiDrawerProps {
@@ -247,7 +247,16 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
                   formatFinancialCurrency(financials.potential_monthly_savings, currency)}
               </span>
               <span className="text-xs text-slate-500 font-medium">
-                {kpiType === "annual_savings" ? "/year" : "/month"}
+                {kpiType === "annual_savings"
+                  ? periodSuffix(financials.projected_annual_savings, "/year")
+                  : periodSuffix(
+                      kpiType === "spend"
+                        ? financials.estimated_monthly_spend
+                        : kpiType === "realized_savings"
+                        ? 0
+                        : financials.potential_monthly_savings,
+                      "/month"
+                    )}
               </span>
               {financials.savings_percentage_of_spend !== null &&
                 (kpiType === "savings" || kpiType === "finding") && (
@@ -306,7 +315,8 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
               <h3 className="text-xs font-bold text-navy-900 uppercase tracking-wider flex items-center justify-between">
                 <span>Category Spend Allocation</span>
                 <span className="font-mono text-slate-500 font-normal">
-                  Total: {formatFinancialCurrency(financials.estimated_monthly_spend, currency)}/mo
+                  Total: {formatFinancialCurrency(financials.estimated_monthly_spend, currency)}
+                  {periodSuffix(financials.estimated_monthly_spend, "/mo")}
                 </span>
               </h3>
 
@@ -364,7 +374,8 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
               <h3 className="text-xs font-bold text-navy-900 uppercase tracking-wider flex items-center justify-between">
                 <span>Itemized Non-Overlapping Findings ({financials.findings.length})</span>
                 <span className="font-mono text-emerald-700 font-normal">
-                  Total Pool: {formatFinancialCurrency(financials.potential_monthly_savings, currency)}/mo
+                  Total Pool: {formatFinancialCurrency(financials.potential_monthly_savings, currency)}
+                  {periodSuffix(financials.potential_monthly_savings, "/mo")}
                 </span>
               </h3>
 
@@ -409,7 +420,9 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
                         <div className="text-right shrink-0">
                           <div className="text-sm font-bold text-emerald-700 font-mono">
                             {formatFinancialCurrency(f.potential_monthly_savings, currency)}
-                            <span className="text-[10px] font-normal text-slate-400">/mo</span>
+                            <span className="text-[10px] font-normal text-slate-400">
+                              {periodSuffix(f.potential_monthly_savings, "/mo")}
+                            </span>
                           </div>
                           <span className="text-[10px] text-slate-400 block font-mono">
                             Spend: {formatFinancialCurrency(f.current_monthly_spend, currency)}

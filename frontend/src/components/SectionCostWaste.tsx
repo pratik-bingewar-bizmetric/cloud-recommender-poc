@@ -13,7 +13,10 @@ import {
   buildCanonicalFinancialSummary,
   financialUnavailableReason,
   FINANCIAL_UNAVAILABLE_MESSAGES,
+  financialErrorFromStatus,
   formatFinancialCurrency,
+  NO_DATA_LABEL,
+  periodSuffix,
 } from "@/lib/financials";
 import { FinancialKpiType } from "@/types/financials";
 import {
@@ -38,6 +41,8 @@ interface SectionCostWasteProps {
   overview: MonitoringOverviewResponse | null;
   analysisData: SubscriptionOrProjectAnalysis | null;
   isLoading: boolean;
+  /** HTTP status of a failed analysis call (null = network error); absent = no failure. */
+  analysisError?: { status: number | null } | null;
   onRefresh: () => void;
   onInspectResource?: (resourceId: string) => void;
 }
@@ -49,6 +54,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
   overview,
   analysisData,
   isLoading,
+  analysisError,
   onRefresh,
   onInspectResource,
 }) => {
@@ -76,7 +82,17 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
   const monthlySpend = canonicalFinancials?.estimated_monthly_spend ?? null;
   const monthlySavings = canonicalFinancials?.potential_monthly_savings ?? null;
   const annualSavings = canonicalFinancials?.projected_annual_savings ?? null;
-  const unavailableReason = canonicalFinancials ? null : (financialUnavailableReason(overview, analysisData) ?? "NO_DATA");
+  // One user-facing status line. Server text is never shown: only a fixed message per HTTP status.
+  const financialNotice: string | null = analysisError
+    ? financialErrorFromStatus(analysisError.status, provider).message
+    : !canonicalFinancials
+    ? FINANCIAL_UNAVAILABLE_MESSAGES[financialUnavailableReason(overview, analysisData) ?? "NO_DATA"]
+    : monthlySpend === null
+    ? FINANCIAL_UNAVAILABLE_MESSAGES.NO_BILLING_DATA
+    : null;
+
+  // Counts and "nothing found" claims are only valid when the analysis actually returned.
+  const analysisAvailable = analysisData !== null;
 
   const rawFindings: ResourceWasteFinding[] =
     analysisData?.waste_findings && analysisData.waste_findings.length > 0
@@ -182,9 +198,9 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
         </button>
       </div>
 
-      {unavailableReason && !isLoading && (
+      {financialNotice && !isLoading && (
         <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
-          {FINANCIAL_UNAVAILABLE_MESSAGES[unavailableReason]}
+          {financialNotice}
         </div>
       )}
 
@@ -203,7 +219,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
           </div>
           <div className="text-xl font-bold text-navy-950 font-mono tracking-tight">
             {formatFinancialCurrency(monthlySpend)}
-            <span className="text-xs font-normal text-slate-400">/mo</span>
+            <span className="text-xs font-normal text-slate-400">{periodSuffix(monthlySpend, "/mo")}</span>
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-0.5">
             <span>{provider === "gcp" ? "GCP Catalog list" : "Azure Retail Prices"}</span>
@@ -226,7 +242,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
           </div>
           <div className="text-xl font-bold text-emerald-700 font-mono tracking-tight">
             {formatFinancialCurrency(monthlySavings)}
-            <span className="text-xs font-normal text-emerald-600">/mo</span>
+            <span className="text-xs font-normal text-emerald-600">{periodSuffix(monthlySavings, "/mo")}</span>
           </div>
           <div className="flex items-center justify-between text-[11px] text-emerald-700 font-semibold mt-0.5">
             <span>
@@ -253,7 +269,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
           </div>
           <div className="text-xl font-bold text-navy-950 font-mono tracking-tight">
             {formatFinancialCurrency(annualSavings)}
-            <span className="text-xs font-normal text-slate-400">/yr</span>
+            <span className="text-xs font-normal text-slate-400">{periodSuffix(annualSavings, "/yr")}</span>
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-0.5">
             <span>Non-double-counted guarantee</span>
@@ -270,10 +286,12 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
             <Layers className="w-3.5 h-3.5 text-blue-500" />
           </div>
           <div className="text-xl font-bold text-navy-950 font-mono tracking-tight">
-            {rawFindings.length + techDebtItems.length}
+            {analysisAvailable ? rawFindings.length + techDebtItems.length : NO_DATA_LABEL}
           </div>
           <span className="text-[11px] text-slate-400 block mt-0.5">
-            {rawFindings.length} waste &bull; {techDebtItems.length} tech debt
+            {analysisAvailable
+              ? `${rawFindings.length} waste \u2022 ${techDebtItems.length} tech debt`
+              : "Analysis unavailable"}
           </span>
         </div>
       </div>
@@ -286,7 +304,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
               FinOps Waste Category Distribution
             </h4>
             <span className="text-xs font-mono text-slate-500">
-              Total Waste Pool: {formatFinancialCurrency(monthlySavings)}/mo
+              Total Waste Pool: {formatFinancialCurrency(monthlySavings)}{periodSuffix(monthlySavings, "/mo")}
             </span>
           </div>
 
@@ -372,7 +390,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
             </p>
           </div>
           <span className="text-xs font-mono text-slate-400">
-            {filteredFindings.length} findings
+            {analysisAvailable ? `${filteredFindings.length} findings` : NO_DATA_LABEL}
           </span>
         </div>
 
@@ -434,7 +452,9 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
           </div>
         ) : (
           <div className="p-8 text-center text-slate-400 italic">
-            Zero unattached disks, oversized compute, or idle storage detected in current scope.
+            {analysisAvailable
+              ? "Zero unattached disks, oversized compute, or idle storage detected in current scope."
+              : `Findings unavailable. ${financialNotice ?? NO_DATA_LABEL}`}
           </div>
         )}
       </div>

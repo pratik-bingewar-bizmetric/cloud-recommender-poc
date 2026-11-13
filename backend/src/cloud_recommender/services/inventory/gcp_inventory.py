@@ -52,6 +52,13 @@ logger = structlog.get_logger(__name__)
 ROUND_CENTS = Decimal("0.01")
 
 
+GCP_AUTH_REQUIRED_MESSAGE = (
+    "GCP authentication required: no valid Google Cloud identity. Configure GOOGLE_APPLICATION_CREDENTIALS "
+    "or GCP_ACCESS_TOKEN, or run 'gcloud auth login'. Required read-only IAM roles: roles/browser, "
+    "roles/cloudasset.viewer."
+)
+
+
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(ROUND_CENTS, rounding=ROUND_HALF_UP)
 
@@ -145,8 +152,12 @@ class GcpInventoryService:
                 authorized_scopes_count=0,
                 status_message=(
                     "GCP Public Cloud Billing Catalog API is connected and verified via GCP_CLOUD_API_KEY. "
-                    "Live GCP project inventory discovery requires GOOGLE_APPLICATION_CREDENTIALS or GCP_ACCESS_TOKEN "
-                    "(labeled GCP reference project fixture available for comparative exploration)."
+                    "Live GCP project inventory discovery requires GOOGLE_APPLICATION_CREDENTIALS or GCP_ACCESS_TOKEN."
+                    + (
+                        " A labeled GCP reference project fixture is available (demo opt-in enabled)."
+                        if self.settings.allow_demo_fixtures
+                        else " No fixture data is substituted when credentials are missing."
+                    )
                 ),
                 access_limitations=limitations,
             )
@@ -168,6 +179,9 @@ class GcpInventoryService:
         if not token:
             token, _ = await self.get_inventory_access_token()
 
+        if not token and not self.settings.allow_demo_fixtures:
+            raise HTTPException(status_code=401, detail=GCP_AUTH_REQUIRED_MESSAGE)
+
         if token:
             url = "https://cloudresourcemanager.googleapis.com/v3/projects:search"
             headers = {"Authorization": f"Bearer {token}"}
@@ -175,6 +189,7 @@ class GcpInventoryService:
             page_token: str | None = None
             max_pages = 5
             pages = 0
+            reached_api = False  # True once Resource Manager answered 200 (even with zero projects)
 
             try:
                 async with httpx.AsyncClient(timeout=15.0) as client:
@@ -213,6 +228,7 @@ class GcpInventoryService:
                                 )
                                 break
                         data = resp.json()
+                        reached_api = True
                         projects = data.get("projects", [])
                         for p in projects:
                             pid = p.get("projectId", p.get("name", ""))
@@ -236,12 +252,21 @@ class GcpInventoryService:
                         pages += 1
                         if not page_token:
                             break
-                if summaries:
-                    return summaries
             except HTTPException:
                 raise
             except Exception as exc:
                 logger.warning("gcp_list_projects_exception", error=str(exc))
+            # An authorized but empty project list is a real result, never replaced by a fixture.
+            if summaries or reached_api:
+                return summaries
+            if not self.settings.allow_demo_fixtures:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "GCP Resource Manager project discovery failed; no fixture data is substituted. "
+                        "Check network access and credentials."
+                    ),
+                )
 
         # Return explicitly labeled reference GCP project hierarchy for exploration
         return [
@@ -1359,8 +1384,10 @@ class GcpInventoryService:
 
         token, auth_method = await self.get_inventory_access_token()
 
-        if target_project == "smart-expense-gcp-prod" or not token:
-            # Reject unauthorized custom project requests with actionable diagnostic
+        if self.settings.allow_demo_fixtures and (
+            target_project == "smart-expense-gcp-prod" or not token
+        ):
+            # Explicit demo opt-in only. Reject unauthorized custom project requests with a diagnostic
             if not token and target_project != "smart-expense-gcp-prod":
                 raise HTTPException(
                     status_code=401,
@@ -1376,6 +1403,9 @@ class GcpInventoryService:
                 assumptions=assumptions,
                 buffer_percentage=buffer_percentage,
             )
+
+        if not token:
+            raise HTTPException(status_code=401, detail=GCP_AUTH_REQUIRED_MESSAGE)
 
         return await self._analyze_live_project(
             target_project=target_project,

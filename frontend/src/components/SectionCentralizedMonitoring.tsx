@@ -15,6 +15,7 @@ import {
   SubscriptionOrProjectAnalysis,
 } from "@/types";
 import {
+  ApiError,
   listAzureSubscriptions,
   listGcpProjects,
   getMonitoringOverview,
@@ -30,6 +31,7 @@ import { FinancialKpiDrawer } from "@/components/FinancialKpiDrawer";
 import {
   buildCanonicalFinancialSummary,
   formatFinancialCurrency,
+  periodSuffix,
   toFiniteNumber,
 } from "@/lib/financials";
 import { FinancialKpiType } from "@/types/financials";
@@ -298,6 +300,8 @@ export function SectionCentralizedMonitoring({
   const [analysisData, setAnalysisData] =
     useState<SubscriptionOrProjectAnalysis | null>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState<boolean>(false);
+  // HTTP status of the last failed analysis call (null = network error); cleared on success.
+  const [analysisError, setAnalysisError] = useState<{ status: number | null } | null>(null);
 
   // Financial KPI Drill-Down Drawer State & Canonical Calculation
   const [financialDrawerKpi, setFinancialDrawerKpi] =
@@ -506,6 +510,7 @@ export function SectionCentralizedMonitoring({
   const fetchAnalysis = useCallback(async () => {
     if (!selectedScopeId) return;
     setIsLoadingAnalysis(true);
+    setAnalysisError(null);
     try {
       if (provider === "azure") {
         const res = await analyzeAzureSubscription({
@@ -520,7 +525,9 @@ export function SectionCentralizedMonitoring({
         setAnalysisData(res);
       }
     } catch (err) {
-      console.warn("Waste analysis query error:", err);
+      // Surface only the status code: never the response body, token or stack trace.
+      setAnalysisError({ status: err instanceof ApiError ? err.status : null });
+      console.warn("Waste analysis query failed", err instanceof ApiError ? err.status : "network");
     } finally {
       setIsLoadingAnalysis(false);
     }
@@ -1313,7 +1320,9 @@ export function SectionCentralizedMonitoring({
             </div>
             <div className="text-xl font-extrabold text-emerald-700 mt-1">
               {formatFinancialCurrency(canonicalFinancials?.potential_monthly_savings)}
-              <span className="text-xs font-normal">/mo</span>
+              <span className="text-xs font-normal">
+                {periodSuffix(canonicalFinancials?.potential_monthly_savings, "/mo")}
+              </span>
             </div>
             <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 flex items-center justify-between">
               <span>Non-double-counted</span>
@@ -2175,6 +2184,7 @@ export function SectionCentralizedMonitoring({
           overview={overview}
           analysisData={analysisData}
           isLoading={isLoadingAnalysis}
+          analysisError={analysisError}
           onRefresh={() => fetchAnalysis()}
           onInspectResource={inspectResource}
         />
@@ -2465,7 +2475,10 @@ export function SectionCentralizedMonitoring({
                             {formatFinancialCurrency(
                               toFiniteNumber(resourceDetail.cost_and_utilization?.monthly_cost)
                             )}
-                            /month
+                            {periodSuffix(
+                              toFiniteNumber(resourceDetail.cost_and_utilization?.monthly_cost),
+                              "/month"
+                            )}
                           </div>
                         </div>
                         <div>

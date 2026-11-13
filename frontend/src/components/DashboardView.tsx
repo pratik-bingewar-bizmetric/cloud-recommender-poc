@@ -25,6 +25,7 @@ import {
   formatFinancialCurrency,
   NO_DATA_LABEL,
   FINANCIAL_UNAVAILABLE_MESSAGES,
+  periodSuffix,
 } from "@/lib/financials";
 import { FinancialKpiDrawer } from "@/components/FinancialKpiDrawer";
 
@@ -188,7 +189,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="text-2xl font-bold text-navy-900 font-mono tabular-nums">
                   {formatFinancialCurrency(spendAmount, currency)}
                 </span>
-                <span className="text-xs font-normal text-slate-400">/mo</span>
+                <span className="text-xs font-normal text-slate-400">{periodSuffix(spendAmount, "/mo")}</span>
               </div>
             </div>
             <div className="p-2 rounded-lg bg-blue-50 text-brand-600 border border-blue-200 group-hover:scale-105 transition">
@@ -277,7 +278,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="text-2xl font-bold text-navy-900 font-mono tabular-nums">
                   {formatFinancialCurrency(financials.projected_annual_savings, currency)}
                 </span>
-                <span className="text-xs text-slate-400 font-normal">/yr</span>
+                <span className="text-xs text-slate-400 font-normal">{periodSuffix(financials.projected_annual_savings, "/yr")}</span>
               </div>
             </div>
             <div className="p-2 rounded-lg bg-amber-50 text-amber-600 border border-amber-200 group-hover:scale-105 transition">
@@ -314,7 +315,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   Spend Breakdown by Category
                 </h2>
                 <p className="text-xs text-navy-500 mt-0.5">
-                  100% reconciled to {formatFinancialCurrency(spendAmount, currency)}/mo
+                  100% reconciled to {formatFinancialCurrency(spendAmount, currency)}{periodSuffix(spendAmount, "/mo")}
                 </p>
               </div>
               <button
@@ -392,7 +393,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={() => handleOpenDrawer("savings")}
               className="text-xs font-semibold text-accent-emerald bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full hover:bg-emerald-100 transition"
             >
-              Save up to {formatFinancialCurrency(savingsAmount, currency)}/mo &rarr;
+              {savingsAmount === null
+                ? `Savings: ${NO_DATA_LABEL}`
+                : `Save up to ${formatFinancialCurrency(savingsAmount, currency)}/mo \u2192`}
             </button>
           </div>
 
@@ -429,7 +432,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60">
                   <div className="text-left sm:text-right">
                     <span className="text-xs font-bold text-accent-emerald font-mono block">
-                      +{formatFinancialCurrency(finding.potential_monthly_savings, currency)}/mo
+                      {finding.potential_monthly_savings === null ? "" : "+"}
+                      {formatFinancialCurrency(finding.potential_monthly_savings, currency)}
+                      {periodSuffix(finding.potential_monthly_savings, "/mo")}
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">
                       Spend: {formatFinancialCurrency(finding.current_monthly_spend, currency)}
