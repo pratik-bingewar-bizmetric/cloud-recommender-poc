@@ -67,7 +67,7 @@ def test_adversarial_invalid_identifiers_return_no_data(
     )
     assert overview.kpis["total_spend"].value is None
     assert overview.kpis["total_spend"].status == KpiStatus.NO_DATA
-    assert overview.kpis["total_spend"].formatted_value == "No data available"
+    assert overview.kpis["total_spend"].formatted_value == "-"
     assert len(overview.spend_trend) == 0
     assert len(overview.top_cost_drivers) == 0
 
@@ -111,7 +111,7 @@ def test_valid_id_with_mismatched_resource_type_rejected(
     )
     assert overview.kpis["total_spend"].status == KpiStatus.NO_DATA
     assert overview.kpis["total_spend"].value is None
-    assert overview.kpis["total_spend"].formatted_value == "No data available"
+    assert overview.kpis["total_spend"].formatted_value == "-"
 
 
 # -----------------------------------------------------------------------------

@@ -37,7 +37,10 @@ def get_engine() -> AsyncEngine:
         )
 
         connect_args: dict[str, Any] = {}
-        if settings.db_ssl_mode in ("require", "verify-ca", "verify-full") and "ssl=" not in settings.database_url:
+        if (
+            settings.db_ssl_mode in ("require", "verify-ca", "verify-full")
+            and "ssl=" not in settings.database_url
+        ):
             connect_args["ssl"] = "require"
 
         _engine = create_async_engine(

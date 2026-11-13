@@ -1,5 +1,6 @@
 """Microsoft Entra ID cryptographic JWT authentication and role-based authorization."""
 
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
@@ -281,7 +282,7 @@ def require_authenticated_user(
     return user
 
 
-def require_roles(*allowed_roles: str):
+def require_roles(*allowed_roles: str) -> Callable[..., AuthenticatedUser]:
     """FastAPI dependency factory enforcing that caller holds at least one of the specified roles."""
 
     def role_checker(

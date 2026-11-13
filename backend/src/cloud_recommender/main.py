@@ -33,8 +33,22 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         debug=settings.debug,
     )
 
+    refresher = None
+    if settings.app_env != "testing" and settings.databricks_inventory_refresh_seconds > 0:
+        from cloud_recommender.services.databricks.refresher import get_refresher
+
+        refresher = get_refresher()
+        refresher.start()
+        logger.info(
+            "databricks_refresher_started",
+            inventory_seconds=settings.databricks_inventory_refresh_seconds,
+            metadata_seconds=settings.databricks_metadata_refresh_seconds,
+        )
+
     yield
 
+    if refresher is not None:
+        await refresher.stop()
     logger.info("application_shutting_down")
     await close_db_engine()
     logger.info("application_shutdown_complete")

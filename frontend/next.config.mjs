@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Allows an isolated verification instance (NEXT_DIST_DIR) beside a running dev server.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   webpack: (config) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,

@@ -3,9 +3,11 @@
 import logging
 import sys
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 import structlog
+from dotenv import dotenv_values
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -77,7 +79,10 @@ class Settings(BaseSettings):
         default=30, ge=5, le=120, description="Database connection pool checkout timeout in seconds"
     )
     db_pool_recycle: int = Field(
-        default=1800, ge=60, le=7200, description="Recycle database connections after N seconds (prevents firewall drops)"
+        default=1800,
+        ge=60,
+        le=7200,
+        description="Recycle database connections after N seconds (prevents firewall drops)",
     )
     db_ssl_mode: Literal["disable", "prefer", "require", "verify-ca", "verify-full"] = Field(
         default="prefer",
@@ -99,14 +104,50 @@ class Settings(BaseSettings):
         description="Azure AI Foundry / Azure OpenAI inference endpoint URL.",
     )
 
-    # Databricks FinOps & System Tables Ingestion (Milestone 3H)
+    # Databricks FinOps & System Tables Ingestion (Milestone 3H / M1 Multi-Workspace)
     databricks_host: str = Field(
         default="https://adb-642006393507276.16.azuredatabricks.net",
-        description="Azure Databricks workspace host URL",
+        description="Primary Azure Databricks workspace host URL (Dev default)",
+    )
+    databricks_workspace_id: str = Field(
+        default="642006393507276",
+        description="Primary Azure Databricks workspace ID (Dev default)",
     )
     databricks_warehouse_id: str = Field(
         default="05ed10a52697a344",
         description="SQL Warehouse ID (Serverless Starter Warehouse)",
+    )
+    databricks_dev_workspace_id: str = Field(
+        default="642006393507276",
+        description="Azure Databricks Dev workspace ID",
+    )
+    databricks_dev_host: str = Field(
+        default="https://adb-642006393507276.16.azuredatabricks.net",
+        description="Azure Databricks Dev workspace host URL",
+    )
+    databricks_dev_warehouse_id: str | None = Field(
+        default=None,
+        description="Optional override SQL Warehouse ID for Dev workspace (falls back to databricks_warehouse_id)",
+    )
+    databricks_prod_workspace_id: str | None = Field(
+        default="7405608085231210",
+        description="Azure Databricks Prod workspace ID",
+    )
+    databricks_prod_host: str = Field(
+        default="https://adb-7405608085231210.10.azuredatabricks.net",
+        description="Azure Databricks Prod workspace host URL",
+    )
+    databricks_prod_warehouse_id: str | None = Field(
+        default=None,
+        description="SQL Warehouse ID for Prod workspace (configured via DATABRICKS_PROD_WAREHOUSE_ID)",
+    )
+    databricks_prod_profile: str = Field(
+        default="azure-prod",
+        description="Databricks CLI profile fallback for Prod workspace in local development",
+    )
+    databricks_workspaces_json: str | None = Field(
+        default=None,
+        description="Optional JSON array defining additional Databricks workspace registry entries",
     )
     databricks_auth_type: str = Field(
         default="azure-cli",
@@ -133,6 +174,21 @@ class Settings(BaseSettings):
     finops_signing_secret: str | None = Field(
         default=None,
         description="Explicit HMAC-SHA256 secret for signing live execution approval tokens",
+    )
+    databricks_inventory_refresh_seconds: int = Field(
+        default=60,
+        ge=0,
+        description="Background refresh interval for workspace inventory/health (0 disables)",
+    )
+    databricks_metadata_refresh_seconds: int = Field(
+        default=600,
+        ge=0,
+        description="Background refresh interval for slower Unity Catalog / system-table metadata",
+    )
+    finops_monthly_budget_usd: float | None = Field(
+        default=None,
+        ge=0,
+        description="Configured monthly Databricks budget in USD; budgets are never invented.",
     )
     finops_signing_kid: str = Field(
         default="k1-2026",
@@ -274,10 +330,59 @@ class Settings(BaseSettings):
     )
 
 
+_PLACEHOLDER_CREDENTIAL_PATTERNS: tuple[str, ...] = (
+    "your_",
+    "your-",
+    "placeholder",
+    "changeme",
+    "change_me",
+    "change-me",
+    "change-in-production",
+    "replace_me",
+    "replace-me",
+    "xxx",
+    "{{secrets/",
+)
+
+
+def is_valid_credential_value(value: str | None) -> bool:
+    """Return True if a credential value is non-empty, >= 10 chars, and not a placeholder."""
+    if not value:
+        return False
+    cleaned = value.strip()
+    if len(cleaned) < 10:
+        return False
+    if (cleaned.startswith("<") and cleaned.endswith(">")) or (
+        cleaned.startswith("${") and cleaned.endswith("}")
+    ):
+        return False
+    lowered = cleaned.lower()
+    return not any(pattern in lowered for pattern in _PLACEHOLDER_CREDENTIAL_PATTERNS)
+
+
+def has_valid_sp_credentials(*values: str | None) -> bool:
+    """Return True only when all supplied Service Principal credential fields are valid."""
+    return bool(values) and all(is_valid_credential_value(val) for val in values)
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Return cached application settings singleton."""
     return Settings()
+
+
+def reload_settings() -> Settings:
+    """Re-read .env files fresh and return an updated Settings instance without mutating os.environ."""
+    env_overrides: dict[str, str] = {}
+    for env_path in (Path("backend/.env"), Path(".env")):
+        if env_path.is_file():
+            for key, val in dotenv_values(env_path).items():
+                if key and val is not None:
+                    env_overrides[key.lower()] = val
+    get_settings.cache_clear()
+    valid_fields = set(Settings.model_fields.keys())
+    filtered = {k: v for k, v in env_overrides.items() if k in valid_fields}
+    return Settings(**filtered)  # type: ignore[arg-type]
 
 
 def setup_logging(settings: Settings) -> None:

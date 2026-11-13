@@ -137,13 +137,21 @@ export const TopNav: React.FC<TopNavProps> = ({
               <AlertTriangle className="w-3 h-3" />
               <span>Pricing Notice</span>
             </span>
-          ) : (
+          ) : pricingStatus === "verified" ? (
             <span
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-accent-emerald border border-emerald-200 text-xs font-medium"
-              title="Azure Retail Prices API verified"
+              title="All evaluated components matched deterministic pricing meters"
             >
               <Calculator className="w-3 h-3" />
               <span>Retail Prices Verified</span>
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-navy-700 border border-slate-200 text-xs font-medium"
+              title="No architecture has been priced in this session"
+            >
+              <Calculator className="w-3 h-3" />
+              <span>Pricing: not evaluated</span>
             </span>
           )}
         </div>

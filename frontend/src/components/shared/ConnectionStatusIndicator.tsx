@@ -18,7 +18,11 @@ export type ConnectionStatusType =
   | "refreshing"
   | "completed"
   | "failed"
+  | "auth_failed"
   | "permission_denied"
+  | "connection_error"
+  | "unavailable"
+  | "ready_to_connect"
   | "connection_lost";
 
 interface ConnectionStatusIndicatorProps {
@@ -96,6 +100,16 @@ export const ConnectionStatusIndicator: React.FC<ConnectionStatusIndicatorProps>
           icon: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />,
           defaultLabel: "Completed",
         };
+      case "auth_failed":
+      case "authentication_failed":
+        return {
+          bg: "bg-rose-50",
+          text: "text-rose-700",
+          border: "border-rose-200",
+          dot: "bg-rose-500",
+          icon: <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />,
+          defaultLabel: "Authentication Failed",
+        };
       case "permission_denied":
       case "permission_required":
         return {
@@ -104,7 +118,18 @@ export const ConnectionStatusIndicator: React.FC<ConnectionStatusIndicatorProps>
           border: "border-amber-300",
           dot: "bg-amber-500",
           icon: <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />,
-          defaultLabel: "Permission Required",
+          defaultLabel: "Permission Denied",
+        };
+      case "connection_error":
+      case "unavailable":
+      case "ready_to_connect":
+        return {
+          bg: "bg-slate-100",
+          text: "text-slate-700",
+          border: "border-slate-300",
+          dot: "bg-slate-500",
+          icon: <WifiOff className="w-3.5 h-3.5 text-slate-600 shrink-0" />,
+          defaultLabel: "Unavailable",
         };
       case "connection_lost":
         return {

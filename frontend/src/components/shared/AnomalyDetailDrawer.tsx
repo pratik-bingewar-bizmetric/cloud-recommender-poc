@@ -120,7 +120,7 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
             <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
               <span className="text-[10px] uppercase font-bold text-slate-400 block">Deviation</span>
               <span className="text-sm font-bold text-navy-900 mt-0.5 block">
-                {anomaly.percentage_deviation || "+180.9%"}
+                {anomaly.percentage_deviation || "n/a"}
               </span>
             </div>
             <div className="p-3 rounded-lg bg-slate-50 border border-slate-200">
@@ -174,7 +174,7 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
             </h4>
             <p className="text-xs text-slate-700 leading-relaxed">
               {anomaly.ai_explanation ||
-                `Model endpoint ${anomaly.resource} experienced an unexpected spike starting at ${anomaly.detected}. Root cause telemetry correlates with rapid client retry loops without backoff, driving output token generation well above normal thresholds.`}
+                "No root-cause narrative is available. The detector only reports a statistical deviation; the cause is not inferred."}
             </p>
           </div>
 
@@ -185,12 +185,9 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
               Candidate Root-Cause Hypotheses
             </h4>
             <div className="space-y-2">
-              {(
-                anomaly.root_cause_hypotheses || [
-                  "Runaway agent loop in multi-turn customer chat bot",
-                  "Prompt modification inflating completion token generation by 3.4x",
-                  "Missing client-side retry exponential backoff",
-                ]
+              {(anomaly.root_cause_hypotheses && anomaly.root_cause_hypotheses.length > 0
+                ? anomaly.root_cause_hypotheses
+                : [anomaly.likely_cause]
               ).map((hyp, idx) => (
                 <div
                   key={idx}
@@ -214,12 +211,12 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
               <div>
                 <span className="text-slate-500 block">Methodology:</span>
                 <span className="font-semibold text-navy-900">
-                  {anomaly.detection_methodology || "Statistical Z-Score (3.82 SD from 30-day baseline)"}
+                  {anomaly.detection_methodology || "n/a"}
                 </span>
               </div>
               <div>
                 <span className="text-slate-500 block">Confidence Level:</span>
-                <span className="font-semibold text-emerald-700">{anomaly.confidence || "High (96%)"}</span>
+                <span className="font-semibold text-slate-700">{anomaly.confidence || "n/a"}</span>
               </div>
               <div>
                 <span className="text-slate-500 block">Detection Timestamp:</span>
@@ -227,7 +224,7 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
               </div>
               <div>
                 <span className="text-slate-500 block">Workspace ID:</span>
-                <span className="font-mono font-semibold text-navy-900">{anomaly.workspace_id || "642006393507276"}</span>
+                <span className="font-mono font-semibold text-navy-900">{anomaly.workspace_id || "n/a"}</span>
               </div>
             </div>
           </div>
@@ -236,34 +233,25 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
           <div className="space-y-2">
             <h4 className="text-xs font-bold text-navy-900 uppercase tracking-wider flex items-center gap-1.5">
               <Activity className="w-4 h-4 text-brand-600" />
-              7-Day Historical Spend Trend
+              Historical Daily Spend (list-price basis)
             </h4>
             <div className="p-3 rounded-xl border border-slate-200 bg-white">
               <div className="grid grid-cols-7 gap-1 text-center text-xs">
-                {(
-                  anomaly.historical_trend || [
-                    { date: "Nov 01", spend: 410 },
-                    { date: "Nov 02", spend: 425 },
-                    { date: "Nov 03", spend: 418 },
-                    { date: "Nov 04", spend: 420 },
-                    { date: "Nov 05", spend: 430 },
-                    { date: "Nov 06", spend: 422 },
-                    { date: "Today", spend: 1180 },
-                  ]
+                {(anomaly.historical_trend || []
                 ).map((day, idx) => (
                   <div
                     key={idx}
                     className={`p-2 rounded-lg ${
-                      day.date === "Today" ? "bg-rose-100 border border-rose-300" : "bg-slate-50"
+                      idx === (anomaly.historical_trend?.length ?? 0) - 1 ? "bg-rose-100 border border-rose-300" : "bg-slate-50"
                     }`}
                   >
                     <span className="text-[10px] text-slate-500 block font-semibold">{day.date}</span>
                     <span
                       className={`text-xs font-bold mt-1 block ${
-                        day.date === "Today" ? "text-rose-700" : "text-slate-800"
+                        idx === (anomaly.historical_trend?.length ?? 0) - 1 ? "text-rose-700" : "text-slate-800"
                       }`}
                     >
-                      ${day.spend}
+                      ${day.spend.toLocaleString()}
                     </span>
                   </div>
                 ))}
@@ -286,11 +274,7 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 bg-white">
-                  {(
-                    anomaly.sku_contribution || [
-                      { sku: "Model Serving Inference", pct: 82, amount: "$967.60" },
-                      { sku: "AI Gateway Proxy", pct: 18, amount: "$212.40" },
-                    ]
+                  {(anomaly.sku_contribution || []
                   ).map((sku, idx) => (
                     <tr key={idx} className="hover:bg-slate-50/80">
                       <td className="py-2 px-3 font-medium text-navy-900">{sku.sku}</td>
@@ -309,7 +293,7 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
               Associated Workloads &amp; Consumers
             </h4>
             <div className="flex items-center gap-2 flex-wrap text-xs">
-              {(anomaly.related_workloads || ["panasonic-voice-agent-prod", "customer-support-eval-batch"]).map(
+              {(anomaly.related_workloads || []).map(
                 (w, idx) => (
                   <span
                     key={idx}
@@ -330,12 +314,12 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
             </h4>
             <p className="text-xs text-slate-700 leading-relaxed">
               {anomaly.recommended_action ||
-                "Enable prompt context caching, clamp max_tokens ceiling to 2048, and enforce rate-limiting on calling agent service principals."}
+                "Review the contributing SKUs and workloads for this date. No automated remediation is suggested."}
             </p>
             <div className="pt-2 border-t border-emerald-200 flex justify-between items-center text-xs">
               <span className="text-slate-600">Potential Savings:</span>
               <span className="font-bold text-emerald-800">
-                {anomaly.potential_savings || "$760 / day (~$22,800 / month)"}
+                {anomaly.potential_savings || "Not calculable"}
               </span>
             </div>
           </div>
@@ -347,7 +331,7 @@ export const AnomalyDetailDrawer: React.FC<AnomalyDetailDrawerProps> = ({
             </h4>
             <p className="text-[11px] text-slate-600 leading-relaxed">
               {anomaly.verification_procedure ||
-                "Audit system.ai_gateway.usage to confirm request rate drops below 45 req/min and average completion tokens return to < 450 tokens."}
+                "Re-check daily spend in system.billing.usage after any change and confirm it returns to the trailing baseline."}
             </p>
           </div>
         </div>

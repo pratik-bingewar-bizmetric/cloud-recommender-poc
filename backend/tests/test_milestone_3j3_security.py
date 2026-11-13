@@ -10,6 +10,7 @@ Forensic verification covering:
 """
 
 import threading
+from collections.abc import Generator
 
 import pytest
 from sqlalchemy import create_engine
@@ -70,7 +71,7 @@ def sqlite_session_factory(sqlite_engine):
 
 
 @pytest.fixture
-def sqlite_session(sqlite_session_factory) -> Session:
+def sqlite_session(sqlite_session_factory) -> Generator[Session, None, None]:
     """In-memory SQLite session for testing token persistence and atomic single-use."""
     session = sqlite_session_factory()
     yield session

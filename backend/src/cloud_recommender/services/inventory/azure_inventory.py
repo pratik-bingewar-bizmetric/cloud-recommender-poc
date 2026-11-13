@@ -9,6 +9,7 @@ Strict adherence to architectural boundaries:
 - Generates evidence-based Mermaid architecture graphs and deterministic cost rollups.
 """
 
+import asyncio
 import json
 import re
 import shutil
@@ -20,7 +21,12 @@ from typing import Any
 import httpx
 import structlog
 
-from cloud_recommender.core.config import Settings, get_settings
+from cloud_recommender.core.config import (
+    Settings,
+    get_settings,
+    has_valid_sp_credentials,
+    reload_settings,
+)
 from cloud_recommender.schemas.analysis import WorkloadAssumptions
 from cloud_recommender.schemas.common import CloudProvider, ServiceCategory
 from cloud_recommender.schemas.inventory import (
@@ -58,47 +64,87 @@ class AzureInventoryService:
         settings: Settings | None = None,
         pricing_engine: AzurePricingEngine | None = None,
     ) -> None:
+        self._explicit_settings = settings is not None
         self.settings = settings or get_settings()
         self.pricing_engine = pricing_engine or AzurePricingEngine(settings=self.settings)
 
-    async def get_access_token(self) -> tuple[str | None, str]:
+    async def verify_sp_access_token(self) -> tuple[str | None, int | None, str]:
+        """Acquire an Azure ARM token strictly via Service Principal OAuth2 (no CLI fallback).
+
+        Returns (access_token_or_none, http_status_code, sanitized_detail).
+        """
+        active_settings = self.settings if self._explicit_settings else reload_settings()
+        if not self._explicit_settings:
+            self.settings = active_settings
+
+        tenant_id = (active_settings.azure_tenant_id or "").strip()
+        client_id = (active_settings.azure_client_id or "").strip()
+        client_secret = (active_settings.azure_client_secret or "").strip()
+
+        if not has_valid_sp_credentials(tenant_id, client_id, client_secret):
+            return (
+                None,
+                None,
+                "AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET missing or placeholders.",
+            )
+
+        token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": "https://management.azure.com/.default",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(token_url, data=data)
+            if resp.status_code == 200:
+                payload = resp.json()
+                token = payload.get("access_token")
+                if token:
+                    return token, 200, "Azure Service Principal OAuth2 token acquired."
+                return None, 200, "Entra token endpoint returned 200 without access_token."
+
+            err_detail = f"HTTP {resp.status_code}"
+            try:
+                err_json = resp.json()
+                err_code = err_json.get("error", "")
+                err_desc = err_json.get("error_description", "")
+                if err_code or err_desc:
+                    err_detail = f"{err_code}: {err_desc}".strip(": ")
+            except Exception:
+                if resp.text:
+                    err_detail = resp.text[:300]
+            if client_secret and len(client_secret) >= 4:
+                err_detail = err_detail.replace(client_secret, "[REDACTED_SECRET]")
+            logger.warning("azure_sp_token_request_failed", status_code=resp.status_code)
+            return None, resp.status_code, err_detail
+        except Exception as exc:
+            err_msg = str(exc)
+            if client_secret and len(client_secret) >= 4:
+                err_msg = err_msg.replace(client_secret, "[REDACTED_SECRET]")
+            logger.warning("azure_sp_token_exception", error=err_msg)
+            return None, None, err_msg
+
+    async def get_access_token(self, allow_cli_fallback: bool = True) -> tuple[str | None, str]:
         """Obtain read-only Azure Resource Manager access token without exposing secrets.
 
         Returns (token, auth_method_description).
         """
-        tenant_id = (self.settings.azure_tenant_id or "").strip()
-        client_id = (self.settings.azure_client_id or "").strip()
-        client_secret = (self.settings.azure_client_secret or "").strip()
+        sp_token, _, _ = await self.verify_sp_access_token()
+        if sp_token:
+            return sp_token, "service_principal_oauth2"
 
-        # 1. Service Principal OAuth2 Client Credentials
-        if tenant_id and client_id and client_secret:
-            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-            data = {
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "scope": "https://management.azure.com/.default",
-            }
-            try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(token_url, data=data)
-                    if resp.status_code == 200:
-                        payload = resp.json()
-                        token = payload.get("access_token")
-                        if token:
-                            return token, "service_principal_oauth2"
-                    logger.warning(
-                        "azure_sp_token_request_failed",
-                        status_code=resp.status_code,
-                    )
-            except Exception as exc:
-                logger.warning("azure_sp_token_exception", error=str(exc))
+        if not allow_cli_fallback:
+            return None, "none"
 
         # 2. Azure CLI session (if az is installed and logged in)
         az_path = shutil.which("az") or shutil.which("az.cmd")
         if az_path:
             try:
-                proc = subprocess.run(
+                # Blocking CLI call: run in a worker thread so it cannot stall the event loop.
+                proc = await asyncio.to_thread(
+                    subprocess.run,
                     [
                         az_path,
                         "account",

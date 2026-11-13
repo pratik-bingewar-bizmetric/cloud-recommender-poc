@@ -94,8 +94,8 @@ class BillingIngestionStatusResponse(BaseModel):
     total_usage_records_ingested: int = Field(
         default=0, description="Total normalized records in repository"
     )
-    total_dbu_consumed: float = Field(
-        default=0.0, description="Cumulative DBU consumption across records"
+    total_dbu_consumed: float | None = Field(
+        default=None, description="Cumulative DBU consumption; null when no rows are ingested"
     )
     active_configuration_version: int = Field(
         default=1, description="Active governance configuration version"
@@ -147,9 +147,13 @@ class BillingSummaryResponse(BaseModel):
 
     workspace_id: str = Field(..., description="Target workspace ID")
     resource_id: str | None = Field(default=None, description="Exact resource ID if filtered")
-    total_dbu: float = Field(..., description="Gross metered DBU quantity")
-    net_dbu: float = Field(..., description="Net DBU quantity (gross minus retractions)")
-    retraction_dbu: float = Field(default=0.0, description="Total retracted DBU quantity")
+    total_dbu: float | None = Field(
+        default=None, description="Gross metered DBU quantity; null when no rows are ingested"
+    )
+    net_dbu: float | None = Field(
+        default=None, description="Net DBU quantity (gross minus retractions); null when no rows"
+    )
+    retraction_dbu: float | None = Field(default=None, description="Total retracted DBU quantity")
     total_spend_verified: float | None = Field(
         default=None, description="Spend verified through matched pricing; null if unpriced"
     )
@@ -170,7 +174,7 @@ class BillingSummaryResponse(BaseModel):
         default=0, description="Count of usage records without valid pricing match"
     )
     data_status: str = Field(
-        default="BASELINE", description="LIVE, BASELINE, NO_DATA, WAREHOUSE_STOPPED"
+        default="NO_BILLING_ROWS", description="INGESTED, NO_DATA, NO_BILLING_ROWS"
     )
     last_refreshed: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -184,14 +188,14 @@ class BillingReconciliationResponse(BaseModel):
     matched_records_count: int = Field(default=0)
     unmatched_records_count: int = Field(default=0)
     retraction_records_count: int = Field(default=0)
-    gross_dbu: float = Field(default=0.0)
-    retraction_dbu: float = Field(default=0.0)
-    net_dbu: float = Field(default=0.0)
-    gross_cost: float = Field(default=0.0)
-    net_cost: float = Field(default=0.0)
+    gross_dbu: float | None = None
+    retraction_dbu: float | None = None
+    net_dbu: float | None = None
+    gross_cost: float | None = None
+    net_cost: float | None = None
     currency: str = Field(default="USD")
     reconciliation_status: str = Field(
-        default="RECONCILED", description="RECONCILED or DISCREPANCY_DETECTED"
+        default="NO_DATA", description="RECONCILED, DISCREPANCY_DETECTED or NO_DATA"
     )
     audit_notes: list[str] = Field(default_factory=list)
 

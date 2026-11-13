@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import Image from "next/image";
 import { Sidebar, ViewMode } from "@/components/Sidebar";
+import { useDatabricksConnection } from "@/lib/useDatabricksConnection";
 import { TopNav } from "@/components/TopNav";
 import { LandingView } from "@/components/LandingView";
 import { DashboardView } from "@/components/DashboardView";
@@ -39,15 +40,13 @@ import {
   WorkloadAssumptions,
   WorkloadProfile,
   FinOpsModule,
-  DatabricksWorkspaceDiscovery,
+  DatabricksConnection,
 } from "@/types";
 import {
   analyzeRequirements,
   checkBackendHealth,
   generateArchitecture,
   simulatePricing,
-  getWorkspaceDiscovery,
-  refreshWorkspaceDiscovery,
   ApiError,
 } from "@/lib/api";
 import {
@@ -85,37 +84,34 @@ export default function Home() {
   const [activeCloudScope, setActiveCloudScope] = useState<CloudScope>({
     provider: "azure",
     scope_type: "azure_resource_group",
-    subscription_id: "sub-prod-01",
-    resource_group: "rg-finops-eastus",
-    display_name: "rg-finops-eastus",
-    workspace_id: "642006393507276",
-    workspace_name: "Azure Databricks Dev",
-    workspace_url: "https://adb-642006393507276.16.azuredatabricks.net",
-    tenant_id: "tenant-bizmetric-prod",
-    region: "northcentralus",
-    status: "connected",
-    auth_status: "authenticated",
-    connection_verification_status: "verified",
-    date_range: { start: "2026-11-01", end: "2026-11-30" },
-    environment: "Production",
-    data_freshness: "2026-11-10T12:00:00Z",
-    source_availability: {
-      system_tables: true,
-      discovery: true,
-      cost_management: true,
-      query_history: true,
-      audit_logs: true,
-      token_economics: true,
-    },
+    display_name: "No Azure scope selected",
+    status: "pending",
+    auth_status: "pending",
+    connection_verification_status: "unverified",
   });
   const [activeDatabricksModule, setActiveDatabricksModule] =
     useState<DatabricksModuleId>("overview");
   const [activeFinOpsModule, setActiveFinOpsModule] =
     useState<FinOpsModule>("overview");
-  const [databricksDiscovery, setDatabricksDiscovery] =
-    useState<DatabricksWorkspaceDiscovery | null>(null);
-  const [isDiscoveringDatabricks, setIsDiscoveringDatabricks] =
-    useState<boolean>(false);
+  // Single source of truth for the selected workspace's connection state, health and inventory.
+  const dbx = useDatabricksConnection(activeCloudScope.workspace_id);
+  const databricksConnections = dbx.connections;
+  const databricksHealth = dbx.health;
+
+  // The selected workspace is whatever the backend registry resolved; the scope follows it.
+  useEffect(() => {
+    const c = dbx.connections.find((x) => x.connection_id === dbx.connectionId);
+    if (c && activeCloudScope.workspace_id !== c.workspace_id) {
+      setActiveCloudScope((prev) => ({
+        ...prev,
+        workspace_id: c.workspace_id,
+        workspace_name: c.workspace_name,
+        workspace_url: c.workspace_url,
+      }));
+    }
+  }, [dbx.connectionId, dbx.connections, activeCloudScope.workspace_id]);
+  const databricksDiscovery = dbx.discovery;
+  const isDiscoveringDatabricks = dbx.isRefreshing;
   const [architectStep, setArchitectStep] = useState<ArchitectStep>("requirements");
   const [architectMode, setArchitectMode] = useState<"step" | "all">("step");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -149,22 +145,11 @@ export default function Home() {
           newScope.workspace_url ||
           prev.workspace_url ||
           "https://adb-642006393507276.16.azuredatabricks.net",
-        tenant_id: newScope.tenant_id || prev.tenant_id || "tenant-bizmetric-prod",
+        tenant_id: newScope.tenant_id || prev.tenant_id,
         region: newScope.region || prev.region || "northcentralus",
-        auth_status: newScope.auth_status || prev.auth_status || "authenticated",
+        auth_status: newScope.auth_status || prev.auth_status,
         connection_verification_status:
-          newScope.connection_verification_status || prev.connection_verification_status || "verified",
-        date_range: newScope.date_range || prev.date_range || { start: "2026-11-01", end: "2026-11-30" },
-        environment: newScope.environment || prev.environment || "Production",
-        data_freshness: newScope.data_freshness || prev.data_freshness || "2026-11-10T12:00:00Z",
-        source_availability: newScope.source_availability || prev.source_availability || {
-          system_tables: true,
-          discovery: true,
-          cost_management: true,
-          query_history: true,
-          audit_logs: true,
-          token_economics: true,
-        },
+          newScope.connection_verification_status || prev.connection_verification_status,
       };
       if (typeof window !== "undefined") {
         try {
@@ -198,34 +183,13 @@ export default function Home() {
     [handleUpdateCloudScope]
   );
 
-  // Initial load of Databricks discovery snapshot
-  useEffect(() => {
-    let isMounted = true;
-    async function loadInitialDatabricks() {
-      try {
-        const disc = await getWorkspaceDiscovery("databricks-azure-dev");
-        if (isMounted) setDatabricksDiscovery(disc);
-      } catch {
-        // Fallback handled by component
-      }
-    }
-    loadInitialDatabricks();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const handleRefreshDatabricks = useCallback(async () => {
-    setIsDiscoveringDatabricks(true);
-    try {
-      const disc = await refreshWorkspaceDiscovery("databricks-azure-dev");
-      setDatabricksDiscovery(disc);
-    } catch (err) {
-      console.warn("Databricks discovery refresh failed:", err);
-    } finally {
-      setIsDiscoveringDatabricks(false);
-    }
-  }, []);
+  const handleRefreshDatabricks = useCallback(
+    async () => {
+      // A workspace change re-selects the connection inside the hook; this forces live discovery.
+      await dbx.refresh(true);
+    },
+    [dbx]
+  );
 
   const handleSelectMonitoringTab = useCallback((tab: MonitoringSubTab) => {
     setActiveMonitoringTab(tab);
@@ -652,36 +616,6 @@ export default function Home() {
               handleUpdateCloudScope(newScope);
               setActiveView("configuration");
             }}
-            onContinueToDemo={() => {
-              const demoConn: CloudConnection = {
-                id: "conn-azure-prod",
-                name: "Azure Production Account",
-                provider: "azure",
-                scope_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-                display_name: "Azure Production Account (sub-prod-01)",
-                tenant_or_org_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-                auth_method: "azure_cli_credentials",
-                status: "connected",
-                is_live: true,
-                capabilities: ["inventory", "monitoring", "pricing", "system_tables", "onelake"],
-                access_limitations: [],
-                last_verified_at: "2026-11-08T12:00:00.000Z",
-              };
-              setActiveConnection(demoConn);
-              const newScope: CloudScope = {
-                provider: "azure",
-                scope_type: "azure_subscription",
-                account_id: demoConn.id,
-                tenant_id: demoConn.tenant_or_org_id || undefined,
-                subscription_ids: [demoConn.scope_id],
-                subscription_id: demoConn.scope_id,
-                display_name: demoConn.display_name,
-                is_multi_scope: false,
-                status: "connected",
-              };
-              handleUpdateCloudScope(newScope);
-              setActiveView("configuration");
-            }}
           />
         </main>
       </div>
@@ -715,6 +649,7 @@ export default function Home() {
         onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
         isMobileOpen={isMobileMenuOpen}
         onCloseMobile={() => setIsMobileMenuOpen(false)}
+        connectionView={dbx.view}
       />
 
       {/* 2. Main Workspace Layout */}
@@ -745,7 +680,7 @@ export default function Home() {
               activeCloudScope.workspace_id ||
               activeCloudScope.resource_group ||
               activeConnection?.scope_id ||
-              "rg-finops-eastus",
+              "-",
           }}
           onSwitchConnection={() => setActiveView("connections")}
         />
@@ -1120,6 +1055,9 @@ export default function Home() {
           {activeView === "configuration" && (
             <ConfigurationView
               activeScope={activeCloudScope}
+              activeConnection={activeConnection}
+              databricksConnections={databricksConnections}
+              onRefreshDatabricks={handleRefreshDatabricks}
               onSelectScope={(scope) => {
                 handleUpdateCloudScope(scope);
                 if (scope.provider === "databricks") {
@@ -1138,7 +1076,7 @@ export default function Home() {
           {/* SCREEN 10B: Dedicated Cloud Connection Management */}
           {activeView === "connections" && (
             <ConnectCloudView
-              currentActiveConnectionId={activeConnection?.id || "conn-azure-prod"}
+              currentActiveConnectionId={activeConnection?.id ?? ""}
               onConnectionSelected={(conn) => {
                 setActiveConnection(conn);
                 const isGcp = conn.provider === "gcp";
@@ -1159,66 +1097,75 @@ export default function Home() {
           )}
 
           {/* SCREEN 11: Azure Databricks Multi-Module Workspace View (11 Operations Modules) */}
-          {activeView === "databricks" && (
-            <DatabricksWorkspaceDetailView
-              connection={{
-                connection_id: "databricks-azure-dev",
-                workspace_id: activeCloudScope.workspace_id || "642006393507276",
-                workspace_name: activeCloudScope.workspace_name || "Azure Databricks Dev",
-                workspace_url:
-                  activeCloudScope.workspace_url ||
-                  "https://adb-642006393507276.16.azuredatabricks.net",
-                cloud: "azure",
-                status: "connected",
-                auth_method: "azure-cli",
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              }}
-              discovery={databricksDiscovery}
-              activeModuleId={activeDatabricksModule}
-              onSelectModule={(mod) => {
-                const finopsMap: Record<string, FinOpsModule> = {
-                  exec_overview: "overview",
-                  cost_explorer: "cost",
-                  cost: "cost",
-                  cost_allocation: "allocation",
-                  allocation: "allocation",
-                  cost_billing: "chargeback",
-                  chargeback: "chargeback",
-                  billing: "chargeback",
-                  forecast: "forecast",
-                  anomaly: "anomaly",
-                  recommend: "recommend",
-                  ai_economics: "ai",
-                  ai: "ai",
-                  governance: "governance",
-                  reports: "reports",
-                };
-                if (mod in finopsMap) {
-                  setActiveFinOpsModule(finopsMap[mod]);
-                  setActiveView("finops");
-                } else {
-                  setActiveDatabricksModule(mod as DatabricksModuleId);
-                }
-              }}
-              isLoading={isDiscoveringDatabricks}
-              onBack={() => setActiveView("configuration")}
-              onRefresh={handleRefreshDatabricks}
-              activeScope={activeCloudScope}
-              onSelectScope={(scope) => {
-                handleUpdateCloudScope(scope);
-                handleRefreshDatabricks();
-              }}
-              onFocusScope={(child) => {
-                setActiveCloudScope((prev) => ({
-                  ...prev,
-                  scope_type: "databricks_resource",
-                  selected_child_resource: child,
-                  display_name: `${prev.workspace_name || "Databricks"} > ${child.resource_name}`,
-                }));
-              }}
-            />
-          )}
+          {activeView === "databricks" && (() => {
+            const matchedConn = databricksConnections.find((c) => c.connection_id === dbx.connectionId);
+            if (!matchedConn) {
+              return (
+                <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-600">
+                  <div className="font-bold text-navy-900 mb-1">{dbx.view.label}</div>
+                  <div>{dbx.view.reason || "No Databricks workspace connection is available."}</div>
+                </div>
+              );
+            }
+            // Status comes from the single connection view, never from the static registry entry.
+            const effectiveConnection: DatabricksConnection = {
+              ...matchedConn,
+              last_error: dbx.view.reason ?? matchedConn.last_error,
+            };
+
+            return (
+              <DatabricksWorkspaceDetailView
+                connection={effectiveConnection}
+                connectionHealth={databricksHealth}
+                connectionView={dbx.view}
+                lastRefreshedAt={dbx.lastSuccessAt}
+                availableConnections={databricksConnections}
+                discovery={databricksDiscovery}
+                activeModuleId={activeDatabricksModule}
+                onSelectModule={(mod) => {
+                  const finopsMap: Record<string, FinOpsModule> = {
+                    exec_overview: "overview",
+                    cost_explorer: "cost",
+                    cost: "cost",
+                    cost_allocation: "allocation",
+                    allocation: "allocation",
+                    cost_billing: "chargeback",
+                    chargeback: "chargeback",
+                    billing: "chargeback",
+                    forecast: "forecast",
+                    anomaly: "anomaly",
+                    recommend: "recommend",
+                    ai_economics: "ai",
+                    ai: "ai",
+                    governance: "governance",
+                    reports: "reports",
+                  };
+                  if (mod in finopsMap) {
+                    setActiveFinOpsModule(finopsMap[mod]);
+                    setActiveView("finops");
+                  } else {
+                    setActiveDatabricksModule(mod as DatabricksModuleId);
+                  }
+                }}
+                isLoading={isDiscoveringDatabricks}
+                onBack={() => setActiveView("configuration")}
+                onRefresh={() => handleRefreshDatabricks()}
+                activeScope={activeCloudScope}
+                onSelectScope={(scope) => {
+                  handleUpdateCloudScope(scope);
+                  handleRefreshDatabricks();
+                }}
+                onFocusScope={(child) => {
+                  setActiveCloudScope((prev) => ({
+                    ...prev,
+                    scope_type: "databricks_resource",
+                    selected_child_resource: child,
+                    display_name: `${prev.workspace_name || "Databricks"} > ${child.resource_name}`,
+                  }));
+                }}
+              />
+            );
+          })()}
 
           {/* SCREEN 12: FinOps Command Center (10 Cost Intelligence Modules) */}
           {activeView === "finops" && (
@@ -1244,8 +1191,11 @@ export default function Home() {
                   setActiveFinOpsModule(mod as FinOpsModule);
                 }
               }}
-              selectedWorkspaceId={activeCloudScope.workspace_id || "642006393507276"}
+              selectedWorkspaceId={dbx.view.workspaceId ?? activeCloudScope.workspace_id ?? ""}
               activeScope={activeCloudScope}
+              availableConnections={databricksConnections}
+              connectionHealth={databricksHealth}
+              connectionView={dbx.view}
               onSelectScope={(scope) => {
                 handleUpdateCloudScope(scope);
                 handleRefreshDatabricks();

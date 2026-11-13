@@ -377,7 +377,9 @@ async def test_postgres_resource_configuration_persistence_and_versioning(
         assert len(retrieved.scope_items) == 3
 
         # Verify Databricks workspace metadata was stored and retrieved correctly
-        ws_items = [i for i in retrieved.scope_items if i.scope_type == ScopeType.DATABRICKS_WORKSPACE.value]
+        ws_items = [
+            i for i in retrieved.scope_items if i.scope_type == ScopeType.DATABRICKS_WORKSPACE.value
+        ]
         assert len(ws_items) == 1
         assert ws_items[0].display_name == "adb-lakehouse-eastus"
         assert ws_items[0].metadata_json.get("workspace_id") == "642006393507276"
@@ -424,4 +426,3 @@ async def test_postgres_resource_configuration_persistence_and_versioning(
         assert v2_record.active_status == "active"
 
     await engine.dispose()
-

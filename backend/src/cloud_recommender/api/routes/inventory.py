@@ -4,6 +4,10 @@ import structlog
 from fastapi import APIRouter, Depends, status
 
 from cloud_recommender.core.config import Settings, get_settings
+from cloud_recommender.schemas.azure_discovery import (
+    AzureResourceGroupsResponse,
+    AzureResourcesResponse,
+)
 from cloud_recommender.schemas.inventory import (
     CloudScopeSummary,
     MultiCloudComparisonRequest,
@@ -12,6 +16,7 @@ from cloud_recommender.schemas.inventory import (
     ScopeAnalysisRequest,
     SubscriptionOrProjectAnalysis,
 )
+from cloud_recommender.services.azure.discovery_service import AzureDiscoveryService
 from cloud_recommender.services.inventory.azure_inventory import AzureInventoryService
 from cloud_recommender.services.inventory.gcp_inventory import GcpInventoryService
 from cloud_recommender.services.inventory.multi_cloud_comparator import (
@@ -68,6 +73,35 @@ async def list_azure_subscriptions(
 ) -> list[CloudScopeSummary]:
     """Return authorized Azure subscriptions available for read-only discovery."""
     return await azure_service.list_subscriptions()
+
+
+@router.get(
+    "/azure/subscriptions/{subscription_id}/resource-groups",
+    response_model=AzureResourceGroupsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List all Resource Groups of an Azure subscription (read-only, all pages)",
+)
+async def list_azure_resource_groups(
+    subscription_id: str,
+    settings: Settings = Depends(get_settings),
+) -> AzureResourceGroupsResponse:
+    """ARM GET /subscriptions/{id}/resourcegroups; failures are classified, never shown as empty."""
+    return await AzureDiscoveryService(settings).list_resource_groups(subscription_id)
+
+
+@router.get(
+    "/azure/subscriptions/{subscription_id}/resources",
+    response_model=AzureResourcesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List real ARM resources of a subscription or Resource Group (read-only, all pages)",
+)
+async def list_azure_resources(
+    subscription_id: str,
+    resource_group: str | None = None,
+    settings: Settings = Depends(get_settings),
+) -> AzureResourcesResponse:
+    """ARM resource inventory: id, name, type, RG, region, tags, provisioning state."""
+    return await AzureDiscoveryService(settings).list_resources(subscription_id, resource_group)
 
 
 @router.post(

@@ -12,6 +12,8 @@ Verifies:
 5. REST API contract for POST /api/v1/finops/ingestion/approval-token.
 """
 
+from collections.abc import Generator
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -42,7 +44,7 @@ def sql_service() -> DatabricksSqlService:
 
 
 @pytest.fixture
-def sqlite_session() -> Session:
+def sqlite_session() -> Generator[Session, None, None]:
     """In-memory SQLite session with tables for testing durable token persistence."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)

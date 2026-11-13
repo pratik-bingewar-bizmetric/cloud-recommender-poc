@@ -1,17 +1,24 @@
 """FinOps Analytics Service for Azure Databricks.
 
-Aggregates real workspace discovery assets, System Tables metadata, and certified
-FinOps KPI calculations for all 15 Command Center modules.
+Aggregates live workspace discovery assets, System Tables metadata and ingested billing
+rows for all 15 Command Center modules. Every value is LIVE, CALCULATED, ESTIMATED or an
+explicit UNAVAILABLE / BLOCKED state; no mock or modelled values are produced.
 """
 
 import csv
+import functools
+import inspect
 import io
-from datetime import UTC, datetime
+import statistics
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from pydantic import BaseModel
+
+from cloud_recommender.schemas.billing_ingestion import BillingUsageRecord
 from cloud_recommender.schemas.databricks import DiscoveredResourceItem
 from cloud_recommender.schemas.finops import (
-    AgentEconomicsItem,
     AiEconomicsResponse,
     AllocationRuleItem,
     AnomalyDetectionResponse,
@@ -20,7 +27,6 @@ from cloud_recommender.schemas.finops import (
     BudgetControlItem,
     CanonicalKpiResponse,
     ChargebackStatementItem,
-    CloudInfrastructureItem,
     ClusterInventoryItem,
     ComputeWarehousesResponse,
     ConnectedSourceItem,
@@ -34,12 +40,10 @@ from cloud_recommender.schemas.finops import (
     FinOpsAiAnalysis,
     FinOpsAiOpportunity,
     ForecastBudgetsResponse,
-    GenieSpaceScorecardItem,
     GovernancePoliciesResponse,
     JobEfficiencyItem,
     KpiMetric,
     KpiStatus,
-    ModelEconomicsItem,
     ModelServingEndpointItem,
     NetworkCloudResponse,
     OptimizationAdvisorResponse,
@@ -52,6 +56,7 @@ from cloud_recommender.schemas.finops import (
     ReportsAuditResponse,
     ScenarioSimulationRequest,
     ScenarioSimulationResponse,
+    SectionProvenance,
     SettingsIntegrationsResponse,
     ShowbackChargebackResponse,
     StorageInventoryItem,
@@ -63,6 +68,33 @@ from cloud_recommender.schemas.finops import (
     WorkloadUnitEconomicsItem,
 )
 from cloud_recommender.services.databricks.workspace_service import DatabricksWorkspaceService
+
+
+def _unknown_scope_guard[R: BaseModel](fn: Callable[..., R]) -> Callable[..., R]:
+    """Force every KPI to a typed NO_DATA metric when the requested resource scope is unknown."""
+
+    @functools.wraps(fn)
+    def wrapper(self: "FinOpsAnalyticsService", *args: Any, **kwargs: Any) -> R:
+        resp = fn(self, *args, **kwargs)
+        bound = inspect.signature(fn).bind(self, *args, **kwargs)
+        rid = bound.arguments.get("resource_id")
+        rtype = bound.arguments.get("resource_type")
+        _, unknown = self._resolve_resource_filter(rid, rtype)
+        kpis = getattr(resp, "kpis", None)
+        if unknown and isinstance(kpis, dict):
+            for key, metric in list(kpis.items()):
+                kpis[key] = self._build_empty_kpi(
+                    key,
+                    metric.unit,
+                    metric.currency,
+                    metric.source,
+                    workspace_id=metric.workspace_id,
+                    resource_id=rid,
+                    resource_type=rtype,
+                )
+        return resp
+
+    return wrapper
 
 
 class FinOpsAnalyticsService:
@@ -113,48 +145,35 @@ class FinOpsAnalyticsService:
         "wonder-cement-app",
     }
 
-    def __init__(self, workspace_service: DatabricksWorkspaceService | None = None) -> None:
+    def __init__(
+        self,
+        workspace_service: DatabricksWorkspaceService | None = None,
+        billing_service: Any = None,
+    ) -> None:
         self.workspace_service = workspace_service or DatabricksWorkspaceService()
-        # In-memory audit events and recommendation overrides
+        self._billing_service: Any = billing_service
+        # In-memory overrides and audit events recorded by this process (no seeded history)
         self._action_overrides: dict[str, dict[str, Any]] = {}
         self._anomaly_overrides: dict[str, str] = {}
-        self._audit_events: list[AuditEventItem] = [
-            AuditEventItem(
-                timestamp="Nov 04 10:42",
-                actor="finops.bot",
-                event="Recommendation created",
-                resource="Serverless Starter Warehouse",
-                before="2X-Small",
-                after="Auto-stop tuned to 15m",
-                approval_ref="CHG-2408",
-            ),
-            AuditEventItem(
-                timestamp="Nov 04 09:15",
-                actor="pratik.bingewar",
-                event="Budget threshold changed",
-                resource="AI COE budget",
-                before="80%",
-                after="90%",
-                approval_ref="FIN-1182",
-            ),
-            AuditEventItem(
-                timestamp="Nov 03 18:30",
-                actor="platform.admin",
-                event="Cluster policy updated",
-                resource="adf-deaccelator-compute",
-                before="None",
-                after="Standard_D4ds_v5 policy",
-                approval_ref="CHG-2398",
-            ),
-        ]
+        self._audit_events: list[AuditEventItem] = []
 
     AUTHORIZED_WORKSPACES: set[str] = {
         "642006393507276",
         "databricks-azure-dev",
-        "7840192837148901",
-        "adb-lakehouse-prod",
+        "7405608085231210",
+        "databricks-azure-prod",
+        "2250283018608626",
+        "databricks-finops-dev",
         "all",
     }
+
+    def _get_authorized_workspaces(self) -> set[str]:
+        """Compute authorized workspace and connection IDs dynamically from workspace registry."""
+        allowed = set(self.AUTHORIZED_WORKSPACES)
+        for conn in self.workspace_service.list_connections():
+            allowed.add(conn.workspace_id)
+            allowed.add(conn.connection_id)
+        return allowed
 
     def validate_scope(self, workspace_id: Any = None) -> list[str]:
         """Enforce server-side workspace authorization. Rejects unconfigured or mismatched scopes.
@@ -177,8 +196,9 @@ class FinOpsAnalyticsService:
         if not items:
             return ["642006393507276"]
 
+        allowed = self._get_authorized_workspaces()
         for wid in items:
-            if wid not in self.AUTHORIZED_WORKSPACES:
+            if wid not in allowed:
                 raise ValueError(
                     f"Scope validation failed: Workspace '{wid}' is not authorized or does not match target environment."
                 )
@@ -315,7 +335,8 @@ class FinOpsAnalyticsService:
         """Create a typed NO_DATA KPI metric for unknown or unpopulated resource scopes."""
         return KpiMetric(
             value=None,
-            formatted_value="No data available",
+            formatted_value="-",
+            reason="The query succeeded but returned no records for this resource scope.",
             unit=unit,
             currency=currency,
             metric_id=metric_id,
@@ -362,325 +383,6 @@ class FinOpsAnalyticsService:
             "updated_at": datetime.now(UTC).isoformat(),
         }
 
-    def _get_anomalies(
-        self, resource_id: str | None = None, resource_type: str | None = None
-    ) -> list[AnomalyItem]:
-        """Return the 3 canonical detected anomalies with exact scope filtering."""
-        all_anomalies = [
-            AnomalyItem(
-                id="anom-01",
-                detected="Today 10:42",
-                severity="Critical",
-                signal="Token cost spike",
-                resource="databricks-claude-fable-5",
-                baseline="$420 / day",
-                observed="$1,180 / day",
-                estimated_impact="$760 / day",
-                likely_cause="Retry loop / prompt change",
-                evidence_detail="Compare model request IDs, prompt versions, retry counts, output token distribution and deployment changes. Check for runaway agent loops.",
-                resource_type="serving",
-                workspace_id="642006393507276",
-                metric="Token Spend / Day",
-                absolute_deviation="+$760 / day",
-                percentage_deviation="+180.9%",
-                detection_methodology="Statistical Z-Score (3.82 SD deviation from 30-day baseline)",
-                confidence="High (96%)",
-                status=self._anomaly_overrides.get("anom-01", "New"),
-                root_cause_hypotheses=[
-                    "Runaway agent loop in multi-turn customer chat bot",
-                    "Prompt modification inflating completion token generation by 3.4x",
-                    "Missing client-side retry exponential backoff",
-                ],
-                ai_explanation="Model endpoint databricks-claude-fable-5 experienced a 180.9% spike in token consumption starting at 10:42 UTC. Root cause telemetry correlates with 8,420 rapid retry requests from client service principal without backoff, driving output token generation from 280k/hr to 1.2M/hr.",
-                recommended_action="Enable prompt caching, clamp max_tokens ceiling to 2048, and enforce rate-limiting on the calling agent's API gateway endpoint.",
-                potential_savings="$760 / day (~$22,800 / month annualized)",
-                verification_procedure="Audit system.ai_gateway.usage to confirm request rate drops below 45 req/min and average completion tokens return to < 450 tokens.",
-                historical_trend=[
-                    {"date": "Nov 01", "spend": 410},
-                    {"date": "Nov 02", "spend": 425},
-                    {"date": "Nov 03", "spend": 418},
-                    {"date": "Nov 04", "spend": 420},
-                    {"date": "Nov 05", "spend": 430},
-                    {"date": "Nov 06", "spend": 422},
-                    {"date": "Today", "spend": 1180},
-                ],
-                sku_contribution=[
-                    {"sku": "Model Serving Inference", "pct": 82, "amount": "$967.60"},
-                    {"sku": "AI Gateway Proxy", "pct": 18, "amount": "$212.40"},
-                ],
-                related_workloads=[
-                    "panasonic-voice-agent-prod",
-                    "customer-support-eval-batch",
-                ],
-            ),
-            AnomalyItem(
-                id="anom-02",
-                detected="Today 09:18",
-                severity="High",
-                signal="Warehouse spend deviation",
-                resource="Serverless Starter Warehouse",
-                baseline="$520 / day",
-                observed="$860 / day",
-                estimated_impact="$340 / day",
-                likely_cause="Unusual concurrency",
-                evidence_detail="Inspect query history, concurrency, queueing, dashboard refresh schedules and warehouse size changes.",
-                resource_type="warehouse",
-                workspace_id="642006393507276",
-                metric="Warehouse Spend / Day",
-                absolute_deviation="+$340 / day",
-                percentage_deviation="+65.4%",
-                detection_methodology="Statistical Z-Score (2.94 SD deviation from 14-day rolling baseline)",
-                confidence="High (91%)",
-                status=self._anomaly_overrides.get("anom-02", "Investigating"),
-                root_cause_hypotheses=[
-                    "Concurrent scheduled BI dashboard refreshes firing simultaneously at top of hour",
-                    "Full table scan queries without partition pruning on Delta tables",
-                    "Auto-stop timeout extended from 15m to 120m",
-                ],
-                ai_explanation="Serverless Starter Warehouse (05ed10a52697a344) spend deviated by +$340/day due to 14 concurrent Power BI direct-query refreshes executing Cartesian joins on non-partitioned bronze event tables.",
-                recommended_action="Stagger BI dataset schedules by 15-minute offsets and add cluster auto-stop limit of 15 minutes.",
-                potential_savings="$340 / day (~$10,200 / month)",
-                verification_procedure="Verify query duration p95 drops below 3.0 seconds in system.query.history.",
-                historical_trend=[
-                    {"date": "Nov 01", "spend": 510},
-                    {"date": "Nov 02", "spend": 525},
-                    {"date": "Nov 03", "spend": 518},
-                    {"date": "Nov 04", "spend": 520},
-                    {"date": "Nov 05", "spend": 530},
-                    {"date": "Nov 06", "spend": 524},
-                    {"date": "Today", "spend": 860},
-                ],
-                sku_contribution=[
-                    {"sku": "Serverless SQL Compute", "pct": 92, "amount": "$791.20"},
-                    {"sku": "ADLS Gen2 IOPS", "pct": 8, "amount": "$68.80"},
-                ],
-                related_workloads=[
-                    "daily-sales-executive-dashboard",
-                    "supply-chain-live-sync",
-                ],
-            ),
-            AnomalyItem(
-                id="anom-03",
-                detected="Yesterday 23:40",
-                severity="Medium",
-                signal="Cluster outside schedule",
-                resource="adf-deaccelator-compute",
-                baseline="0 hrs",
-                observed="7.5 hrs",
-                estimated_impact="$180 / day",
-                likely_cause="Manual start",
-                evidence_detail="Check cluster start event, user, job attachment and exception schedule before termination.",
-                resource_type="cluster",
-                workspace_id="642006393507276",
-                metric="Uptime Hours / Day",
-                absolute_deviation="+7.5 hrs",
-                percentage_deviation="+100.0% (Unscheduled Run)",
-                detection_methodology="Schedule Violation Heuristic & Z-Score (3.15 SD)",
-                confidence="High (95%)",
-                status=self._anomaly_overrides.get("anom-03", "New"),
-                root_cause_hypotheses=[
-                    "Manual start by engineer who neglected to terminate before weekend",
-                    "Orphaned cluster auto-termination disabled",
-                    "Zombie notebook execution loop",
-                ],
-                ai_explanation="Compute cluster adf-deaccelator-compute was started manually at 23:40 UTC on a non-production test notebook. Auto-termination was disabled by policy bypass, resulting in 7.5 hours of unutilized idle uptime.",
-                recommended_action="Apply mandatory 20-minute auto-termination policy and restrict cluster creation permissions to cluster policies.",
-                potential_savings="$180 / day (~$5,400 / month)",
-                verification_procedure="Confirm cluster state transitions to TERMINATED after 20 minutes of inactivity via cluster event log.",
-                historical_trend=[
-                    {"date": "Nov 01", "spend": 0},
-                    {"date": "Nov 02", "spend": 0},
-                    {"date": "Nov 03", "spend": 0},
-                    {"date": "Nov 04", "spend": 0},
-                    {"date": "Nov 05", "spend": 0},
-                    {"date": "Nov 06", "spend": 0},
-                    {"date": "Today", "spend": 180},
-                ],
-                sku_contribution=[
-                    {"sku": "Standard_D4ds_v5 Compute", "pct": 100, "amount": "$180.00"},
-                ],
-                related_workloads=[
-                    "adhoc-migration-notebook-test",
-                ],
-            ),
-        ]
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-        if is_unknown:
-            return []
-        if filter_type == "warehouse":
-            return [a for a in all_anomalies if "Warehouse" in a.resource]
-        if filter_type == "cluster":
-            return [a for a in all_anomalies if "adf-deaccelator-compute" in a.resource]
-        if filter_type == "serving":
-            return [a for a in all_anomalies if "fable" in a.resource]
-        if filter_type == "app":
-            return []
-        return all_anomalies
-
-    def _get_decisions(
-        self, resource_id: str | None = None, resource_type: str | None = None
-    ) -> list[DecisionItem]:
-        """Return the 5 canonical actionable decisions with persistent override and scope filtering."""
-        base_decisions = [
-            DecisionItem(
-                id="dec-01",
-                priority=1,
-                title="Downsize Serverless Starter Warehouse to 2X-Small with aggressive auto-stop",
-                description="Average utilization is 18%, peak concurrency is low and queue time is below the agreed SLO.",
-                estimated_savings_monthly=8400.0,
-                formatted_savings="$8,400 / mo",
-                impact="High impact",
-                status=self._action_overrides.get("dec-01", {}).get("status", "Approval required"),
-                confidence_pct=91,
-                effort="Low",
-                owner="Data Platform",
-                evidence="Telemetry: 18% average compute utilization, 0.4 sec queue p95, peak concurrency 1.2 vs 8 cluster capacity. Current spend $10,545/mo.",
-                category="Compute",
-                resource_name="Starter Warehouse (Serverless SQL)",
-                resource_id="05ed10a52697a344",
-                finding="Warehouse operates at 18% average utilization with 0.4s queue time, but remains provisioned at X-Small with 20-minute auto-stop.",
-                current_cost="$10,545.00 / mo",
-                potential_savings_range="$8,000 - $8,800 / mo",
-                recommended_action="Downsize cluster size to 2X-Small and reduce auto-stop timeout from 20m to 5m in SQL Warehouse settings.",
-                calculation_methodology="(Current run-rate $10,545/mo) * 80% idle compute reduction = $8,400.00/mo savings based on query history telemetry.",
-                validation_method="Compare 30-day post-change DBU billing records against pre-change baseline $10,545.00.",
-                risk="Low",
-                complexity="Low",
-                performance_impact="Zero SLO breach; queue time remains <1.2s",
-                lifecycle_stage="Approved" if self._action_overrides.get("dec-01", {}).get("status") == "Approved" else "Analyzed",
-                verified_realized_savings=0.0,
-                formatted_realized_savings="$0.00 (Unverified)",
-            ),
-            DecisionItem(
-                id="dec-02",
-                priority=2,
-                title="Consolidate 27 always-on model serving endpoints with low invocation density",
-                description="Several provisioned endpoints experience low request density relative to dedicated GPU reservations.",
-                estimated_savings_monthly=6100.0,
-                formatted_savings="$6,100 / mo",
-                impact="Medium risk",
-                status=self._action_overrides.get("dec-02", {}).get("status", "New"),
-                confidence_pct=86,
-                effort="Medium",
-                owner="AI COE",
-                evidence="Classification shows 62% of endpoint invocations occur in batch windows. Shift to scale-to-zero serverless endpoints.",
-                category="AI & Models",
-                resource_name="27 Dedicated Model Serving Endpoints",
-                resource_id="serving-endpoints-cluster",
-                finding="Dedicated GPU VM allocations experience low continuous request density; 62% of invocations arrive in clustered batch windows.",
-                current_cost="$8,640.00 / mo",
-                potential_savings_range="$5,800 - $6,400 / mo",
-                recommended_action="Consolidate to scale-to-zero serverless endpoints with shared cold-start caching.",
-                calculation_methodology="27 dedicated VM nodes @ $320/node-mo ($8,640) minus $2,540 estimated serverless token cost = $6,100.00/mo savings.",
-                validation_method="Verify system.serving.endpoint_usage and token logs for zero drop in successful inference completions.",
-                risk="Medium",
-                complexity="Medium",
-                performance_impact="Cold-start 4-8s on idle wakeup",
-                lifecycle_stage="Approved" if self._action_overrides.get("dec-02", {}).get("status") == "Approved" else "Detected",
-                verified_realized_savings=0.0,
-                formatted_realized_savings="$0.00 (Unverified)",
-            ),
-            DecisionItem(
-                id="dec-03",
-                priority=3,
-                title="Apply 30-day Delta table vacuum & snapshot retention on samples and deaccelerator catalogs",
-                description="Potentially redundant copies and long retention in non-production catalogs inflate ADLS Gen2 tiering charges.",
-                estimated_savings_monthly=2750.0,
-                formatted_savings="$2,750 / mo",
-                impact="Low risk",
-                status=self._action_overrides.get("dec-03", {}).get("status", "New"),
-                confidence_pct=82,
-                effort="Low",
-                owner="Data Governance",
-                evidence="Snapshot inspection indicates over 18.6 TB of expired historical versions without read events in 90 days.",
-                category="Storage",
-                resource_name="Samples & Deaccelerator Delta Catalogs",
-                resource_id="samples_catalog, deaccelerator_catalog",
-                finding="18.6 TB of expired historical Parquet version snapshots unvacuumed for >90 days across non-production catalogs.",
-                current_cost="$3,420.00 / mo",
-                potential_savings_range="$2,500 - $3,000 / mo",
-                recommended_action="Execute VACUUM RETAIN 720 HOURS and set delta.deletedFileRetentionDuration = 'interval 30 days'.",
-                calculation_methodology="18.6 TB unvacuumed snapshots * $0.023/GB-mo ADLS Gen2 Hot tier storage + metadata savings = $2,750.00/mo.",
-                validation_method="Inspect ADLS Gen2 storage container bytes and Delta table history commits.",
-                risk="Low",
-                complexity="Low",
-                performance_impact="None; optimizes metadata read latency",
-                lifecycle_stage="Approved" if self._action_overrides.get("dec-03", {}).get("status") == "Approved" else "Detected",
-                verified_realized_savings=0.0,
-                formatted_realized_savings="$0.00 (Unverified)",
-            ),
-            DecisionItem(
-                id="dec-04",
-                priority=4,
-                title="Schedule non-production compute and tighten auto-termination on adf-deaccelator-compute",
-                description="Development clusters remain active outside normal engineering hours without active job execution.",
-                estimated_savings_monthly=3460.0,
-                formatted_savings="$3,460 / mo",
-                impact="Low risk",
-                status=self._action_overrides.get("dec-04", {}).get("status", "New"),
-                confidence_pct=95,
-                effort="Low",
-                owner="Cloud Ops",
-                evidence="Cluster logs show 31% of uptime accrued outside business hours while in idle polling state.",
-                category="Compute",
-                resource_name="adf-deaccelator-compute (Development Cluster)",
-                resource_id="1024-cluster-dev",
-                finding="Cluster runs 24/7 with 31% of compute uptime accrued on weekends and nights with zero job or user notebook execution.",
-                current_cost="$4,980.00 / mo",
-                potential_savings_range="$3,200 - $3,700 / mo",
-                recommended_action="Configure automated 8:00 AM - 6:00 PM operational schedule and enforce 15-minute idle auto-termination.",
-                calculation_methodology="120 non-business idle hours/week * $6.65/cluster-hr (Azure VM + Databricks DBU) = $3,460.00/mo savings.",
-                validation_method="Audit cluster state transition logs in system.compute.clusters.",
-                risk="Low",
-                complexity="Low",
-                performance_impact="None during business hours",
-                lifecycle_stage="Approved" if self._action_overrides.get("dec-04", {}).get("status") == "Approved" else "Detected",
-                verified_realized_savings=0.0,
-                formatted_realized_savings="$0.00 (Unverified)",
-            ),
-            DecisionItem(
-                id="dec-05",
-                priority=5,
-                title="Reduce repeated prompt context and enable supported caching on Claude & Llama endpoints",
-                description="Repeated system instructions and long conversation context inflate input token volume on serving endpoints.",
-                estimated_savings_monthly=3820.0,
-                formatted_savings="$3,820 / mo",
-                impact="Low risk",
-                status=self._action_overrides.get("dec-05", {}).get("status", "New"),
-                confidence_pct=88,
-                effort="Medium",
-                owner="GenAI Engineering",
-                evidence="Input tokens represent 82% of total token volume. Context caching reduces repetitive prompt cost by up to 50%.",
-                category="AI & Models",
-                resource_name="Claude-3-5-Sonnet & Llama-3-70B Serving Endpoints",
-                resource_id="claude-3-5-sonnet, llama-3-70b-instruct",
-                finding="Input tokens represent 82% of total token volume due to repetitive system instructions sent without prefix caching.",
-                current_cost="$7,640.00 / mo",
-                potential_savings_range="$3,500 - $4,200 / mo",
-                recommended_action="Enable prompt prefix caching on model endpoints and prune repeated static instructions from agent prompts.",
-                calculation_methodology="48M cached input tokens/month * ($0.150/1K standard input - $0.0705/1K cached input) = $3,820.00/mo savings.",
-                validation_method="Measure system.serving.model_token_usage cached vs uncached ratio.",
-                risk="Low",
-                complexity="Medium",
-                performance_impact="Improves TTFT (Time to First Token) by up to 40%",
-                lifecycle_stage="Approved" if self._action_overrides.get("dec-05", {}).get("status") == "Approved" else "Detected",
-                verified_realized_savings=0.0,
-                formatted_realized_savings="$0.00 (Unverified)",
-            ),
-        ]
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-        if is_unknown:
-            return []
-        if filter_type == "warehouse":
-            return [d for d in base_decisions if d.id == "dec-01"]
-        if filter_type == "cluster":
-            return [d for d in base_decisions if d.id == "dec-04"]
-        if filter_type == "serving":
-            return [d for d in base_decisions if d.id in ("dec-02", "dec-05")]
-        if filter_type == "app":
-            return []
-        return base_decisions
-
     def record_decision_action(
         self, decision_id: str, action: str, notes: str | None = None
     ) -> DecisionItem:
@@ -703,4655 +405,6 @@ class FinOpsAnalyticsService:
             ),
         )
         return updated
-
-    def _get_canonical_ledger(
-        self, resource_id: str | None = None, resource_type: str | None = None
-    ) -> list[CostExplorerItem]:
-        """Build the 24-record canonical billing ledger exactly summing to $176,840.00 and 88,420.0 DBU."""
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-        if is_unknown:
-            return []
-
-        ledger: list[CostExplorerItem] = []
-        dates = ["Nov 04", "Nov 03", "Nov 02", "Nov 01"]
-
-        # 4 SQL Warehouse records (4 x $10,545.00 = $42,180.00, 4 x 4,793 DBU = 19,172 DBU)
-        if filter_type in (None, "warehouse"):
-            for d in dates:
-                ledger.append(
-                    CostExplorerItem(
-                        date=d,
-                        product="SQL Warehouse",
-                        sku="Serverless SQL Compute",
-                        workspace="adb-642006393507276",
-                        usage_qty=4793.0,
-                        unit="DBU",
-                        list_cost=10545.0,
-                        effective_cost=10545.0,
-                        owner_tag="data-platform",
-                        allocation_status="Allocated",
-                    )
-                )
-
-        # 4 Compute Cluster records (4 x $6,150.00 = $24,600.00, 4 x 2,795 DBU = 11,180 DBU)
-        if filter_type in (None, "cluster"):
-            for d in dates:
-                ledger.append(
-                    CostExplorerItem(
-                        date=d,
-                        product="Compute",
-                        sku="Standard_D4ds_v5 Compute",
-                        workspace="adb-642006393507276",
-                        usage_qty=2795.0,
-                        unit="DBU",
-                        list_cost=6150.0,
-                        effective_cost=6150.0,
-                        owner_tag="supply-chain",
-                        allocation_status="Allocated",
-                    )
-                )
-
-        # 8 Automated Jobs records (8 x $9,260.00 = $74,080.00, 8 x 6,384.125 DBU = 51,073 DBU)
-        if filter_type is None:
-            for d in dates:
-                ledger.append(
-                    CostExplorerItem(
-                        date=d,
-                        product="Automated Jobs",
-                        sku="Job Compute - General Purpose",
-                        workspace="adb-642006393507276",
-                        usage_qty=6384.125,
-                        unit="DBU",
-                        list_cost=9260.0,
-                        effective_cost=9260.0,
-                        owner_tag="data-engineering",
-                        allocation_status="Allocated",
-                    )
-                )
-                ledger.append(
-                    CostExplorerItem(
-                        date=d,
-                        product="Automated Jobs",
-                        sku="Job Compute - Memory Optimized",
-                        workspace="adb-642006393507276",
-                        usage_qty=6384.125,
-                        unit="DBU",
-                        list_cost=9260.0,
-                        effective_cost=9260.0,
-                        owner_tag="bi-reporting",
-                        allocation_status="Allocated",
-                    )
-                )
-
-        # 4 Model Serving records (4 x $6,685.00 = $26,740.00, 4 x 1,671.25 DBU = 6,685 DBU)
-        if filter_type in (None, "serving"):
-            for d in dates:
-                ledger.append(
-                    CostExplorerItem(
-                        date=d,
-                        product="Model Serving",
-                        sku="Model Serving Real-Time Inference",
-                        workspace="adb-642006393507276",
-                        usage_qty=1671.25,
-                        unit="DBU",
-                        list_cost=6685.0,
-                        effective_cost=6685.0,
-                        owner_tag="ai-coe",
-                        allocation_status="Allocated",
-                    )
-                )
-
-        # 2 Databricks Apps records (2 x $620.00 = $1,240.00, 2 x 155 DBU = 310 DBU)
-        if filter_type in (None, "app"):
-            for d in ["Nov 04", "Nov 02"]:
-                ledger.append(
-                    CostExplorerItem(
-                        date=d,
-                        product="Databricks Apps",
-                        sku="Serverless Apps Runtime",
-                        workspace="adb-642006393507276",
-                        usage_qty=155.0,
-                        unit="DBU",
-                        list_cost=620.0,
-                        effective_cost=620.0,
-                        owner_tag="unassigned",
-                        allocation_status="Unallocated",
-                    )
-                )
-
-        # 2 Storage / Lakehouse records (2 x $4,000.00 = $8,000.00, 0 DBU)
-        if filter_type is None:
-            for d in ["Nov 03", "Nov 01"]:
-                ledger.append(
-                    CostExplorerItem(
-                        date=d,
-                        product="Storage",
-                        sku="ADLS Gen2 Hot Storage",
-                        workspace="adb-642006393507276",
-                        usage_qty=41.0,
-                        unit="TB-month",
-                        list_cost=4000.0,
-                        effective_cost=4000.0,
-                        owner_tag="cloud-ops",
-                        allocation_status="Allocated",
-                    )
-                )
-
-        return ledger
-
-    def get_executive_overview(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        period: str = "month",
-        environment: str | None = None,
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> ExecutiveOverviewResponse:
-        """Produce the 7 certified executive KPI cards and dashboard sections with scope filtering."""
-        _ = connection_id
-        self.validate_scope(workspace_id)
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "total_spend": self._build_empty_kpi(
-                    "total_spend",
-                    "USD",
-                    "USD",
-                    "Azure Cost Management",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "databricks_spend": self._build_empty_kpi(
-                    "databricks_spend",
-                    "USD",
-                    "USD",
-                    "Azure Databricks DBU Metering",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "ai_spend": self._build_empty_kpi(
-                    "ai_spend",
-                    "USD",
-                    "USD",
-                    "Databricks Model Serving",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "dbu_consumption": self._build_empty_kpi(
-                    "dbu_consumption",
-                    "DBU",
-                    None,
-                    "system.billing.usage",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "savings_opportunity": self._build_empty_kpi(
-                    "savings_opportunity",
-                    "USD",
-                    "USD",
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "forecast_spend": self._build_empty_kpi(
-                    "forecast_spend",
-                    "USD",
-                    "USD",
-                    "Run-Rate Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "anomalies": self._build_empty_kpi(
-                    "anomalies",
-                    "count",
-                    None,
-                    "Anomaly Detector",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return ExecutiveOverviewResponse(
-                kpis=kpis,
-                spend_trend=[],
-                spend_composition=[],
-                top_cost_drivers=[],
-                decisions_requiring_attention=[],
-                global_filters={
-                    "period": period,
-                    "environment": environment or "Production",
-                    "currency": "USD",
-                    "workspace_id": workspace_id or "642006393507276",
-                    "resource_id": resource_id,
-                    "resource_type": resource_type,
-                },
-            )
-
-        if filter_type == "warehouse":
-            wh_decisions = self._get_decisions(resource_id, resource_type)
-            wh_savings = sum(d.estimated_savings_monthly for d in wh_decisions)
-            wh_anomalies = self._get_anomalies(resource_id, resource_type)
-            kpis = {
-                "total_spend": KpiMetric(
-                    value=42180.0,
-                    formatted_value="$42,180",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="total_spend",
-                    change_percentage=21.0,
-                    delta_label="↑ 21.0% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks SQL Serverless",
-                    source="Azure Databricks SQL Serverless",
-                    workspace_id="642006393507276",
-                    resource_type="warehouse",
-                    resource_id=resource_id or "05ed10a52697a344",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(serverless_sql_compute_cost)",
-                    limitations="Scoped strictly to Serverless Starter Warehouse (05ed10a52697a344).",
-                ),
-                "databricks_spend": KpiMetric(
-                    value=42180.0,
-                    formatted_value="$42,180",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="databricks_spend",
-                    change_percentage=21.0,
-                    delta_label="Warehouse compute cost",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering",
-                    source="Azure Databricks DBU Metering",
-                    workspace_id="642006393507276",
-                    resource_type="warehouse",
-                    resource_id=resource_id or "05ed10a52697a344",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="dbu_consumption * blended_rate",
-                    limitations="Serverless SQL compute consumption.",
-                ),
-                "ai_spend": KpiMetric(
-                    value=0.0,
-                    formatted_value="$0",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="ai_spend",
-                    change_percentage=0.0,
-                    delta_label="No AI inference on SQL warehouse",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Model Serving",
-                    source="Databricks Model Serving",
-                    workspace_id="642006393507276",
-                    resource_type="warehouse",
-                    resource_id=resource_id or "05ed10a52697a344",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="0.0",
-                    limitations="SQL warehouse compute does not invoke AI Gateway models.",
-                ),
-                "dbu_consumption": KpiMetric(
-                    value=19172.0,
-                    formatted_value="19,172 DBU",
-                    unit="DBU",
-                    currency=None,
-                    metric_id="dbu_consumption",
-                    change_percentage=14.2,
-                    delta_label="↑ 14.2% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering (system.billing.usage)",
-                    source="Azure Databricks DBU Metering (system.billing.usage)",
-                    workspace_id="642006393507276",
-                    resource_type="warehouse",
-                    resource_id=resource_id or "05ed10a52697a344",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(usage_quantity) WHERE sku = 'SERVERLESS_SQL_COMPUTE'",
-                    limitations="DBU consumption aggregated for Serverless Starter Warehouse. Strictly separated from token counts.",
-                ),
-                "savings_opportunity": KpiMetric(
-                    value=wh_savings,
-                    formatted_value=f"${wh_savings:,.0f}",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="savings_opportunity",
-                    change_percentage=10.0,
-                    delta_label=f"{(wh_savings / 42180.0) * 100:.1f}% of warehouse spend",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="FinOps Optimization Advisor",
-                    source="FinOps Optimization Advisor",
-                    workspace_id="642006393507276",
-                    resource_type="warehouse",
-                    resource_id=resource_id or "05ed10a52697a344",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(recommendations.estimated_savings_monthly)",
-                    limitations="Auto-stop tuning to 15m and downsize to 2X-Small.",
-                ),
-                "forecast_spend": KpiMetric(
-                    value=48000.0,
-                    formatted_value="$48,000",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="forecast_spend",
-                    change_absolute=3000.0,
-                    delta_label="↑ $3.0K above budget",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Linear Regression & Run-Rate Engine",
-                    source="Linear Regression & Run-Rate Engine",
-                    workspace_id="642006393507276",
-                    resource_type="warehouse",
-                    resource_id=resource_id or "05ed10a52697a344",
-                    last_refreshed=now_iso,
-                    aggregation_method="PROJECTION",
-                    formula="current_spend * (30 / current_day)",
-                    limitations="Projected to month-end at current SQL warehouse burn pace.",
-                ),
-                "anomalies": KpiMetric(
-                    value=float(len(wh_anomalies)),
-                    formatted_value=str(len(wh_anomalies)),
-                    unit="count",
-                    currency=None,
-                    metric_id="anomalies",
-                    delta_label=f"{len(wh_anomalies)} high severity spike detected",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Usage Anomaly Detector",
-                    source="Databricks Usage Anomaly Detector",
-                    workspace_id="642006393507276",
-                    resource_type="warehouse",
-                    resource_id=resource_id or "05ed10a52697a344",
-                    last_refreshed=now_iso,
-                    aggregation_method="COUNT",
-                    formula="count(open_anomalies WHERE resource_type = 'warehouse')",
-                    limitations="Spike detected during large unindexed query run.",
-                ),
-            }
-            top_cost_drivers = [
-                CostDriverItem(
-                    driver="Serverless Starter Warehouse",
-                    workspace_owner="adb-642006393507276 · Data Platform",
-                    spend=42180.0,
-                    formatted_spend="$42,180",
-                    change="+21%",
-                    signal="Review",
-                )
-            ]
-            spend_composition = [
-                {"family": "SQL Warehouses", "share": 1.0, "amount": 42180, "color": "#0284c7"}
-            ]
-        elif filter_type == "cluster":
-            cl_decisions = self._get_decisions(resource_id, resource_type)
-            cl_savings = sum(d.estimated_savings_monthly for d in cl_decisions)
-            cl_anomalies = self._get_anomalies(resource_id, resource_type)
-            kpis = {
-                "total_spend": KpiMetric(
-                    value=24600.0,
-                    formatted_value="$24,600",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="total_spend",
-                    change_percentage=11.0,
-                    delta_label="↑ 11.0% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks VM & DBU Metering",
-                    source="Azure Databricks VM & DBU Metering",
-                    workspace_id="642006393507276",
-                    resource_type="cluster",
-                    resource_id=resource_id or "adf-deaccelator-compute",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(compute_cluster_cost)",
-                    limitations="Scoped strictly to adf-deaccelator-compute cluster.",
-                ),
-                "databricks_spend": KpiMetric(
-                    value=24600.0,
-                    formatted_value="$24,600",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="databricks_spend",
-                    change_percentage=11.0,
-                    delta_label="Cluster compute cost",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering",
-                    source="Azure Databricks DBU Metering",
-                    workspace_id="642006393507276",
-                    resource_type="cluster",
-                    resource_id=resource_id or "adf-deaccelator-compute",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="dbu_consumption * blended_rate",
-                    limitations="Standard_D4ds_v5 VM + Databricks runtime charges.",
-                ),
-                "ai_spend": KpiMetric(
-                    value=0.0,
-                    formatted_value="$0",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="ai_spend",
-                    change_percentage=0.0,
-                    delta_label="Standard ETL cluster",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Model Serving",
-                    source="Databricks Model Serving",
-                    workspace_id="642006393507276",
-                    resource_type="cluster",
-                    resource_id=resource_id or "adf-deaccelator-compute",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="0.0",
-                    limitations="ETL compute does not invoke AI models.",
-                ),
-                "dbu_consumption": KpiMetric(
-                    value=11180.0,
-                    formatted_value="11,180 DBU",
-                    unit="DBU",
-                    currency=None,
-                    metric_id="dbu_consumption",
-                    change_percentage=8.5,
-                    delta_label="↑ 8.5% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering (system.billing.usage)",
-                    source="Azure Databricks DBU Metering (system.billing.usage)",
-                    workspace_id="642006393507276",
-                    resource_type="cluster",
-                    resource_id=resource_id or "adf-deaccelator-compute",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(usage_quantity) WHERE sku = 'STANDARD_ALL_PURPOSE_COMPUTE'",
-                    limitations="DBU consumption aggregated for adf-deaccelator-compute.",
-                ),
-                "savings_opportunity": KpiMetric(
-                    value=cl_savings,
-                    formatted_value=f"${cl_savings:,.0f}",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="savings_opportunity",
-                    change_percentage=14.6,
-                    delta_label=f"{(cl_savings / 24600.0) * 100:.1f}% of cluster spend",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="FinOps Optimization Advisor",
-                    source="FinOps Optimization Advisor",
-                    workspace_id="642006393507276",
-                    resource_type="cluster",
-                    resource_id=resource_id or "adf-deaccelator-compute",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(recommendations.estimated_savings_monthly)",
-                    limitations="Off-hours shutdown and policy enforcement.",
-                ),
-                "forecast_spend": KpiMetric(
-                    value=28000.0,
-                    formatted_value="$28,000",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="forecast_spend",
-                    change_absolute=2000.0,
-                    delta_label="↑ $2.0K above baseline",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Linear Regression & Run-Rate Engine",
-                    source="Linear Regression & Run-Rate Engine",
-                    workspace_id="642006393507276",
-                    resource_type="cluster",
-                    resource_id=resource_id or "adf-deaccelator-compute",
-                    last_refreshed=now_iso,
-                    aggregation_method="PROJECTION",
-                    formula="current_spend * (30 / current_day)",
-                    limitations="Projected to month-end at current cluster run pace.",
-                ),
-                "anomalies": KpiMetric(
-                    value=float(len(cl_anomalies)),
-                    formatted_value=str(len(cl_anomalies)),
-                    unit="count",
-                    currency=None,
-                    metric_id="anomalies",
-                    delta_label=f"{len(cl_anomalies)} medium severity idle alert",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Usage Anomaly Detector",
-                    source="Databricks Usage Anomaly Detector",
-                    workspace_id="642006393507276",
-                    resource_type="cluster",
-                    resource_id=resource_id or "adf-deaccelator-compute",
-                    last_refreshed=now_iso,
-                    aggregation_method="COUNT",
-                    formula="count(open_anomalies WHERE resource_type = 'cluster')",
-                    limitations="Cluster remained running without active tasks.",
-                ),
-            }
-            top_cost_drivers = [
-                CostDriverItem(
-                    driver="adf-deaccelator-compute",
-                    workspace_owner="adb-642006393507276 · Supply Chain",
-                    spend=24600.0,
-                    formatted_spend="$24,600",
-                    change="+11%",
-                    signal="Review",
-                )
-            ]
-            spend_composition = [
-                {"family": "Compute Clusters", "share": 1.0, "amount": 24600, "color": "#2563eb"}
-            ]
-        elif filter_type == "serving":
-            sv_decisions = self._get_decisions(resource_id, resource_type)
-            sv_savings = sum(d.estimated_savings_monthly for d in sv_decisions)
-            sv_anomalies = self._get_anomalies(resource_id, resource_type)
-            kpis = {
-                "total_spend": KpiMetric(
-                    value=26740.0,
-                    formatted_value="$26,740",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="total_spend",
-                    change_percentage=32.0,
-                    delta_label="↑ 32.0% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Model Serving Metering",
-                    source="Databricks Model Serving Metering",
-                    workspace_id="642006393507276",
-                    resource_type="serving_endpoint",
-                    resource_id=resource_id or "model-serving-endpoints",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(endpoint_provisioned_cost)",
-                    limitations="Scoped strictly to provisioned Model Serving Endpoints.",
-                ),
-                "databricks_spend": KpiMetric(
-                    value=26740.0,
-                    formatted_value="$26,740",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="databricks_spend",
-                    change_percentage=32.0,
-                    delta_label="Model Serving DBU cost",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering",
-                    source="Azure Databricks DBU Metering",
-                    workspace_id="642006393507276",
-                    resource_type="serving_endpoint",
-                    resource_id=resource_id or "model-serving-endpoints",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="dbu_consumption * blended_rate",
-                    limitations="Endpoint provisioned concurrency and inference compute.",
-                ),
-                "ai_spend": KpiMetric(
-                    value=26740.0,
-                    formatted_value="$26,740",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="ai_spend",
-                    change_percentage=32.0,
-                    delta_label="100% AI/GenAI spend",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Model Serving (27 endpoints)",
-                    source="Databricks Model Serving (27 endpoints)",
-                    workspace_id="642006393507276",
-                    resource_type="serving_endpoint",
-                    resource_id=resource_id or "model-serving-endpoints",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(model_serving_spend)",
-                    limitations="Direct AI Gateway and model serving consumption.",
-                ),
-                "dbu_consumption": KpiMetric(
-                    value=6685.0,
-                    formatted_value="6,685 DBU",
-                    unit="DBU",
-                    currency=None,
-                    metric_id="dbu_consumption",
-                    change_percentage=28.0,
-                    delta_label="↑ 28.0% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering (system.billing.usage)",
-                    source="Azure Databricks DBU Metering (system.billing.usage)",
-                    workspace_id="642006393507276",
-                    resource_type="serving_endpoint",
-                    resource_id=resource_id or "model-serving-endpoints",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(usage_quantity) WHERE sku = 'MODEL_SERVING'",
-                    limitations="DBU consumption aggregated for Serving Endpoints. Token count isolated in AI telemetry.",
-                ),
-                "savings_opportunity": KpiMetric(
-                    value=sv_savings,
-                    formatted_value=f"${sv_savings:,.0f}",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="savings_opportunity",
-                    change_percentage=20.2,
-                    delta_label=f"{(sv_savings / 26740.0) * 100:.1f}% of serving spend",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="FinOps Optimization Advisor",
-                    source="FinOps Optimization Advisor",
-                    workspace_id="642006393507276",
-                    resource_type="serving_endpoint",
-                    resource_id=resource_id or "model-serving-endpoints",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(recommendations.estimated_savings_monthly)",
-                    limitations="Batch scale-to-zero tuning and prompt token compaction.",
-                ),
-                "forecast_spend": KpiMetric(
-                    value=31000.0,
-                    formatted_value="$31,000",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="forecast_spend",
-                    change_absolute=4000.0,
-                    delta_label="↑ $4.0K acceleration",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Linear Regression & Run-Rate Engine",
-                    source="Linear Regression & Run-Rate Engine",
-                    workspace_id="642006393507276",
-                    resource_type="serving_endpoint",
-                    resource_id=resource_id or "model-serving-endpoints",
-                    last_refreshed=now_iso,
-                    aggregation_method="PROJECTION",
-                    formula="current_spend * (30 / current_day)",
-                    limitations="Projected to month-end at current LLM invocation pace.",
-                ),
-                "anomalies": KpiMetric(
-                    value=float(len(sv_anomalies)),
-                    formatted_value=str(len(sv_anomalies)),
-                    unit="count",
-                    currency=None,
-                    metric_id="anomalies",
-                    delta_label=f"{len(sv_anomalies)} high severity token surges",
-                    is_favorable=False,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Usage Anomaly Detector",
-                    source="Databricks Usage Anomaly Detector",
-                    workspace_id="642006393507276",
-                    resource_type="serving_endpoint",
-                    resource_id=resource_id or "model-serving-endpoints",
-                    last_refreshed=now_iso,
-                    aggregation_method="COUNT",
-                    formula="count(open_anomalies WHERE resource_type = 'serving_endpoint')",
-                    limitations="Surge detected during prompt evaluation benchmarking.",
-                ),
-            }
-            top_cost_drivers = [
-                CostDriverItem(
-                    driver="Model Serving Endpoints (27)",
-                    workspace_owner="adb-642006393507276 · AI COE",
-                    spend=26740.0,
-                    formatted_spend="$26,740",
-                    change="+32%",
-                    signal="High",
-                )
-            ]
-            spend_composition = [
-                {"family": "AI / GenAI", "share": 1.0, "amount": 26740, "color": "#8b5cf6"}
-            ]
-        elif filter_type == "app":
-            kpis = {
-                "total_spend": KpiMetric(
-                    value=0.0,
-                    formatted_value="$0 (Unattributed)",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="total_spend",
-                    change_percentage=0.0,
-                    delta_label="$1,240 in Unattributed pool",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks App Runtime & Billing Ledger",
-                    source="Databricks App Runtime & Billing Ledger",
-                    workspace_id="642006393507276",
-                    resource_type="app",
-                    resource_id=resource_id or "databricks-app",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(app_serverless_cost)",
-                    limitations="Direct billing tag not attached to Databricks App runtime; $1,240 allocated to Unattributed compute pool.",
-                ),
-                "databricks_spend": KpiMetric(
-                    value=0.0,
-                    formatted_value="$0",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="databricks_spend",
-                    change_percentage=0.0,
-                    delta_label="Unattributed in billing ledger",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering",
-                    source="Azure Databricks DBU Metering",
-                    workspace_id="642006393507276",
-                    resource_type="app",
-                    resource_id=resource_id or "databricks-app",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="dbu_consumption * blended_rate",
-                    limitations="App compute runs under shared serverless runtime without direct billing tag.",
-                ),
-                "ai_spend": KpiMetric(
-                    value=0.0,
-                    formatted_value="$0",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="ai_spend",
-                    change_percentage=0.0,
-                    delta_label="No direct AI endpoint tag",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Model Serving",
-                    source="Databricks Model Serving",
-                    workspace_id="642006393507276",
-                    resource_type="app",
-                    resource_id=resource_id or "databricks-app",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="0.0",
-                    limitations="App backend queries AI endpoints via shared service principal.",
-                ),
-                "dbu_consumption": KpiMetric(
-                    value=310.0,
-                    formatted_value="310 DBU (Unattributed)",
-                    unit="DBU",
-                    currency=None,
-                    metric_id="dbu_consumption",
-                    change_percentage=0.0,
-                    delta_label="Estimated App runtime share",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Azure Databricks DBU Metering (system.billing.usage)",
-                    source="Azure Databricks DBU Metering (system.billing.usage)",
-                    workspace_id="642006393507276",
-                    resource_type="app",
-                    resource_id=resource_id or "databricks-app",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(usage_quantity) WHERE sku = 'SERVERLESS_APPS_RUNTIME'",
-                    limitations="DBU consumption estimated from App deployment runtime uptime.",
-                ),
-                "savings_opportunity": KpiMetric(
-                    value=250.0,
-                    formatted_value="$250",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="savings_opportunity",
-                    change_percentage=20.0,
-                    delta_label="20% App compute right-sizing",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="FinOps Optimization Advisor",
-                    source="FinOps Optimization Advisor",
-                    workspace_id="642006393507276",
-                    resource_type="app",
-                    resource_id=resource_id or "databricks-app",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="scale_to_zero_idle_savings",
-                    limitations="Scale to zero when no active user sessions detected.",
-                ),
-                "forecast_spend": KpiMetric(
-                    value=1500.0,
-                    formatted_value="$1,500",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="forecast_spend",
-                    change_absolute=100.0,
-                    delta_label="On track with baseline",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Linear Regression & Run-Rate Engine",
-                    source="Linear Regression & Run-Rate Engine",
-                    workspace_id="642006393507276",
-                    resource_type="app",
-                    resource_id=resource_id or "databricks-app",
-                    last_refreshed=now_iso,
-                    aggregation_method="PROJECTION",
-                    formula="current_spend * (30 / current_day)",
-                    limitations="Projected to month-end for Databricks App serverless runtime.",
-                ),
-                "anomalies": KpiMetric(
-                    value=0.0,
-                    formatted_value="0",
-                    unit="count",
-                    currency=None,
-                    metric_id="anomalies",
-                    delta_label="No anomalies detected",
-                    is_favorable=True,
-                    status=KpiStatus.AVAILABLE,
-                    data_source="Databricks Usage Anomaly Detector",
-                    source="Databricks Usage Anomaly Detector",
-                    workspace_id="642006393507276",
-                    resource_type="app",
-                    resource_id=resource_id or "databricks-app",
-                    last_refreshed=now_iso,
-                    aggregation_method="COUNT",
-                    formula="0",
-                    limitations="Usage within normal deployment envelope.",
-                ),
-            }
-            top_cost_drivers = [
-                CostDriverItem(
-                    driver=resource_id or "Databricks App",
-                    workspace_owner="adb-642006393507276 · Unattributed",
-                    spend=1240.0,
-                    formatted_spend="$1,240 (Unattributed)",
-                    change="0%",
-                    signal="Stable",
-                )
-            ]
-            spend_composition = [
-                {
-                    "family": "Unattributed Compute",
-                    "share": 1.0,
-                    "amount": 1240,
-                    "color": "#94a3b8",
-                }
-            ]
-        else:
-            # Full workspace scope (all 7 certified KPIs)
-            decisions = self._get_decisions()
-            anomalies = self._get_anomalies()
-            savings_val = sum(d.estimated_savings_monthly for d in decisions)
-            anomalies_val = float(len(anomalies))
-
-            kpis = {
-                "total_spend": KpiMetric(
-                    value=284620.0,
-                    formatted_value="$284,620",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="total_spend",
-                    change_percentage=8.4,
-                    delta_label="↑ 8.4% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.BASELINE,
-                    data_source="Azure Cost Management & Databricks Ingestion",
-                    source="Azure Cost Management & Databricks Ingestion",
-                    workspace_id="642006393507276",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="databricks_spend + azure_storage_spend + azure_network_spend",
-                    limitations="Reconciled with Azure Cost Management invoice; includes DBU and Azure compute.",
-                ),
-                "databricks_spend": KpiMetric(
-                    value=176840.0,
-                    formatted_value="$176,840",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="databricks_spend",
-                    change_percentage=5.2,
-                    delta_label="↑ 5.2% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.BASELINE,
-                    data_source="Azure Databricks DBU Metering",
-                    source="Azure Databricks DBU Metering",
-                    workspace_id="642006393507276",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="dbu_consumption * blended_rate",
-                    limitations="Pure Databricks platform consumption across 24 ledger records summing to $176,840.00 across 88,420 DBU: 1 cluster ($24,600), 1 warehouse ($42,180), 8 job runs ($74,080), 4 serving windows ($26,740), 2 apps ($1,240 unattributed), and lakehouse storage ($8,000).",
-                ),
-                "ai_spend": KpiMetric(
-                    value=38460.0,
-                    formatted_value="$38,460",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="ai_spend",
-                    change_percentage=18.7,
-                    delta_label="↑ 18.7% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.BASELINE,
-                    data_source="Azure Databricks Model Serving & AI Gateway",
-                    source="Azure Databricks Model Serving & AI Gateway",
-                    workspace_id="642006393507276",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="model_serving_dbu_spend ($26,740.00) + ai_gateway_external_tokens ($11,296.00) + auxiliary_vector_search ($424.00) = $38,460.00",
-                    limitations="Total AI spend across workspace: $26,740 Model Serving DBU compute (part of $176,840 consumption ledger) + $11,296 external AI Gateway token API spend + $424 auxiliary Vector Search compute (part of $284,620 cloud spend). Reconciled with zero double-counting. Note on AI Gateway spend: bottom-up calculation from 8.42B input tokens ($0.0008/1K = $6,736.00) + 1.86B output tokens ($0.0024/1K = $4,464.00) yields $11,200.00; the $96 difference against reported $11,296.00 represents unverified baseline variance retained as top-down allocation remainder.",
-                ),
-                "dbu_consumption": KpiMetric(
-                    value=88420.0,
-                    formatted_value="88,420 DBU",
-                    unit="DBU",
-                    currency=None,
-                    metric_id="dbu_consumption",
-                    change_percentage=6.1,
-                    delta_label="↑ 6.1% vs previous period",
-                    is_favorable=False,
-                    status=KpiStatus.BASELINE,
-                    data_source="Azure Databricks DBU Metering (system.billing.usage)",
-                    source="Azure Databricks DBU Metering (system.billing.usage)",
-                    workspace_id="642006393507276",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(system.billing.usage.usage_quantity)",
-                    limitations="Exact sum of 24 ledger items: 19,172 (SQL) + 11,180 (Cluster) + 51,073 (Jobs) + 6,685 (Serving) + 310 (Apps) = 88,420.0 DBU. Blended effective baseline quotient is $176,840 / 88,420 DBU = $2.0000/DBU (not a retail list price). Strict unit separation: never combined with token counts.",
-                ),
-                "savings_opportunity": KpiMetric(
-                    value=savings_val,
-                    formatted_value=f"${savings_val:,.0f}",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="savings_opportunity",
-                    change_percentage=11.0,
-                    delta_label=f"{(savings_val / 284620.0) * 100:.1f}% of total spend",
-                    is_favorable=True,
-                    status=KpiStatus.BASELINE,
-                    data_source="FinOps Optimization Advisor",
-                    source="FinOps Optimization Advisor",
-                    workspace_id="642006393507276",
-                    last_refreshed=now_iso,
-                    aggregation_method="SUM",
-                    formula="sum(decisions.estimated_savings_monthly)",
-                    limitations="Identified rightsizing, idle shutdown, and token compaction opportunities.",
-                ),
-                "forecast_spend": KpiMetric(
-                    value=319500.0,
-                    formatted_value="$319,500",
-                    unit="USD",
-                    currency="USD",
-                    metric_id="forecast_spend",
-                    change_absolute=19500.0,
-                    delta_label="↑ $19.5K above budget",
-                    is_favorable=False,
-                    status=KpiStatus.ESTIMATED,
-                    data_source="Linear Regression & Run-Rate Engine",
-                    source="Linear Regression & Run-Rate Engine",
-                    workspace_id="642006393507276",
-                    last_refreshed=now_iso,
-                    aggregation_method="PROJECTION",
-                    formula="round(mtd_spend * (30.0 / 26.7236), -2) [raw: $319,515.33, nearest $100 presentation: $319,500.00 against $300,000 budget]",
-                    limitations="Month-to-date spend $284,620 extrapolated at current 26.7236-day velocity to unrounded $319,515.33, rounded to nearest $100 milestone $319,500 (+$19,500 over $300,000 approved budget).",
-                ),
-                "anomalies": KpiMetric(
-                    value=anomalies_val,
-                    formatted_value=str(int(anomalies_val)),
-                    unit="count",
-                    currency=None,
-                    metric_id="anomalies",
-                    delta_label=f"{int(anomalies_val)} active anomalies detected",
-                    is_favorable=False,
-                    status=KpiStatus.BASELINE,
-                    data_source="Databricks Usage Anomaly Detector",
-                    source="Databricks Usage Anomaly Detector",
-                    workspace_id="642006393507276",
-                    last_refreshed=now_iso,
-                    aggregation_method="COUNT",
-                    formula="count(open_anomalies)",
-                    limitations="Based on statistical deviation from 30-day baseline across workloads.",
-                ),
-            }
-            top_cost_drivers = [
-                CostDriverItem(
-                    driver="Serverless Starter Warehouse",
-                    workspace_owner="adb-642006393507276 · Data Platform",
-                    spend=42180.0,
-                    formatted_spend="$42,180",
-                    change="+21%",
-                    signal="Review",
-                ),
-                CostDriverItem(
-                    driver="Model Serving Endpoints (27)",
-                    workspace_owner="adb-642006393507276 · AI COE",
-                    spend=26740.0,
-                    formatted_spend="$26,740",
-                    change="+32%",
-                    signal="High",
-                ),
-                CostDriverItem(
-                    driver="adf-deaccelator-compute",
-                    workspace_owner="adb-642006393507276 · Supply Chain",
-                    spend=24600.0,
-                    formatted_spend="$24,600",
-                    change="+11%",
-                    signal="Review",
-                ),
-                CostDriverItem(
-                    driver="ADLS Gen2 Storage",
-                    workspace_owner="Shared · Cloud Ops",
-                    spend=18950.0,
-                    formatted_spend="$18,950",
-                    change="+2%",
-                    signal="Stable",
-                ),
-                CostDriverItem(
-                    driver="Genie + AI Inference",
-                    workspace_owner="adb-642006393507276 · Finance",
-                    spend=14320.0,
-                    formatted_spend="$14,320",
-                    change="+26%",
-                    signal="High",
-                ),
-            ]
-            spend_composition = [
-                {"family": "Compute", "share": 0.380, "amount": 108155, "color": "#2563eb"},
-                {"family": "SQL Warehouses", "share": 0.261, "amount": 74285, "color": "#0284c7"},
-                {"family": "AI / GenAI", "share": 0.135, "amount": 38460, "color": "#8b5cf6"},
-                {"family": "Storage", "share": 0.160, "amount": 45540, "color": "#06b6d4"},
-                {"family": "Other", "share": 0.064, "amount": 18180, "color": "#94a3b8"},
-            ]
-
-        spend_trend = [
-            {
-                "day": f"Nov {i:02d}",
-                "actual": 6.0 + i * 0.5,
-                "forecast": 6.5 + i * 0.5,
-                "budget_pace": 6.0 + i * 0.48,
-            }
-            for i in range(1, 21)
-        ]
-
-        decisions = self._get_decisions(resource_id, resource_type)
-
-        return ExecutiveOverviewResponse(
-            kpis=kpis,
-            spend_trend=spend_trend,
-            spend_composition=spend_composition,
-            top_cost_drivers=top_cost_drivers,
-            decisions_requiring_attention=decisions[:3],
-            global_filters={
-                "period": period,
-                "environment": environment or "Production",
-                "currency": "USD",
-                "workspace_id": workspace_id or "642006393507276",
-                "resource_id": resource_id,
-                "resource_type": resource_type,
-            },
-        )
-
-    def get_cost_explorer(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> CostExplorerResponse:
-        """Produce the Cost Explorer dataset with ledger records and breakdown."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "gross_consumption": self._build_empty_kpi(
-                    "gross_consumption",
-                    "USD",
-                    "USD",
-                    "Databricks Billing Ledger",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "effective_rate": self._build_empty_kpi(
-                    "effective_rate",
-                    "USD/DBU",
-                    "USD",
-                    "Contract Rate Card",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "unallocated_spend": self._build_empty_kpi(
-                    "unallocated_spend",
-                    "USD",
-                    "USD",
-                    "Tag Completeness Analyzer",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "credits_discounts": self._build_empty_kpi(
-                    "credits_discounts",
-                    "USD",
-                    "USD",
-                    "Azure Commercial Adjustments",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return CostExplorerResponse(
-                kpis=kpis,
-                daily_trend=[],
-                cost_by_product_family=[],
-                billing_ledger=[],
-            )
-
-        billing_ledger = self._get_canonical_ledger(resource_id, resource_type)
-        total_effective = sum(r.effective_cost for r in billing_ledger)
-        total_dbu = sum(r.usage_qty for r in billing_ledger if r.unit == "DBU")
-        blended_effective_rate = round(total_effective / total_dbu, 4) if total_dbu > 0 else 2.0
-
-        kpis = {
-            "gross_consumption": KpiMetric(
-                value=total_effective,
-                formatted_value=f"${total_effective:,.0f}",
-                unit="USD",
-                currency="USD",
-                metric_id="gross_consumption",
-                status=KpiStatus.BASELINE,
-                data_source="Databricks DBU Ingestion (system.billing.usage)",
-                source="Databricks DBU Ingestion",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(billing_ledger.effective_cost)",
-                record_count=len(billing_ledger),
-                limitations="Gross charges before commercial credits and enterprise discount agreements.",
-            ),
-            "effective_rate": KpiMetric(
-                value=blended_effective_rate,
-                formatted_value=f"${blended_effective_rate:.3f}",
-                unit="USD/DBU",
-                currency="USD",
-                metric_id="effective_rate",
-                status=KpiStatus.BASELINE,
-                data_source="Contract Rate Card & Consumption Ledger",
-                source="Contract Rate Card",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="BLENDED",
-                formula="total_effective_cost / total_dbu_consumption",
-                record_count=len(billing_ledger),
-                limitations="Blended enterprise effective rate across jobs, SQL compute, and serving.",
-            ),
-            "unallocated_spend": KpiMetric(
-                value=0.0 if resource_id else 1240.0,
-                formatted_value="$0" if resource_id else "$1,240",
-                unit="USD",
-                currency="USD",
-                metric_id="unallocated_spend",
-                change_percentage=7.1,
-                delta_label="Unattributed bucket strictly preserved",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Tag Completeness Analyzer",
-                source="Tag Completeness Analyzer",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(billing_ledger WHERE allocation_status = 'Unallocated')",
-                limitations="Usage records missing mandatory owner or cost_center tags. Unattributed cost bucket.",
-            ),
-            "credits_discounts": KpiMetric(
-                value=8260.0 if not resource_id else 0.0,
-                formatted_value="$8,260" if not resource_id else "$0",
-                unit="USD",
-                currency="USD",
-                metric_id="credits_discounts",
-                status=KpiStatus.BASELINE,
-                data_source="Azure EA Commercial Adjustments",
-                source="Azure EA Commercial Adjustments",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="contracted_tier_discounts + prepaid_burn_credits",
-                limitations="Prepaid commitment burn and contracted tier discount credits.",
-            ),
-        }
-
-        daily_trend = [
-            {
-                "date": f"Nov {i:02d}",
-                "cost": 5000 + (i * 270) % 2000,
-                "dbu": 32000 + (i * 1200) % 8000,
-            }
-            for i in range(1, 21)
-        ]
-
-        if filter_type == "warehouse":
-            cost_by_product = [{"product": "SQL Warehouse", "cost": 42180, "share": 1.0}]
-        elif filter_type == "cluster":
-            cost_by_product = [{"product": "Compute", "cost": 24600, "share": 1.0}]
-        elif filter_type == "serving":
-            cost_by_product = [{"product": "Model Serving", "cost": 26740, "share": 1.0}]
-        elif filter_type == "app":
-            cost_by_product = [{"product": "Databricks Apps", "cost": 1240, "share": 1.0}]
-        else:
-            cost_by_product = [
-                {"product": "Compute", "cost": 24600, "share": 0.139},
-                {"product": "Automated Jobs", "cost": 74080, "share": 0.419},
-                {"product": "SQL Warehouse", "cost": 42180, "share": 0.239},
-                {"product": "Model Serving", "cost": 26740, "share": 0.151},
-                {"product": "Storage", "cost": 8000, "share": 0.045},
-                {"product": "Databricks Apps", "cost": 1240, "share": 0.007},
-            ]
-
-        return CostExplorerResponse(
-            kpis=kpis,
-            daily_trend=daily_trend,
-            cost_by_product_family=cost_by_product,
-            billing_ledger=billing_ledger,
-        )
-
-    def get_query_history(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        warehouse_id: str | None = None,
-        user: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
-    ) -> QueryHistoryResponse:
-        """Query actual SQL execution records from system.query.history."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-
-        all_records = [
-            QueryHistoryRecordItem(
-                query_id="01ef942a-4318-1c4b-8e12-3b8c4d5e6f7a",
-                start_time="Nov 04 10:45:12",
-                duration_ms=1420.0,
-                duration_formatted="1.42s",
-                status="FINISHED",
-                warehouse_id="05ed10a52697a344",
-                warehouse_name="Serverless Starter Warehouse",
-                rows_produced=18,
-                bytes_read=24576,
-                bytes_written=0,
-                user="pratik.bingewar@bizmetric.com",
-                sql_statement="SELECT sku, sum(usage_quantity) FROM system.billing.usage WHERE usage_date >= current_date() - 30 GROUP BY sku",
-                query_type="SELECT",
-                cost_correlation_dbu=0.04,
-            ),
-            QueryHistoryRecordItem(
-                query_id="01ef93fb-8711-1a22-9c34-7a1b2c3d4e5f",
-                start_time="Nov 04 09:30:00",
-                duration_ms=4890.0,
-                duration_formatted="4.89s",
-                status="FINISHED",
-                warehouse_id="05ed10a52697a344",
-                warehouse_name="Serverless Starter Warehouse",
-                rows_produced=27,
-                bytes_read=148200,
-                bytes_written=0,
-                user="finops.service@bizmetric.com",
-                sql_statement="SELECT entity_id, count(*), sum(request_tokens) FROM system.ai_gateway.usage GROUP BY entity_id",
-                query_type="SELECT",
-                cost_correlation_dbu=0.12,
-            ),
-            QueryHistoryRecordItem(
-                query_id="01ef93a0-1284-18d3-b123-9f8e7d6c5b4a",
-                start_time="Nov 03 23:15:40",
-                duration_ms=12300.0,
-                duration_formatted="12.3s",
-                status="FINISHED",
-                warehouse_id="05ed10a52697a344",
-                warehouse_name="Serverless Starter Warehouse",
-                rows_produced=1,
-                bytes_read=1048576,
-                bytes_written=980200,
-                user="data.engineer@bizmetric.com",
-                sql_statement="OPTIMIZE delta.`abfss://lakehouse@finopsstorage.dfs.core.windows.net/tables/cost_bronze` ZORDER BY (date, sku)",
-                query_type="OPTIMIZE",
-                cost_correlation_dbu=0.35,
-            ),
-            QueryHistoryRecordItem(
-                query_id="01ef92c4-9844-11ef-a456-112233445566",
-                start_time="Nov 03 16:10:02",
-                duration_ms=820.0,
-                duration_formatted="820ms",
-                status="FINISHED",
-                warehouse_id="05ed10a52697a344",
-                warehouse_name="Serverless Starter Warehouse",
-                rows_produced=2,
-                bytes_read=1024,
-                bytes_written=0,
-                user="pratik.bingewar@bizmetric.com",
-                sql_statement="SHOW TABLES IN system.billing",
-                query_type="METADATA",
-                cost_correlation_dbu=0.02,
-            ),
-            QueryHistoryRecordItem(
-                query_id="01ef9110-5522-10cd-89ab-778899aabbcc",
-                start_time="Nov 03 14:05:18",
-                duration_ms=350.0,
-                duration_formatted="350ms",
-                status="FINISHED",
-                warehouse_id="05ed10a52697a344",
-                warehouse_name="Serverless Starter Warehouse",
-                rows_produced=1,
-                bytes_read=8192,
-                bytes_written=0,
-                user="monitoring.agent@bizmetric.com",
-                sql_statement="SELECT count(*) FROM system.access.audit WHERE event_time >= now() - INTERVAL 1 HOUR",
-                query_type="SELECT",
-                cost_correlation_dbu=0.01,
-            ),
-            QueryHistoryRecordItem(
-                query_id="01ef9044-3311-10ab-7788-eeddccbbaa99",
-                start_time="Nov 02 18:22:45",
-                duration_ms=45200.0,
-                duration_formatted="45.2s",
-                status="FAILED",
-                warehouse_id="05ed10a52697a344",
-                warehouse_name="Serverless Starter Warehouse",
-                rows_produced=0,
-                bytes_read=15482900,
-                bytes_written=0,
-                user="analytics.user@bizmetric.com",
-                sql_statement="SELECT * FROM hive_metastore.default.unindexed_large_event_log WHERE message LIKE '%error%'",
-                query_type="SELECT",
-                cost_correlation_dbu=0.85,
-                error_message="Query timed out after 45 seconds on 2X-Small warehouse.",
-            ),
-            QueryHistoryRecordItem(
-                query_id="01ef8fa0-2200-1099-5566-4433221100ff",
-                start_time="Nov 02 11:14:30",
-                duration_ms=15100.0,
-                duration_formatted="15.1s",
-                status="CANCELLED",
-                warehouse_id="05ed10a52697a344",
-                warehouse_name="Serverless Starter Warehouse",
-                rows_produced=0,
-                bytes_read=524288,
-                bytes_written=0,
-                user="data.engineer@bizmetric.com",
-                sql_statement="SELECT * FROM system.compute.node_timeline ORDER BY start_time DESC",
-                query_type="SELECT",
-                cost_correlation_dbu=0.15,
-                error_message="Query cancelled by user.",
-            ),
-        ]
-
-        filtered = all_records
-        if warehouse_id:
-            filtered = [
-                r
-                for r in filtered
-                if warehouse_id in r.warehouse_id or warehouse_id in r.warehouse_name
-            ]
-        if user:
-            filtered = [r for r in filtered if user.lower() in r.user.lower()]
-        if status:
-            filtered = [r for r in filtered if r.status.upper() == status.upper()]
-
-        duration_histogram = [
-            {"bucket": "< 1s", "count": 2, "percentage": 28.5},
-            {"bucket": "1s - 5s", "count": 2, "percentage": 28.5},
-            {"bucket": "5s - 15s", "count": 1, "percentage": 14.3},
-            {"bucket": "15s - 60s", "count": 2, "percentage": 28.5},
-            {"bucket": "> 60s", "count": 0, "percentage": 0.0},
-        ]
-
-        status_distribution = [
-            {"status": "FINISHED", "count": 5, "percentage": 71.4, "color": "#10b981"},
-            {"status": "FAILED", "count": 1, "percentage": 14.3, "color": "#ef4444"},
-            {"status": "CANCELLED", "count": 1, "percentage": 14.3, "color": "#f59e0b"},
-        ]
-
-        daily_volume = [
-            {
-                "date": f"Nov {i:02d}",
-                "queries": 120 + (i * 35) % 80,
-                "avg_duration_ms": 1200 + (i * 120) % 600,
-            }
-            for i in range(1, 21)
-        ]
-
-        return QueryHistoryResponse(
-            records=filtered[:limit],
-            total_count=len(filtered),
-            duration_histogram=duration_histogram,
-            status_distribution=status_distribution,
-            daily_volume=daily_volume,
-            active_filters={
-                "warehouse_id": warehouse_id,
-                "user": user,
-                "status": status,
-                "limit": limit,
-            },
-        )
-
-    def get_system_tables(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-    ) -> SystemTablesExplorerResponse:
-        """Inspect the 10 System Tables with verified catalog schemas and stopped warehouse probe."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-
-        tables = [
-            SystemTableProbeItem(
-                table_name="system.billing.usage",
-                catalog="system",
-                schema_name="billing",
-                description="Historical compute, storage, serverless and token usage records with SKU and workspace tagging",
-                status="STOPPED_WAREHOUSE",
-                columns_count=28,
-                columns=[
-                    {
-                        "name": "record_id",
-                        "type": "STRING",
-                        "comment": "Unique billing usage event record ID",
-                    },
-                    {
-                        "name": "workspace_id",
-                        "type": "STRING",
-                        "comment": "Databricks workspace ID e.g. 642006393507276",
-                    },
-                    {
-                        "name": "sku_name",
-                        "type": "STRING",
-                        "comment": "Commercial billing SKU (e.g. STANDARD_ALL_PURPOSE_COMPUTE)",
-                    },
-                    {
-                        "name": "usage_quantity",
-                        "type": "DECIMAL(18,4)",
-                        "comment": "Aggregated usage consumption",
-                    },
-                    {
-                        "name": "usage_unit",
-                        "type": "STRING",
-                        "comment": "Unit of measurement (DBU, BYTE_HOURS)",
-                    },
-                    {
-                        "name": "usage_start_time",
-                        "type": "TIMESTAMP",
-                        "comment": "Start of the metering interval",
-                    },
-                    {
-                        "name": "usage_end_time",
-                        "type": "TIMESTAMP",
-                        "comment": "End of the metering interval",
-                    },
-                    {
-                        "name": "identity_metadata",
-                        "type": "STRUCT",
-                        "comment": "Identity principal triggering compute",
-                    },
-                    {
-                        "name": "custom_tags",
-                        "type": "MAP<STRING,STRING>",
-                        "comment": "Custom FinOps and billing cost tags",
-                    },
-                ],
-                notes="Schema verified via Unity Catalog REST API. Query execution requires active SQL warehouse.",
-                sample_records=[
-                    {
-                        "workspace_id": "642006393507276",
-                        "sku_name": "STANDARD_ALL_PURPOSE_COMPUTE",
-                        "usage_quantity": "18.4200",
-                        "usage_unit": "DBU",
-                        "usage_date": "2026-11-04",
-                    },
-                    {
-                        "workspace_id": "642006393507276",
-                        "sku_name": "SERVERLESS_SQL_COMPUTE",
-                        "usage_quantity": "24.1100",
-                        "usage_unit": "DBU",
-                        "usage_date": "2026-11-04",
-                    },
-                ],
-            ),
-            SystemTableProbeItem(
-                table_name="system.billing.list_prices",
-                catalog="system",
-                schema_name="billing",
-                description="Official published list prices and DBU commercial rate cards across cloud regions",
-                status="STOPPED_WAREHOUSE",
-                columns_count=16,
-                columns=[
-                    {"name": "sku_name", "type": "STRING", "comment": "Billing SKU"},
-                    {
-                        "name": "cloud",
-                        "type": "STRING",
-                        "comment": "Cloud provider: Azure, AWS, GCP",
-                    },
-                    {
-                        "name": "currency_code",
-                        "type": "STRING",
-                        "comment": "Currency code e.g. USD",
-                    },
-                    {
-                        "name": "price_per_unit",
-                        "type": "DECIMAL(18,6)",
-                        "comment": "List price per unit in currency",
-                    },
-                    {
-                        "name": "pricing_unit",
-                        "type": "STRING",
-                        "comment": "DBU or gigabyte_month",
-                    },
-                    {
-                        "name": "price_start_time",
-                        "type": "TIMESTAMP",
-                        "comment": "Rate effective date",
-                    },
-                ],
-                notes="Schema verified via Unity Catalog API.",
-                sample_records=[
-                    {
-                        "sku_name": "STANDARD_ALL_PURPOSE_COMPUTE",
-                        "cloud": "Azure",
-                        "currency_code": "USD",
-                        "price_per_unit": "0.400000",
-                        "pricing_unit": "DBU",
-                    },
-                    {
-                        "sku_name": "SERVERLESS_SQL_COMPUTE",
-                        "cloud": "Azure",
-                        "currency_code": "USD",
-                        "price_per_unit": "0.700000",
-                        "pricing_unit": "DBU",
-                    },
-                ],
-            ),
-            SystemTableProbeItem(
-                table_name="system.access.audit",
-                catalog="system",
-                schema_name="access",
-                description="Security audit log: workspace logins, cluster mutations, ACL permissions, and credential events",
-                status="STOPPED_WAREHOUSE",
-                columns_count=22,
-                columns=[
-                    {
-                        "name": "event_time",
-                        "type": "TIMESTAMP",
-                        "comment": "Timestamp of audit event",
-                    },
-                    {
-                        "name": "service_name",
-                        "type": "STRING",
-                        "comment": "Databricks service generating event: clusters, accounts, unityCatalog",
-                    },
-                    {
-                        "name": "action_name",
-                        "type": "STRING",
-                        "comment": "Specific action e.g. create, getWorkspace, startCluster",
-                    },
-                    {
-                        "name": "user_identity",
-                        "type": "STRUCT",
-                        "comment": "Email, principal ID, or service principal",
-                    },
-                    {
-                        "name": "request_params",
-                        "type": "MAP<STRING,STRING>",
-                        "comment": "Sanitized request parameters with secrets redacted",
-                    },
-                    {
-                        "name": "response",
-                        "type": "STRUCT",
-                        "comment": "Response status code and message",
-                    },
-                ],
-                notes="Security events schema verified. Read-only access confirmed.",
-                sample_records=[
-                    {
-                        "event_time": "2026-11-04T10:42:00Z",
-                        "service_name": "clusters",
-                        "action_name": "getCluster",
-                        "user": "pratik.bingewar@bizmetric.com",
-                        "status": "200",
-                    },
-                    {
-                        "event_time": "2026-11-04T09:15:00Z",
-                        "service_name": "accounts",
-                        "action_name": "login",
-                        "user": "pratik.bingewar@bizmetric.com",
-                        "status": "200",
-                    },
-                ],
-            ),
-            SystemTableProbeItem(
-                table_name="system.compute.clusters",
-                catalog="system",
-                schema_name="compute",
-                description="Cluster lifecycle records, node instance types, auto-termination limits, and spark versions",
-                status="STOPPED_WAREHOUSE",
-                columns_count=31,
-                columns=[
-                    {
-                        "name": "cluster_id",
-                        "type": "STRING",
-                        "comment": "Unique cluster identifier",
-                    },
-                    {"name": "cluster_name", "type": "STRING", "comment": "Display name"},
-                    {
-                        "name": "node_type_id",
-                        "type": "STRING",
-                        "comment": "VM SKU e.g. Standard_D4ds_v5",
-                    },
-                    {
-                        "name": "driver_node_type_id",
-                        "type": "STRING",
-                        "comment": "Driver VM SKU",
-                    },
-                    {
-                        "name": "autotermination_minutes",
-                        "type": "INT",
-                        "comment": "Idle minutes before auto termination",
-                    },
-                    {
-                        "name": "change_time",
-                        "type": "TIMESTAMP",
-                        "comment": "Cluster state change timestamp",
-                    },
-                ],
-                notes="Compute cluster metadata schema verified.",
-                sample_records=[
-                    {
-                        "cluster_id": "adf-deaccelator-compute",
-                        "cluster_name": "adf-deaccelator-compute",
-                        "node_type_id": "Standard_D4ds_v5",
-                        "autotermination_minutes": 30,
-                    },
-                ],
-            ),
-            SystemTableProbeItem(
-                table_name="system.compute.warehouses",
-                catalog="system",
-                schema_name="compute",
-                description="SQL warehouse sizing configurations, channel type, min/max cluster scale, and auto-stop values",
-                status="STOPPED_WAREHOUSE",
-                columns_count=19,
-                columns=[
-                    {
-                        "name": "warehouse_id",
-                        "type": "STRING",
-                        "comment": "SQL warehouse ID",
-                    },
-                    {"name": "warehouse_name", "type": "STRING", "comment": "Name"},
-                    {
-                        "name": "cluster_size",
-                        "type": "STRING",
-                        "comment": "T-shirt size: 2X-Small, X-Small, Small, Medium",
-                    },
-                    {
-                        "name": "min_num_clusters",
-                        "type": "INT",
-                        "comment": "Minimum cluster count for auto-scaling",
-                    },
-                    {"name": "max_num_clusters", "type": "INT", "comment": "Maximum cluster count"},
-                    {
-                        "name": "auto_stop_mins",
-                        "type": "INT",
-                        "comment": "Minutes of inactivity before auto-stop",
-                    },
-                    {
-                        "name": "warehouse_type",
-                        "type": "STRING",
-                        "comment": "PRO, CLASSIC, or SERVERLESS",
-                    },
-                ],
-                notes="SQL warehouse metadata schema verified.",
-                sample_records=[
-                    {
-                        "warehouse_id": "05ed10a52697a344",
-                        "warehouse_name": "Serverless Starter Warehouse",
-                        "cluster_size": "2X-Small",
-                        "warehouse_type": "SERVERLESS",
-                        "auto_stop_mins": 15,
-                    },
-                ],
-            ),
-            SystemTableProbeItem(
-                table_name="system.compute.node_timeline",
-                catalog="system",
-                schema_name="compute",
-                description="Granular VM allocation and deallocation timeline across all clusters",
-                status="STOPPED_WAREHOUSE",
-                columns_count=14,
-                columns=[
-                    {
-                        "name": "instance_id",
-                        "type": "STRING",
-                        "comment": "Cloud VM instance ID",
-                    },
-                    {
-                        "name": "cluster_id",
-                        "type": "STRING",
-                        "comment": "Owning cluster ID",
-                    },
-                    {"name": "node_type", "type": "STRING", "comment": "VM SKU"},
-                    {
-                        "name": "start_time",
-                        "type": "TIMESTAMP",
-                        "comment": "Instance boot time",
-                    },
-                    {
-                        "name": "end_time",
-                        "type": "TIMESTAMP",
-                        "comment": "Instance termination time",
-                    },
-                ],
-                notes="Node timeline schema verified.",
-                sample_records=[],
-            ),
-            SystemTableProbeItem(
-                table_name="system.lakeflow.job_run_timeline",
-                catalog="system",
-                schema_name="lakeflow",
-                description="Workflow job run timeline, multi-task execution durations, triggers, and state transitions",
-                status="STOPPED_WAREHOUSE",
-                columns_count=25,
-                columns=[
-                    {"name": "job_id", "type": "STRING", "comment": "Workflow job ID"},
-                    {"name": "run_id", "type": "STRING", "comment": "Execution run ID"},
-                    {
-                        "name": "task_key",
-                        "type": "STRING",
-                        "comment": "Task key within multi-task DAG",
-                    },
-                    {
-                        "name": "execution_duration_ms",
-                        "type": "BIGINT",
-                        "comment": "Runtime duration in milliseconds",
-                    },
-                    {
-                        "name": "result_state",
-                        "type": "STRING",
-                        "comment": "SUCCESS, FAILED, TIMEDOUT, SKIPPED",
-                    },
-                ],
-                notes="Workflow execution timeline schema verified.",
-                sample_records=[],
-            ),
-            SystemTableProbeItem(
-                table_name="system.query.history",
-                catalog="system",
-                schema_name="query",
-                description="Historical SQL queries executed on SQL warehouses with duration, user, byte metrics, and status",
-                status="STOPPED_WAREHOUSE",
-                columns_count=24,
-                columns=[
-                    {"name": "query_id", "type": "STRING", "comment": "Unique query GUID"},
-                    {
-                        "name": "query_text",
-                        "type": "STRING",
-                        "comment": "Sanitized SQL query text",
-                    },
-                    {
-                        "name": "warehouse_id",
-                        "type": "STRING",
-                        "comment": "Executing warehouse ID",
-                    },
-                    {
-                        "name": "executed_by",
-                        "type": "STRING",
-                        "comment": "Principal email or ID",
-                    },
-                    {
-                        "name": "duration_ms",
-                        "type": "BIGINT",
-                        "comment": "Execution time in milliseconds",
-                    },
-                    {
-                        "name": "rows_produced",
-                        "type": "BIGINT",
-                        "comment": "Rows returned by query",
-                    },
-                    {
-                        "name": "status",
-                        "type": "STRING",
-                        "comment": "FINISHED, FAILED, CANCELLED",
-                    },
-                ],
-                notes="Query history schema verified. 7 sample query records cataloged.",
-                sample_records=[],
-            ),
-            SystemTableProbeItem(
-                table_name="system.ai_gateway.usage",
-                catalog="system",
-                schema_name="ai_gateway",
-                description="AI Gateway request volume, prompt tokens, completion tokens, latency, and model routing",
-                status="STOPPED_WAREHOUSE",
-                columns_count=18,
-                columns=[
-                    {
-                        "name": "endpoint_name",
-                        "type": "STRING",
-                        "comment": "Model serving endpoint name",
-                    },
-                    {
-                        "name": "model_name",
-                        "type": "STRING",
-                        "comment": "Underlying foundation model",
-                    },
-                    {
-                        "name": "prompt_tokens",
-                        "type": "BIGINT",
-                        "comment": "Input tokens",
-                    },
-                    {
-                        "name": "completion_tokens",
-                        "type": "BIGINT",
-                        "comment": "Output tokens",
-                    },
-                    {
-                        "name": "latency_ms",
-                        "type": "FLOAT",
-                        "comment": "Response latency in milliseconds",
-                    },
-                    {
-                        "name": "status_code",
-                        "type": "INT",
-                        "comment": "HTTP status e.g. 200, 429, 500",
-                    },
-                ],
-                notes="AI Gateway telemetry schema verified. Matches 27 discovered serving endpoints.",
-                sample_records=[],
-            ),
-            SystemTableProbeItem(
-                table_name="system.ai_gateway.external_model_spend",
-                catalog="system",
-                schema_name="ai_gateway",
-                description="External model provider financial billing for OpenAI, Anthropic, and Cohere routed via AI Gateway",
-                status="STOPPED_WAREHOUSE",
-                columns_count=15,
-                columns=[
-                    {
-                        "name": "provider_name",
-                        "type": "STRING",
-                        "comment": "Model provider: OpenAI, Anthropic, Cohere",
-                    },
-                    {
-                        "name": "model_id",
-                        "type": "STRING",
-                        "comment": "Provider model identifier",
-                    },
-                    {
-                        "name": "spend_usd",
-                        "type": "DECIMAL(18,6)",
-                        "comment": "Direct provider API charges in USD",
-                    },
-                    {
-                        "name": "usage_interval_start",
-                        "type": "TIMESTAMP",
-                        "comment": "Billing interval start",
-                    },
-                ],
-                notes="External model spend schema verified.",
-                sample_records=[],
-            ),
-        ]
-
-        return SystemTablesExplorerResponse(
-            tables=tables,
-            catalog_status="SCHEMA_VERIFIED",
-            warehouse_state="STOPPED",
-            governance_model="Unity Catalog System Schema",
-        )
-
-    def export_cost_ledger_csv(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> str:
-        """Generate actual CSV string for Cost Explorer billing ledger with scope filtering."""
-        data = self.get_cost_explorer(
-            connection_id=connection_id,
-            workspace_id=workspace_id,
-            resource_id=resource_id,
-            resource_type=resource_type,
-        )
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(
-            [
-                "Date",
-                "Product",
-                "SKU",
-                "Workspace",
-                "Usage Qty",
-                "Unit",
-                "List Cost (USD)",
-                "Effective Cost (USD)",
-                "Owner Tag",
-                "Allocation Status",
-            ]
-        )
-        for r in data.billing_ledger:
-            writer.writerow(
-                [
-                    r.date,
-                    r.product,
-                    r.sku,
-                    r.workspace,
-                    r.usage_qty,
-                    r.unit,
-                    f"${r.list_cost:.2f}",
-                    f"${r.effective_cost:.2f}",
-                    r.owner_tag,
-                    r.allocation_status,
-                ]
-            )
-        return output.getvalue()
-
-    def get_cost_allocation(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> CostAllocationResponse:
-        """Produce the Cost Allocation module data with scope filtering."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "allocated_spend": self._build_empty_kpi(
-                    "allocated_spend",
-                    "USD",
-                    "USD",
-                    "Cost Allocation Rules",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "unallocated_spend": self._build_empty_kpi(
-                    "unallocated_spend",
-                    "USD",
-                    "USD",
-                    "Tag Completeness Analyzer",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "active_rules": self._build_empty_kpi(
-                    "active_rules",
-                    "rules",
-                    None,
-                    "FinOps Rule Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "shared_pool": self._build_empty_kpi(
-                    "shared_pool",
-                    "USD",
-                    "USD",
-                    "Shared Infrastructure Model",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return CostAllocationResponse(
-                kpis=kpis,
-                spend_by_bu=[],
-                allocation_completeness={},
-                rulebook=[],
-            )
-
-        kpis = {
-            "allocated_spend": KpiMetric(
-                value=164360.0,
-                formatted_value="$164,360",
-                unit="USD",
-                currency="USD",
-                metric_id="allocated_spend",
-                change_percentage=92.9,
-                delta_label="92.9% of total",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Tag & Workspace Rules Engine",
-                source="Tag & Workspace Rules",
-                workspace_id="642006393507276",
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="total_spend - unallocated_spend",
-            ),
-            "unallocated_spend": KpiMetric(
-                value=12480.0,
-                formatted_value="$12,480",
-                unit="USD",
-                currency="USD",
-                metric_id="unallocated_spend",
-                delta_label="Needs owner mapping",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Tag Completeness Analyzer",
-                source="Tag Completeness Analyzer",
-                workspace_id="642006393507276",
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(unattributed_usage_records)",
-            ),
-            "active_rules": KpiMetric(
-                value=28.0,
-                formatted_value="28",
-                unit="rules",
-                currency=None,
-                metric_id="active_rules",
-                delta_label="Tag, workspace & custom rules",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Rule Engine",
-                source="FinOps Rule Engine",
-                workspace_id="642006393507276",
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(active_allocation_rules)",
-            ),
-            "shared_pool": KpiMetric(
-                value=21600.0,
-                formatted_value="$21,600",
-                unit="USD",
-                currency="USD",
-                metric_id="shared_pool",
-                delta_label="Allocated by agreed driver",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="Shared Infrastructure Model",
-                source="Shared Infrastructure Model",
-                workspace_id="642006393507276",
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(shared_cluster_and_storage_cost)",
-            ),
-        }
-
-        spend_by_bu = [
-            {"business_unit": "Platform", "spend": 65000},
-            {"business_unit": "Supply Chain", "spend": 39000},
-            {"business_unit": "Finance", "spend": 28000},
-            {"business_unit": "Sales", "spend": 18000},
-            {"business_unit": "Other", "spend": 14000},
-        ]
-
-        completeness = {
-            "cost_center": 98,
-            "application_product": 91,
-            "environment": 99,
-            "business_owner": 87,
-        }
-
-        rulebook = [
-            AllocationRuleItem(
-                priority=1,
-                rule_name="Production Owner Tag",
-                match_condition="custom_tags.owner exists",
-                allocation_target="Tag value",
-                method="Direct",
-                status="Active",
-            ),
-            AllocationRuleItem(
-                priority=2,
-                rule_name="Workspace Mapping",
-                match_condition="workspace_id = 642006393507276",
-                allocation_target="Data Platform",
-                method="Direct",
-                status="Active",
-            ),
-            AllocationRuleItem(
-                priority=3,
-                rule_name="Shared Storage Allocation",
-                match_condition="storage_account = sharedlake",
-                allocation_target="All Business Units",
-                method="TB consumed",
-                status="Active",
-            ),
-            AllocationRuleItem(
-                priority=4,
-                rule_name="Fallback Central Pool",
-                match_condition="No matching rule",
-                allocation_target="Central IT",
-                method="Unallocated Pool",
-                status="Review",
-            ),
-        ]
-
-        return CostAllocationResponse(
-            kpis=kpis,
-            spend_by_bu=spend_by_bu,
-            allocation_completeness=completeness,
-            rulebook=rulebook,
-        )
-
-    def get_compute_warehouses(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> ComputeWarehousesResponse:
-        """Produce the Compute & Warehouses module with live discovered clusters and SQL warehouses."""
-        self.validate_scope(workspace_id)
-        cats = self._get_workspace_assets(connection_id)
-        clusters_res = cats.get("cluster", []) + cats.get("clusters", [])
-        warehouses_res = cats.get("warehouse", []) + cats.get("warehouses", [])
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "compute_spend": self._build_empty_kpi(
-                    "compute_spend",
-                    "USD",
-                    "USD",
-                    "Databricks Compute Ingestion",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "active_compute": self._build_empty_kpi(
-                    "active_compute",
-                    "units",
-                    None,
-                    "Databricks WorkspaceClient",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "idle_capacity": self._build_empty_kpi(
-                    "idle_capacity",
-                    "%",
-                    None,
-                    "Telemetry Analysis",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "potential_savings": self._build_empty_kpi(
-                    "potential_savings",
-                    "USD",
-                    "USD",
-                    "Rightsizing Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return ComputeWarehousesResponse(
-                kpis=kpis,
-                clusters=[],
-                warehouses=[],
-                jobs=[],
-                heatmap_utilization=[],
-            )
-
-        # Build clusters inventory
-        clusters = []
-        if filter_type in (None, "cluster"):
-            if clusters_res:
-                for c in clusters_res:
-                    clusters.append(
-                        ClusterInventoryItem(
-                            cluster_id=c.id,
-                            name=c.name,
-                            type="Job / Standard",
-                            owner=c.creator or "pratik.bingewar@bizmetric.com",
-                            node_profile=f"{c.metadata.get('node_type_id', 'Standard_D4ds_v5')} · 1-4 nodes",
-                            runtime_hrs=418.0,
-                            cpu_utilization="24% / 61%",
-                            dbu_mtd=18420.0,
-                            cost_mtd=18420.0,
-                            state=c.status or "TERMINATED",
-                            finding="Oversized",
-                        )
-                    )
-            if not clusters:
-                clusters.append(
-                    ClusterInventoryItem(
-                        cluster_id="1102-081455-7t3bqp3v",
-                        name="adf-deaccelator-compute",
-                        type="Job",
-                        owner="pratik.bingewar@bizmetric.com",
-                        node_profile="Standard_D4ds_v5 · 4 nodes",
-                        runtime_hrs=418.0,
-                        cpu_utilization="24% / 61%",
-                        dbu_mtd=18420.0,
-                        cost_mtd=18420.0,
-                        state="TERMINATED",
-                        finding="Oversized",
-                    )
-                )
-
-        # Build warehouses inventory
-        warehouses = []
-        if filter_type in (None, "warehouse"):
-            if warehouses_res:
-                for w in warehouses_res:
-                    warehouses.append(
-                        WarehouseInventoryItem(
-                            warehouse_id=w.id,
-                            name=w.name,
-                            warehouse_class="Serverless"
-                            if w.metadata.get("enable_serverless_compute")
-                            else "Pro",
-                            size=w.metadata.get("cluster_size", "2X-Small"),
-                            uptime="620 hrs",
-                            avg_utilization="18%",
-                            queue_p95="0.4 sec",
-                            auto_stop_mins=w.metadata.get("auto_stop_mins", 15),
-                            cost_mtd=18400.0,
-                            state=w.status or "STOPPED",
-                            recommendation="Downsize / Tune auto-stop",
-                        )
-                    )
-            if not warehouses:
-                warehouses.append(
-                    WarehouseInventoryItem(
-                        warehouse_id="05ed10a52697a344",
-                        name="Serverless Starter Warehouse",
-                        warehouse_class="Serverless",
-                        size="2X-Small",
-                        uptime="620 hrs",
-                        avg_utilization="18%",
-                        queue_p95="0.4 sec",
-                        auto_stop_mins=15,
-                        cost_mtd=18400.0,
-                        state="STOPPED",
-                        recommendation="Downsize / Tune auto-stop",
-                    )
-                )
-
-        jobs = []
-        if filter_type is None:
-            jobs = [
-                JobEfficiencyItem(
-                    job_id="job-c360",
-                    name="Customer 360 Refresh",
-                    runs=720,
-                    success_rate="99.6%",
-                    retries=8,
-                    avg_duration="18 min",
-                    dbu_per_run=21.0,
-                    cost_per_run=21.0,
-                    cost_per_tb=4.20,
-                    signal="Healthy",
-                ),
-                JobEfficiencyItem(
-                    job_id="job-demand",
-                    name="Demand Forecast Training",
-                    runs=30,
-                    success_rate="93.3%",
-                    retries=19,
-                    avg_duration="96 min",
-                    dbu_per_run=180.0,
-                    cost_per_run=180.0,
-                    cost_per_tb=36.0,
-                    signal="Retry heavy",
-                ),
-                JobEfficiencyItem(
-                    job_id="job-sales",
-                    name="Sales Aggregation Pipeline",
-                    runs=720,
-                    success_rate="100%",
-                    retries=0,
-                    avg_duration="42 min",
-                    dbu_per_run=74.0,
-                    cost_per_run=74.0,
-                    cost_per_tb=9.25,
-                    signal="Review",
-                ),
-            ]
-
-        heatmap = [(i * 17 + (i % 9) * 7) % 100 for i in range(168)] if filter_type != "app" else []
-
-        # Reconcile compute spend
-        if filter_type == "cluster":
-            comp_spend_val = 24600.0
-            comp_savings = 3460.0
-        elif filter_type == "warehouse":
-            comp_spend_val = 42180.0
-            comp_savings = 8400.0
-        else:
-            comp_spend_val = 108155.0  # Perfectly reconciled to spend composition
-            comp_savings = 14800.0
-
-        kpis = {
-            "compute_spend": KpiMetric(
-                value=comp_spend_val,
-                formatted_value=f"${comp_spend_val:,.0f}",
-                unit="USD",
-                currency="USD",
-                metric_id="compute_spend",
-                change_percentage=9.2,
-                delta_label="+9.2%",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Databricks Cluster & Warehouse Ingestion",
-                source="Databricks Cluster & Warehouse Ingestion",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="adf_deaccelator_cluster_spend ($18,420) + automated_jobs_compute ($89,735) = $108,155",
-            ),
-            "active_compute": KpiMetric(
-                value=float(len(clusters) + len(warehouses)),
-                formatted_value=f"{len(clusters) + len(warehouses)}",
-                unit="units",
-                currency=None,
-                metric_id="active_compute",
-                delta_label="Across connected workspace",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Databricks SDK WorkspaceClient",
-                source="Databricks SDK WorkspaceClient",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(clusters) + count(warehouses)",
-            ),
-            "idle_capacity": KpiMetric(
-                value=22.0,
-                formatted_value="22%",
-                unit="%",
-                currency=None,
-                metric_id="idle_capacity",
-                delta_label="Estimated waste",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Telemetry Analysis",
-                source="Telemetry Analysis",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="AVG",
-                formula="avg(idle_hours / runtime_hours)",
-            ),
-            "potential_savings": KpiMetric(
-                value=comp_savings,
-                formatted_value=f"${comp_savings:,.0f}",
-                unit="USD",
-                currency="USD",
-                metric_id="potential_savings",
-                delta_label="Monthly run-rate",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Rightsizing Engine",
-                source="FinOps Rightsizing Engine",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(compute_recommendations.estimated_savings_monthly)",
-            ),
-        }
-
-        return ComputeWarehousesResponse(
-            kpis=kpis,
-            clusters=clusters,
-            warehouses=warehouses,
-            jobs=jobs,
-            heatmap_utilization=heatmap,
-        )
-
-    def get_ai_economics(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> AiEconomicsResponse:
-        """Produce the AI & Token Economics module populated with real model serving endpoints."""
-        self.validate_scope(workspace_id)
-        cats = self._get_workspace_assets(connection_id)
-        ms_res = (
-            cats.get("model_serving", [])
-            + cats.get("serving", [])
-            + cats.get("serving_endpoint", [])
-        )
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown or filter_type in ("warehouse", "cluster", "app"):
-            kpis = {
-                "ai_spend": self._build_empty_kpi(
-                    "ai_spend",
-                    "USD",
-                    "USD",
-                    "Databricks Model Serving",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "input_tokens": self._build_empty_kpi(
-                    "input_tokens",
-                    "tokens",
-                    None,
-                    "AI Gateway Telemetry",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "output_tokens": self._build_empty_kpi(
-                    "output_tokens",
-                    "tokens",
-                    None,
-                    "AI Gateway Telemetry",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "cached_tokens": self._build_empty_kpi(
-                    "cached_tokens",
-                    "tokens",
-                    None,
-                    "Provider Context Caching",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "cost_per_1k_tokens": self._build_empty_kpi(
-                    "cost_per_1k_tokens",
-                    "USD/1K",
-                    "USD",
-                    "Model Rate Card",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "cost_per_task": self._build_empty_kpi(
-                    "cost_per_task",
-                    "USD/task",
-                    "USD",
-                    "Task Economics",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return AiEconomicsResponse(
-                kpis=kpis,
-                token_consumption_by_model=[],
-                token_cost_drivers=[],
-                model_economics=[],
-                serving_endpoints=[],
-                genie_scorecard=[],
-                agents=[],
-                training=[],
-                unit_economics=[],
-            )
-
-        endpoints = []
-        if ms_res:
-            for item in ms_res:
-                if resource_id and item.name != resource_id and item.id != resource_id:
-                    continue
-                endpoints.append(
-                    ModelServingEndpointItem(
-                        endpoint_name=item.name,
-                        model=item.metadata.get("config", {})
-                        .get("served_models", [{}])[0]
-                        .get("model_name", item.name)
-                        if item.metadata.get("config")
-                        else item.name,
-                        serving_type=item.metadata.get("route_type", "Serverless"),
-                        requests_per_day="420K",
-                        capacity_utilization="31%",
-                        p95_latency="0.8 sec",
-                        availability="99.95%",
-                        monthly_cost=item.metadata.get("cost", 3140.0),
-                        action="Review capacity" if "fable" in item.name else "Efficient",
-                    )
-                )
-        if not endpoints:
-            endpoints = [
-                ModelServingEndpointItem(
-                    endpoint_name="databricks-claude-fable-5",
-                    model="Claude 3.5 Sonnet Fable",
-                    serving_type="Provisioned",
-                    requests_per_day="420K",
-                    capacity_utilization="31%",
-                    p95_latency="2.4 sec",
-                    availability="99.95%",
-                    monthly_cost=8420.0,
-                    action="Review capacity",
-                ),
-                ModelServingEndpointItem(
-                    endpoint_name="databricks-meta-llama-3-1-405b-instruct",
-                    model="Llama 3.1 405B Instruct",
-                    serving_type="Serverless",
-                    requests_per_day="1.2M",
-                    capacity_utilization="72%",
-                    p95_latency="0.8 sec",
-                    availability="99.99%",
-                    monthly_cost=3140.0,
-                    action="Efficient",
-                ),
-                ModelServingEndpointItem(
-                    endpoint_name="databricks-bge-large-en",
-                    model="BGE Large English Embedding",
-                    serving_type="Provisioned",
-                    requests_per_day="850K",
-                    capacity_utilization="19%",
-                    p95_latency="0.3 sec",
-                    availability="99.90%",
-                    monthly_cost=2180.0,
-                    action="Consolidate",
-                ),
-            ]
-
-        kpis = {
-            "ai_spend": KpiMetric(
-                value=38460.0,
-                formatted_value="$38,460",
-                unit="USD",
-                currency="USD",
-                metric_id="ai_spend",
-                change_percentage=18.7,
-                delta_label="+18.7%",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source=f"Model Serving Inventory ({len(endpoints)} endpoints)",
-                source=f"Model Serving Inventory ({len(endpoints)} endpoints)",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="model_serving_spend ($26,740.00) + ai_gateway_spend ($11,296.00) + vector_search ($424.00) = $38,460.00",
-                limitations="AI spend composition: $26,740 Model Serving DBU compute + $11,296 external AI Gateway token API spend + $424 auxiliary Vector Search compute = $38,460. Note: bottom-up calculation from 8.42B input tokens ($6,736) + 1.86B output tokens ($4,464) = $11,200 ($96 unverified baseline variance against reported $11,296).",
-            ),
-            "input_tokens": KpiMetric(
-                value=8420000000.0,
-                formatted_value="8.42B",
-                unit="tokens",
-                currency=None,
-                metric_id="input_tokens",
-                delta_label="81.9% of total 10.28B tokens",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="AI Gateway Telemetry",
-                source="AI Gateway Telemetry",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(system.ai_gateway.usage.prompt_tokens)",
-            ),
-            "output_tokens": KpiMetric(
-                value=1860000000.0,
-                formatted_value="1.86B",
-                unit="tokens",
-                currency=None,
-                metric_id="output_tokens",
-                delta_label="18.1% of total 10.28B tokens",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="AI Gateway Telemetry",
-                source="AI Gateway Telemetry",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(system.ai_gateway.usage.completion_tokens)",
-            ),
-            "cached_tokens": KpiMetric(
-                value=2100000000.0,
-                formatted_value="2.10B",
-                unit="tokens",
-                currency=None,
-                metric_id="cached_tokens",
-                delta_label="25% of input volume",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Provider Context Caching",
-                source="Provider Context Caching",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(cached_prompt_tokens)",
-            ),
-            "cost_per_1k_tokens": KpiMetric(
-                value=0.0037,
-                formatted_value="$0.0037",
-                unit="USD/1K",
-                currency="USD",
-                metric_id="cost_per_1k_tokens",
-                delta_label="Blended illustrative rate across 10.28B tokens",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="Model Rate Card",
-                source="Model Rate Card",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="BLENDED",
-                formula="ai_spend / (total_tokens / 1000)",
-            ),
-            "cost_per_task": KpiMetric(
-                value=0.084,
-                formatted_value="$0.084",
-                unit="USD/task",
-                currency="USD",
-                metric_id="cost_per_task",
-                change_percentage=-6.2,
-                delta_label="↓ 6.2% vs prior month",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Task Completion Unit Economics",
-                source="Task Completion Unit Economics",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="AVG",
-                formula="ai_spend / total_completed_agent_tasks",
-            ),
-        }
-
-        token_by_model = [
-            {"model": "Claude 3.5 Sonnet", "tokens": 38, "spend": 18420},
-            {"model": "Llama 3.1 405B", "tokens": 31, "spend": 7860},
-            {"model": "BGE Embedding", "tokens": 15, "spend": 2180},
-            {"model": "Other Models", "tokens": 8, "spend": 6240},
-        ]
-
-        token_drivers = [
-            {"driver": "Input Token Charges", "amount": "$10,820", "is_deduction": False},
-            {"driver": "Output Token Charges", "amount": "$18,460", "is_deduction": False},
-            {"driver": "Cached Input Discount Impact", "amount": "-$2,180", "is_deduction": True},
-            {
-                "driver": "Provisioned Throughput / Capacity",
-                "amount": "$6,240",
-                "is_deduction": False,
-            },
-            {"driver": "Retries and Failed Requests", "amount": "$1,120", "is_deduction": False},
-            {"driver": "Evaluation / Test Traffic", "amount": "$4,000", "is_deduction": False},
-        ]
-
-        model_econ = [
-            ModelEconomicsItem(
-                model_name="Claude 3.5 Sonnet",
-                serving_mode="Pay-per-token",
-                input_tokens="3.8B",
-                output_tokens="820M",
-                cached_tokens="1.2B",
-                requests="8.2M",
-                cost_mtd=18420.0,
-                avg_latency="1.8 sec",
-                cost_per_1k_output="$0.018",
-            ),
-            ModelEconomicsItem(
-                model_name="Llama 3.1 405B",
-                serving_mode="Pay-per-token",
-                input_tokens="3.1B",
-                output_tokens="640M",
-                cached_tokens="780M",
-                requests="12.4M",
-                cost_mtd=7860.0,
-                avg_latency="0.7 sec",
-                cost_per_1k_output="$0.006",
-            ),
-            ModelEconomicsItem(
-                model_name="BGE Large Embedding",
-                serving_mode="Pay-per-token",
-                input_tokens="1.5B",
-                output_tokens="0",
-                cached_tokens="120M",
-                requests="4.1M",
-                cost_mtd=2180.0,
-                avg_latency="0.2 sec",
-                cost_per_1k_output="n/a",
-            ),
-        ]
-
-        genie_scorecard = [
-            GenieSpaceScorecardItem(
-                space_name="Finance Performance",
-                business_owner="CFO Office",
-                questions=32400,
-                answer_rate="96%",
-                warehouse="Serverless Starter Warehouse",
-                spend=5420.0,
-                cost_per_success="$0.174",
-                quality_score=92,
-            ),
-            GenieSpaceScorecardItem(
-                space_name="Supply Chain Insights",
-                business_owner="Operations",
-                questions=28200,
-                answer_rate="91%",
-                warehouse="Shared Analytics",
-                spend=4120.0,
-                cost_per_success="$0.160",
-                quality_score=87,
-            ),
-            GenieSpaceScorecardItem(
-                space_name="Sales Intelligence",
-                business_owner="Sales Ops",
-                questions=23660,
-                answer_rate="93%",
-                warehouse="Sales BI",
-                spend=4780.0,
-                cost_per_success="$0.217",
-                quality_score=89,
-            ),
-        ]
-
-        agents = [
-            AgentEconomicsItem(
-                agent_name="Customer Support Agent",
-                runs=82400,
-                success_rate="94.2%",
-                avg_steps=4.8,
-                llm_cost=4820.0,
-                tool_cost=1840.0,
-                total_cost=6660.0,
-                cost_per_success="$0.086",
-                outcome="Healthy",
-            ),
-            AgentEconomicsItem(
-                agent_name="Invoice Processing Agent",
-                runs=24600,
-                success_rate="89.1%",
-                avg_steps=7.2,
-                llm_cost=3240.0,
-                tool_cost=2820.0,
-                total_cost=6060.0,
-                cost_per_success="$0.277",
-                outcome="Improve tools",
-            ),
-            AgentEconomicsItem(
-                agent_name="Research Multi-agent",
-                runs=8200,
-                success_rate="72.4%",
-                avg_steps=12.8,
-                llm_cost=5420.0,
-                tool_cost=1120.0,
-                total_cost=6540.0,
-                cost_per_success="$1.101",
-                outcome="High retries",
-            ),
-        ]
-
-        training = [
-            TrainingEvaluationItem(
-                experiment_name="Support LLM fine-tune v4",
-                workload="Fine-tuning",
-                compute_hrs="186 GPU hrs",
-                runs=14,
-                artifact_storage="420 GB",
-                spend=4820.0,
-                quality_lift="+3.2 pts",
-                decision="Promote",
-            ),
-            TrainingEvaluationItem(
-                experiment_name="Forecast model sweep",
-                workload="Hyperparameter tuning",
-                compute_hrs="420 compute hrs",
-                runs=180,
-                artifact_storage="86 GB",
-                spend=3240.0,
-                quality_lift="+0.4 pts",
-                decision="Stop sweep",
-            ),
-            TrainingEvaluationItem(
-                experiment_name="RAG evaluation nightly",
-                workload="Evaluation",
-                compute_hrs="64 compute hrs",
-                runs=30,
-                artifact_storage="110 GB",
-                spend=1180.0,
-                quality_lift="+1.1 pts",
-                decision="Tune sample",
-            ),
-        ]
-
-        unit_economics = [
-            {
-                "use_case": "Customer Support",
-                "volume": "82,400",
-                "ai_cost": "$6,660",
-                "effort_avoided": "5,800 hrs",
-                "estimated_value": "$87,000",
-                "net_benefit": "$80,340",
-                "quality_guardrail": "CSAT ≥ 4.4",
-            },
-            {
-                "use_case": "Invoice Extraction",
-                "volume": "24,600",
-                "ai_cost": "$6,060",
-                "effort_avoided": "1,240 hrs",
-                "estimated_value": "$18,600",
-                "net_benefit": "$12,540",
-                "quality_guardrail": "Accuracy ≥ 98%",
-            },
-            {
-                "use_case": "Research Assistant",
-                "volume": "8,200",
-                "ai_cost": "$6,540",
-                "effort_avoided": "310 hrs",
-                "estimated_value": "$9,300",
-                "net_benefit": "$2,760",
-                "quality_guardrail": "Grounding ≥ 95%",
-            },
-        ]
-
-        return AiEconomicsResponse(
-            kpis=kpis,
-            token_consumption_by_model=token_by_model,
-            token_cost_drivers=token_drivers,
-            model_economics=model_econ,
-            serving_endpoints=endpoints,
-            genie_scorecard=genie_scorecard,
-            agents=agents,
-            training=training,
-            unit_economics=unit_economics,
-        )
-
-    def get_data_storage(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> DataStorageResponse:
-        """Produce the Data & Storage module linked with live discovered Unity Catalog catalogs."""
-        self.validate_scope(workspace_id)
-        cats = self._get_workspace_assets(connection_id)
-        uc_res = cats.get("catalog", []) + cats.get("unity_catalog", [])
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "storage_spend": self._build_empty_kpi(
-                    "storage_spend",
-                    "USD",
-                    "USD",
-                    "ADLS Gen2 Storage",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "total_stored_data": self._build_empty_kpi(
-                    "total_stored_data",
-                    "TB",
-                    None,
-                    "Unity Catalog",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "cold_data": self._build_empty_kpi(
-                    "cold_data",
-                    "TB",
-                    None,
-                    "Access Analysis",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "ingestion_spend": self._build_empty_kpi(
-                    "ingestion_spend",
-                    "USD",
-                    "USD",
-                    "Lakeflow Ingestion",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return DataStorageResponse(
-                kpis=kpis,
-                storage_tiers=[],
-                lifecycle_opportunities=[],
-                tables=[],
-            )
-
-        tables = []
-        if uc_res:
-            for item in uc_res:
-                tables.append(
-                    StorageInventoryItem(
-                        catalog_schema_table=f"{item.name}.default.fact_table",
-                        storage_type="Managed Delta",
-                        size="82 TB" if item.name == "samples" else "26 TB",
-                        last_read="Today",
-                        retention="7 years" if item.name != "samples" else "30 days",
-                        growth_month="4.2 TB",
-                        monthly_cost=2460.0 if item.name == "samples" else 780.0,
-                        recommendation="Keep" if item.name != "samples" else "Tune retention",
-                    )
-                )
-        if not tables:
-            tables = [
-                StorageInventoryItem(
-                    catalog_schema_table="samples.tpch.orders",
-                    storage_type="Managed Delta",
-                    size="82 TB",
-                    last_read="Today",
-                    retention="7 years",
-                    growth_month="4.2 TB",
-                    monthly_cost=2460.0,
-                    recommendation="Keep",
-                ),
-                StorageInventoryItem(
-                    catalog_schema_table="deaccelerator.pipeline.bronze",
-                    storage_type="External Delta",
-                    size="26 TB",
-                    last_read="143 days ago",
-                    retention="Unlimited",
-                    growth_month="0.8 TB",
-                    monthly_cost=780.0,
-                    recommendation="Lifecycle policy",
-                ),
-                StorageInventoryItem(
-                    catalog_schema_table="system.billing.usage",
-                    storage_type="System Delta",
-                    size="8 TB",
-                    last_read="Today",
-                    retention="365 days",
-                    growth_month="0.2 TB",
-                    monthly_cost=240.0,
-                    recommendation="Keep",
-                ),
-            ]
-
-        kpis = {
-            "storage_spend": KpiMetric(
-                value=18950.0,
-                formatted_value="$18,950",
-                unit="USD",
-                currency="USD",
-                metric_id="storage_spend",
-                change_percentage=2.0,
-                delta_label="+2.0%",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="ADLS Gen2 Storage Consumption",
-                source="ADLS Gen2 Storage Consumption",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(adls_capacity_charges + read_write_operations)",
-            ),
-            "total_stored_data": KpiMetric(
-                value=482.0,
-                formatted_value="482 TB",
-                unit="TB",
-                currency=None,
-                metric_id="total_stored_data",
-                delta_label="Across managed & external",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="Unity Catalog Storage Metadata",
-                source="Unity Catalog Storage Metadata",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(table_storage_bytes) / 10^12",
-            ),
-            "cold_data": KpiMetric(
-                value=116.0,
-                formatted_value="116 TB",
-                unit="TB",
-                currency=None,
-                metric_id="cold_data",
-                change_percentage=24.0,
-                delta_label="24% of footprint",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Access Frequency Analysis",
-                source="Access Frequency Analysis",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(bytes WHERE last_read > 90_days)",
-            ),
-            "ingestion_spend": KpiMetric(
-                value=8420.0,
-                formatted_value="$8,420",
-                unit="USD",
-                currency="USD",
-                metric_id="ingestion_spend",
-                delta_label="Pipelines & connectors",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="Lakeflow Ingestion Meters",
-                source="Lakeflow Ingestion Meters",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(dlt_ingestion_compute_cost)",
-            ),
-        }
-
-        storage_tiers = [
-            {"tier": "Hot Managed Delta", "share": 0.46, "tb": 221},
-            {"tier": "Cool External Delta", "share": 0.28, "tb": 135},
-            {"tier": "Archive / Stale", "share": 0.16, "tb": 77},
-            {"tier": "Snapshots / Backups", "share": 0.10, "tb": 49},
-        ]
-
-        lifecycle_ops = [
-            {"opportunity": "Tables Not Queried in 90 Days", "metric": "1,284"},
-            {"opportunity": "Duplicate / Redundant Datasets", "metric": "18.6 TB"},
-            {"opportunity": "Expired Snapshots / Artifacts", "metric": "6.2 TB"},
-            {"opportunity": "Over-retained Non-production Data", "metric": "42 TB"},
-            {"opportunity": "Potential Monthly Savings", "metric": "$3,180"},
-        ]
-
-        return DataStorageResponse(
-            kpis=kpis,
-            storage_tiers=storage_tiers,
-            lifecycle_opportunities=lifecycle_ops,
-            tables=tables,
-        )
-
-    def get_network_cloud(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> NetworkCloudResponse:
-        """Produce the Network & Cloud Infrastructure module (Azure only) with scope filtering."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "network_infra_spend": self._build_empty_kpi(
-                    "network_infra_spend",
-                    "USD",
-                    "USD",
-                    "Azure Cost Export",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "data_egress": self._build_empty_kpi(
-                    "data_egress",
-                    "TB",
-                    None,
-                    "Azure Network Watcher",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "private_endpoints": self._build_empty_kpi(
-                    "private_endpoints",
-                    "endpoints",
-                    None,
-                    "ARM",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "unmapped_resources": self._build_empty_kpi(
-                    "unmapped_resources",
-                    "resources",
-                    None,
-                    "Governance Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return NetworkCloudResponse(kpis=kpis, components=[])
-
-        kpis = {
-            "network_infra_spend": KpiMetric(
-                value=28420.0,
-                formatted_value="$28,420",
-                unit="USD",
-                currency="USD",
-                metric_id="network_infra_spend",
-                change_percentage=6.8,
-                delta_label="+6.8%",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Azure Subscription Cost Export",
-                source="Azure Subscription Cost Export",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="egress_spend + private_endpoint_spend + monitoring_spend",
-            ),
-            "data_egress": KpiMetric(
-                value=42.8,
-                formatted_value="42.8 TB",
-                unit="TB",
-                currency=None,
-                metric_id="data_egress",
-                delta_label="Cross-region & internet",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="Azure Network Watcher",
-                source="Azure Network Watcher",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(egress_bytes) / 10^12",
-            ),
-            "private_endpoints": KpiMetric(
-                value=38.0,
-                formatted_value="38",
-                unit="endpoints",
-                currency=None,
-                metric_id="private_endpoints",
-                delta_label="Provisioned resources",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Azure Resource Manager",
-                source="Azure Resource Manager",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(private_endpoints)",
-            ),
-            "unmapped_resources": KpiMetric(
-                value=16.0,
-                formatted_value="16",
-                unit="resources",
-                currency=None,
-                metric_id="unmapped_resources",
-                delta_label="Owner mapping required",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Governance Engine",
-                source="FinOps Governance Engine",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(resources_without_tags)",
-            ),
-        }
-
-        components = [
-            CloudInfrastructureItem(
-                provider="Azure",
-                service="ADLS Gen2",
-                resource="stproddata01",
-                region="East US",
-                usage_driver="Storage + transactions",
-                cost_mtd=8420.0,
-                allocation="Shared",
-                opportunity="Tiering",
-            ),
-            CloudInfrastructureItem(
-                provider="Azure",
-                service="Bandwidth",
-                resource="Cross-region egress",
-                region="Multi-region",
-                usage_driver="42.8 TB",
-                cost_mtd=4820.0,
-                allocation="Data Platform",
-                opportunity="Reduce movement",
-            ),
-            CloudInfrastructureItem(
-                provider="Azure",
-                service="Private Link",
-                resource="38 endpoints",
-                region="East US",
-                usage_driver="Endpoint hours + data",
-                cost_mtd=2180.0,
-                allocation="Shared",
-                opportunity="Review unused",
-            ),
-            CloudInfrastructureItem(
-                provider="Azure",
-                service="Log Analytics",
-                resource="law-prod",
-                region="East US",
-                usage_driver="Ingestion GB",
-                cost_mtd=3240.0,
-                allocation="Cloud Ops",
-                opportunity="Tune retention",
-            ),
-        ]
-
-        return NetworkCloudResponse(kpis=kpis, components=components)
-
-    def get_optimization_advisor(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> OptimizationAdvisorResponse:
-        """Produce Optimization Advisor recommendations with live state and dynamic savings sum."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "potential_savings": self._build_empty_kpi(
-                    "potential_savings",
-                    "USD",
-                    "USD",
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "estimated_savings": self._build_empty_kpi(
-                    "estimated_savings",
-                    "USD",
-                    "USD",
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "approved_savings": self._build_empty_kpi(
-                    "approved_savings",
-                    "USD",
-                    "USD",
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "quick_wins": self._build_empty_kpi(
-                    "quick_wins",
-                    "items",
-                    None,
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "awaiting_approval": self._build_empty_kpi(
-                    "awaiting_approval",
-                    "items",
-                    None,
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "implemented_savings": self._build_empty_kpi(
-                    "implemented_savings",
-                    "USD",
-                    "USD",
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "realized_savings": self._build_empty_kpi(
-                    "realized_savings",
-                    "USD",
-                    "USD",
-                    "FinOps Advisor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return OptimizationAdvisorResponse(kpis=kpis, recommendations=[])
-
-        decisions = self._get_decisions(resource_id, resource_type)
-        approved_savings_val = sum(d.estimated_savings_monthly for d in decisions)
-        potential_savings_val = 31340.0 if not resource_id else approved_savings_val
-        estimated_savings_val = 31280.0 if not resource_id else approved_savings_val
-
-        kpis = {
-            "potential_savings": KpiMetric(
-                value=potential_savings_val,
-                formatted_value=f"${potential_savings_val:,.0f}",
-                unit="USD",
-                currency="USD",
-                metric_id="potential_savings",
-                delta_label=f"{(potential_savings_val / 284620.0) * 100:.1f}% of spend (Unconstrained upper bound)"
-                if not resource_id
-                else "Filtered resource opportunity",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Advisor Heuristics",
-                source="FinOps Advisor",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(all_detected_anomalies_and_waste_candidates)",
-                record_count=len(decisions),
-                limitations="Theoretical unconstrained upper bound before operational change-control filtering.",
-            ),
-            "estimated_savings": KpiMetric(
-                value=estimated_savings_val,
-                formatted_value=f"${estimated_savings_val:,.0f}",
-                unit="USD",
-                currency="USD",
-                metric_id="estimated_savings",
-                delta_label="Actionable heuristic opportunity",
-                is_favorable=True,
-                status=KpiStatus.ESTIMATED,
-                data_source="FinOps Advisor Heuristics",
-                source="FinOps Advisor",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(actionable_heuristic_opportunities)",
-                record_count=len(decisions),
-                limitations="Heuristic model estimation before individual workload constraint modeling.",
-            ),
-            "approved_savings": KpiMetric(
-                value=approved_savings_val,
-                formatted_value=f"${approved_savings_val:,.0f}",
-                unit="USD",
-                currency="USD",
-                metric_id="approved_savings",
-                delta_label=f"{(approved_savings_val / 284620.0) * 100:.1f}% of spend (5 Staged Initiatives)",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Advisor Decisions",
-                source="FinOps Advisor",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(staged_recommendations.estimated_savings_monthly)",
-                record_count=len(decisions),
-                limitations="Actionable initiatives qualified with confirmed technical feasibility.",
-            ),
-            "quick_wins": KpiMetric(
-                value=float(len([d for d in decisions if d.effort == "Low"])),
-                formatted_value=str(len([d for d in decisions if d.effort == "Low"])),
-                unit="items",
-                currency=None,
-                metric_id="quick_wins",
-                delta_label="Low effort, low risk",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Advisor",
-                source="FinOps Advisor",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(recommendations WHERE effort = 'Low')",
-            ),
-            "awaiting_approval": KpiMetric(
-                value=float(
-                    len([d for d in decisions if "Approval" in d.status or "New" in d.status])
-                ),
-                formatted_value=str(
-                    len([d for d in decisions if "Approval" in d.status or "New" in d.status])
-                ),
-                unit="items",
-                currency=None,
-                metric_id="awaiting_approval",
-                delta_label="Change control required",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Advisor",
-                source="FinOps Advisor",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(recommendations WHERE status = 'Approval required')",
-            ),
-            "implemented_savings": KpiMetric(
-                value=0.0,
-                formatted_value="$0.00",
-                unit="USD",
-                currency="USD",
-                metric_id="implemented_savings",
-                delta_label="Strictly $0.00 under Zero-Execution policy",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Governance Engine",
-                source="FinOps Governance Engine",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(implemented_recommendations.actual_savings) [strictly $0.00]",
-                record_count=0,
-                limitations="Platform enforces 100% read-only zero-execution; no cloud changes applied automatically.",
-            ),
-            "realized_savings": KpiMetric(
-                value=0.0,
-                formatted_value="$0.00",
-                unit="USD",
-                currency="USD",
-                metric_id="realized_savings",
-                delta_label="Pending post-implementation audit",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Billing Audit",
-                source="FinOps Billing Audit",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(verified_post_audit_telemetry) [strictly $0.00 until audited]",
-                record_count=0,
-                limitations="Realized savings require post-implementation billing verification.",
-            ),
-        }
-        return OptimizationAdvisorResponse(kpis=kpis, recommendations=decisions)
-
-    def simulate_forecast_scenario(
-        self, req: ScenarioSimulationRequest
-    ) -> ScenarioSimulationResponse:
-        """Calculate dynamic month-end spend scenario based on slider assumptions."""
-        base = 319500.0
-        result = (
-            base * (1.0 + req.growth_pct / 100.0)
-            - (91420.0 * req.compute_save_pct / 100.0)
-            - (38460.0 * req.token_save_pct / 100.0)
-        )
-        savings = base - result
-        diff_budget = 300000.0 - result
-        is_favorable = diff_budget >= 0
-        delta_label = (
-            f"Under budget by ${abs(round(diff_budget)):,}"
-            if is_favorable
-            else f"Over budget by ${abs(round(diff_budget)):,}"
-        )
-
-        return ScenarioSimulationResponse(
-            baseline_spend=base,
-            adjusted_spend=round(result),
-            formatted_spend=f"${round(result):,}",
-            savings_vs_baseline=round(savings),
-            delta_label=delta_label,
-            is_favorable=is_favorable,
-            budget_variance=round(diff_budget),
-        )
-
-    def get_forecast_budgets(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> ForecastBudgetsResponse:
-        """Produce the Forecast & Budgets module with simulator defaults and scope filtering."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "approved_budget": self._build_empty_kpi(
-                    "approved_budget",
-                    "USD",
-                    "USD",
-                    "Finance Registry",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "actual_mtd": self._build_empty_kpi(
-                    "actual_mtd",
-                    "USD",
-                    "USD",
-                    "Databricks Billing",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "forecast_month_end": self._build_empty_kpi(
-                    "forecast_month_end",
-                    "USD",
-                    "USD",
-                    "Forecasting Model",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "forecast_confidence": self._build_empty_kpi(
-                    "forecast_confidence",
-                    "%",
-                    None,
-                    "Statistical Fit",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "forecast_accuracy": self._build_empty_kpi(
-                    "forecast_accuracy",
-                    "MAPE",
-                    None,
-                    "Forecasting Model Benchmark",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "budget_utilization": self._build_empty_kpi(
-                    "budget_utilization",
-                    "%",
-                    None,
-                    "Finance Registry",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "projected_overrun": self._build_empty_kpi(
-                    "projected_overrun",
-                    "USD",
-                    "USD",
-                    "Forecasting Model",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return ForecastBudgetsResponse(
-                kpis=kpis,
-                budget_burn=[],
-                budget_controls=[],
-                default_scenario=ScenarioSimulationResponse(
-                    baseline_spend=0,
-                    adjusted_spend=0,
-                    formatted_spend="$0",
-                    savings_vs_baseline=0,
-                    delta_label="No data",
-                    is_favorable=True,
-                    budget_variance=0,
-                ),
-            )
-
-        kpis = {
-            "approved_budget": KpiMetric(
-                value=300000.0,
-                formatted_value="$300,000",
-                unit="USD",
-                currency="USD",
-                metric_id="approved_budget",
-                delta_label="Organization baseline",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Finance Budget Registry",
-                source="Finance Budget Registry",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="allocated_monthly_budget",
-            ),
-            "actual_mtd": KpiMetric(
-                value=284620.0 if not resource_id else 42180.0,
-                formatted_value="$284,620" if not resource_id else "$42,180",
-                unit="USD",
-                currency="USD",
-                metric_id="actual_mtd",
-                delta_label="94.9% consumed",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Azure Databricks Billing",
-                source="Azure Databricks Billing",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(mtd_consumption_cost)",
-            ),
-            "forecast_month_end": KpiMetric(
-                value=319500.0 if not resource_id else 48000.0,
-                formatted_value="$319,500" if not resource_id else "$48,000",
-                unit="USD",
-                currency="USD",
-                metric_id="forecast_month_end",
-                change_absolute=19500.0 if not resource_id else 3000.0,
-                delta_label="$19,500 over budget" if not resource_id else "$3,000 over budget",
-                is_favorable=False,
-                status=KpiStatus.ESTIMATED,
-                data_source="Forecasting Model",
-                source="Forecasting Model",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="PROJECTION",
-                formula="round(mtd_actual * (30.0 / 26.7236), -2) [raw: $319,515.33, nearest $100 presentation: $319,500.00 against $300,000 budget]"
-                if not resource_id
-                else "mtd_actual + projected_run_rate",
-                limitations="Month-to-date spend $284,620 extrapolated at current 26.7236-day velocity to unrounded $319,515.33, rounded to nearest $100 milestone $319,500 (+$19,500 over $300,000 approved budget)."
-                if not resource_id
-                else None,
-            ),
-            "forecast_confidence": KpiMetric(
-                value=87.0,
-                formatted_value="87%",
-                unit="%",
-                currency=None,
-                metric_id="forecast_confidence",
-                delta_label="Confidence interval: ±3.4%",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Statistical Fit",
-                source="Statistical Fit",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="STATISTICAL",
-                formula="r_squared_fit_score",
-            ),
-            "forecast_accuracy": KpiMetric(
-                value=None,
-                formatted_value="NOT AVAILABLE",
-                unit="MAPE",
-                currency=None,
-                metric_id="forecast_accuracy",
-                delta_label="Requires min. 3 completed monthly billing cycles",
-                is_favorable=None,
-                status=KpiStatus.UNAVAILABLE,
-                data_source="Forecasting Model Benchmark",
-                source="Forecasting Model Benchmark",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="MAPE",
-                formula="mean_absolute_percentage_error",
-                limitations="Insufficient 90-day continuous historical actuals. Minimum 3 completed billing cycles required to certify MAPE accuracy.",
-            ),
-            "budget_utilization": KpiMetric(
-                value=94.9,
-                formatted_value="94.9%",
-                unit="%",
-                currency=None,
-                metric_id="budget_utilization",
-                delta_label="MTD burn vs $300,000 baseline",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Finance Budget Registry",
-                source="Finance Budget Registry",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="RATIO",
-                formula="(actual_mtd / approved_budget) * 100",
-            ),
-            "projected_overrun": KpiMetric(
-                value=19500.0 if not resource_id else 3000.0,
-                formatted_value="+$19,500" if not resource_id else "+$3,000",
-                unit="USD",
-                currency="USD",
-                metric_id="projected_overrun",
-                delta_label="6.5% over approved budget",
-                is_favorable=False,
-                status=KpiStatus.ESTIMATED,
-                data_source="Forecasting Model",
-                source="Forecasting Model",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="DIFF",
-                formula="forecast_month_end - approved_budget",
-            ),
-        }
-
-        budget_burn = [
-            {"day": f"Day {i}", "actual": (i * 14200), "budget": (i * 10000)} for i in range(1, 21)
-        ]
-
-        budget_controls = [
-            BudgetControlItem(
-                budget_scope="Organization",
-                owner="FinOps",
-                budget=300000.0,
-                actual=284620.0,
-                forecast=319500.0,
-                threshold="80 / 90 / 100%",
-                burn_pct=95,
-                status="Forecast breach",
-            ),
-            BudgetControlItem(
-                budget_scope="AI & GenAI",
-                owner="AI COE",
-                budget=42000.0,
-                actual=38460.0,
-                forecast=45200.0,
-                threshold="80 / 90 / 100%",
-                burn_pct=92,
-                status="At risk",
-            ),
-            BudgetControlItem(
-                budget_scope="Data Platform",
-                owner="Data Engineering",
-                budget=110000.0,
-                actual=92400.0,
-                forecast=103000.0,
-                threshold="80 / 90 / 100%",
-                burn_pct=84,
-                status="On track",
-            ),
-        ]
-
-        default_scenario = self.simulate_forecast_scenario(ScenarioSimulationRequest())
-
-        return ForecastBudgetsResponse(
-            kpis=kpis,
-            budget_burn=budget_burn,
-            budget_controls=budget_controls,
-            default_scenario=default_scenario,
-        )
-
-    def get_anomaly_detection(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> AnomalyDetectionResponse:
-        """Produce the Anomaly Detection queue and metrics with scope filtering."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "open_anomalies": self._build_empty_kpi(
-                    "open_anomalies",
-                    "items",
-                    None,
-                    "Anomaly Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "potential_exposure": self._build_empty_kpi(
-                    "potential_exposure",
-                    "USD",
-                    "USD",
-                    "Exposure Calculator",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "mean_time_to_detect": self._build_empty_kpi(
-                    "mean_time_to_detect",
-                    "min",
-                    None,
-                    "Latency Monitor",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "auto_triaged": self._build_empty_kpi(
-                    "auto_triaged",
-                    "%",
-                    None,
-                    "Triage Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return AnomalyDetectionResponse(kpis=kpis, anomalies=[])
-
-        anomalies = self._get_anomalies(resource_id, resource_type)
-        open_count = float(len(anomalies))
-
-        kpis = {
-            "open_anomalies": KpiMetric(
-                value=open_count,
-                formatted_value=str(int(open_count)),
-                unit="items",
-                currency=None,
-                metric_id="open_anomalies",
-                delta_label=f"{int(open_count)} anomalies detected in scope",
-                is_favorable=open_count == 0,
-                status=KpiStatus.BASELINE,
-                data_source="Anomaly Engine",
-                source="Anomaly Engine",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(open_anomalies)",
-                record_count=len(anomalies),
-            ),
-            "potential_exposure": KpiMetric(
-                value=9840.0 if not resource_id else 760.0 * 30,
-                formatted_value="$9,840" if not resource_id else f"${(760.0 * 30):,.0f}",
-                unit="USD",
-                currency="USD",
-                metric_id="potential_exposure",
-                delta_label="Projected monthly impact",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Exposure Calculator",
-                source="Exposure Calculator",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(anomaly.estimated_daily_impact * 30)",
-            ),
-            "mean_time_to_detect": KpiMetric(
-                value=18.0,
-                formatted_value="18 min",
-                unit="min",
-                currency=None,
-                metric_id="mean_time_to_detect",
-                delta_label="Target under 30 min",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Telemetry Latency Monitor",
-                source="Telemetry Latency Monitor",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="AVG",
-                formula="avg(detection_time - event_time)",
-            ),
-            "auto_triaged": KpiMetric(
-                value=86.0,
-                formatted_value="86%",
-                unit="%",
-                currency=None,
-                metric_id="auto_triaged",
-                delta_label="Rules + statistical signals",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Triage Engine",
-                source="Triage Engine",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="RATIO",
-                formula="auto_triaged_count / total_detected",
-            ),
-        }
-
-        return AnomalyDetectionResponse(kpis=kpis, anomalies=anomalies)
-
-    def get_governance_policies(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> GovernancePoliciesResponse:
-        """Produce the Governance & Policies module with scope filtering."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "policy_compliance": self._build_empty_kpi(
-                    "policy_compliance",
-                    "%",
-                    None,
-                    "Policy Audit",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "policy_violations": self._build_empty_kpi(
-                    "policy_violations",
-                    "violations",
-                    None,
-                    "Compliance Scanner",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "resources_without_owner": self._build_empty_kpi(
-                    "resources_without_owner",
-                    "resources",
-                    None,
-                    "Tag Analyzer",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "expiring_exceptions": self._build_empty_kpi(
-                    "expiring_exceptions",
-                    "exceptions",
-                    None,
-                    "Exception Registry",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return GovernancePoliciesResponse(
-                kpis=kpis,
-                policies=[],
-                checklist=[],
-                workflow_steps=[],
-            )
-
-        kpis = {
-            "policy_compliance": KpiMetric(
-                value=94.2,
-                formatted_value="94.2%",
-                unit="%",
-                currency=None,
-                metric_id="policy_compliance",
-                delta_label="+2.1 pts",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Policy Audit Engine",
-                source="Policy Audit Engine",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="RATIO",
-                formula="compliant_resources / total_evaluated_resources",
-            ),
-            "policy_violations": KpiMetric(
-                value=18.0 if not resource_id else 1.0,
-                formatted_value="18" if not resource_id else "1",
-                unit="violations",
-                currency=None,
-                metric_id="policy_violations",
-                delta_label="6 unresolved" if not resource_id else "Auto-stop breach",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Compliance Scanner",
-                source="Compliance Scanner",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(active_policy_violations)",
-            ),
-            "resources_without_owner": KpiMetric(
-                value=16.0 if not resource_id else 0.0,
-                formatted_value="16" if not resource_id else "0",
-                unit="resources",
-                currency=None,
-                metric_id="resources_without_owner",
-                delta_label="Tagging gaps",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Tag Completeness Analyzer",
-                source="Tag Completeness Analyzer",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(resources WHERE owner_tag IS NULL)",
-            ),
-            "expiring_exceptions": KpiMetric(
-                value=5.0 if not resource_id else 0.0,
-                formatted_value="5" if not resource_id else "0",
-                unit="exceptions",
-                currency=None,
-                metric_id="expiring_exceptions",
-                delta_label="Next 14 days",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="Exception Registry",
-                source="Exception Registry",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(exceptions WHERE expiry_date <= now() + 14_days)",
-            ),
-        }
-
-        policies = [
-            PolicyCatalogueItem(
-                policy_name="Mandatory cost tags",
-                scope="All compute",
-                control="owner, cost_center, env",
-                enforcement="Prevent creation",
-                owner="Platform",
-                exceptions=2,
-                status="Active",
-            ),
-            PolicyCatalogueItem(
-                policy_name="Development compute cap",
-                scope="Non-prod clusters",
-                control="Max node / instance type",
-                enforcement="Restrict",
-                owner="Cloud Ops",
-                exceptions=4,
-                status="Active",
-            ),
-            PolicyCatalogueItem(
-                policy_name="Idle termination",
-                scope="Interactive compute",
-                control="Auto-stop ≤ 30 min",
-                enforcement="Enforce",
-                owner="Platform",
-                exceptions=3,
-                status="Partial",
-            ),
-            PolicyCatalogueItem(
-                policy_name="Model endpoint budget",
-                scope="AI serving",
-                control="Monthly cap by team",
-                enforcement="Alert + approval",
-                owner="AI COE",
-                exceptions=1,
-                status="Active",
-            ),
-            PolicyCatalogueItem(
-                policy_name="Production change approval",
-                scope="Production workloads",
-                control="Two-person approval",
-                enforcement="Workflow",
-                owner="Change Mgmt",
-                exceptions=0,
-                status="Active",
-            ),
-        ]
-
-        checklist = [
-            {
-                "label": "Mandatory cost-center, owner, application and environment tags",
-                "checked": True,
-            },
-            {"label": "Approved cluster policies and node-family restrictions", "checked": True},
-            {"label": "Idle termination and non-production operating schedules", "checked": True},
-            {"label": "Model endpoint budgets and request / token rate limits", "checked": True},
-            {"label": "Production changes require owner and budget approval", "checked": False},
-            {
-                "label": "Storage retention aligned to legal and business requirements",
-                "checked": True,
-            },
-            {"label": "Cloud billing export reconciled to provider invoice", "checked": True},
-            {
-                "label": "AI quality, latency and safety guardrails included in optimization",
-                "checked": True,
-            },
-        ]
-
-        steps = [
-            "1. Recommendation generated with evidence and estimated savings.",
-            "2. Technical owner validates performance, reliability and security impact.",
-            "3. Budget owner approves financial impact and implementation window.",
-            "4. Change is executed through approved deployment mechanism.",
-            "5. Actual savings and service-level impact are measured and audited.",
-        ]
-
-        return GovernancePoliciesResponse(
-            kpis=kpis,
-            policies=policies,
-            checklist=checklist,
-            workflow_steps=steps,
-        )
-
-    def get_showback_chargeback(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> ShowbackChargebackResponse:
-        """Produce the Showback & Chargeback statements with scope filtering."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-        now_iso = datetime.now(UTC).isoformat()
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "bu_billed": self._build_empty_kpi(
-                    "bu_billed",
-                    "BUs",
-                    None,
-                    "HR Cost Map",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "shared_pool": self._build_empty_kpi(
-                    "shared_pool",
-                    "USD",
-                    "USD",
-                    "Shared Pool Model",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "disputed_allocations": self._build_empty_kpi(
-                    "disputed_allocations",
-                    "disputes",
-                    None,
-                    "Dispute Workflow",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "statement_readiness": self._build_empty_kpi(
-                    "statement_readiness",
-                    "%",
-                    None,
-                    "Validation Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return ShowbackChargebackResponse(kpis=kpis, statements=[])
-
-        kpis = {
-            "bu_billed": KpiMetric(
-                value=12.0 if not resource_id else 1.0,
-                formatted_value="12" if not resource_id else "1",
-                unit="BUs",
-                currency=None,
-                metric_id="bu_billed",
-                delta_label="Across 4 cost centers",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="HR Cost Center Map",
-                source="HR Cost Center Map",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(distinct business_units)",
-            ),
-            "shared_pool": KpiMetric(
-                value=21600.0 if not resource_id else 0.0,
-                formatted_value="$21,600" if not resource_id else "$0",
-                unit="USD",
-                currency="USD",
-                metric_id="shared_pool",
-                delta_label="Allocated by usage drivers",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="Shared Pool Model",
-                source="Shared Pool Model",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="SUM",
-                formula="sum(shared_infrastructure_costs)",
-            ),
-            "disputed_allocations": KpiMetric(
-                value=3.0 if not resource_id else 0.0,
-                formatted_value="3" if not resource_id else "0",
-                unit="disputes",
-                currency=None,
-                metric_id="disputed_allocations",
-                delta_label="Needs review",
-                is_favorable=False,
-                status=KpiStatus.BASELINE,
-                data_source="Dispute Workflow",
-                source="Dispute Workflow",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(open_chargeback_disputes)",
-            ),
-            "statement_readiness": KpiMetric(
-                value=96.0,
-                formatted_value="96%",
-                unit="%",
-                currency=None,
-                metric_id="statement_readiness",
-                delta_label="Ready for close",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Financial Close Validation",
-                source="Financial Close Validation",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="RATIO",
-                formula="reconciled_statement_lines / total_statement_lines",
-            ),
-        }
-
-        statements = [
-            ChargebackStatementItem(
-                business_unit="Finance",
-                direct_compute=18420.0,
-                ai_tokens=8640.0,
-                storage=2180.0,
-                shared_allocation=3240.0,
-                total=32480.0,
-                budget_variance="+8.2%",
-                trend="↑",
-            ),
-            ChargebackStatementItem(
-                business_unit="Supply Chain",
-                direct_compute=24600.0,
-                ai_tokens=6660.0,
-                storage=3420.0,
-                shared_allocation=4820.0,
-                total=39500.0,
-                budget_variance="-2.1%",
-                trend="→",
-            ),
-            ChargebackStatementItem(
-                business_unit="Sales & Marketing",
-                direct_compute=14820.0,
-                ai_tokens=9240.0,
-                storage=1820.0,
-                shared_allocation=2460.0,
-                total=28340.0,
-                budget_variance="+12.4%",
-                trend="↑",
-            ),
-            ChargebackStatementItem(
-                business_unit="Data & AI Platform",
-                direct_compute=42180.0,
-                ai_tokens=8420.0,
-                storage=6240.0,
-                shared_allocation=8420.0,
-                total=65260.0,
-                budget_variance="-1.4%",
-                trend="→",
-            ),
-        ]
-
-        return ShowbackChargebackResponse(kpis=kpis, statements=statements)
-
-    def get_workload_economics(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> WorkloadEconomicsResponse:
-        """Produce the Workload Economics module with scope filtering."""
-        self.validate_scope(workspace_id)
-        cats = self._get_workspace_assets(connection_id)
-        apps_res = cats.get("app", []) + cats.get("apps", [])
-        now_iso = datetime.now(UTC).isoformat()
-        app_names = [a.name for a in apps_res] if apps_res else ["cement-demand-forecasting"]
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            kpis = {
-                "tracked_workloads": self._build_empty_kpi(
-                    "tracked_workloads",
-                    "workloads",
-                    None,
-                    "Workload Lineage Tracker",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "unit_metrics_coverage": self._build_empty_kpi(
-                    "unit_metrics_coverage",
-                    "workloads",
-                    None,
-                    "Unit Cost Normalizer",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "avg_cost_workload": self._build_empty_kpi(
-                    "avg_cost_workload",
-                    "USD",
-                    "USD",
-                    "FinOps Cost Engine",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-                "value_positive": self._build_empty_kpi(
-                    "value_positive",
-                    "workloads",
-                    None,
-                    "ROI Evaluation Model",
-                    resource_id=resource_id,
-                    resource_type=resource_type,
-                ),
-            }
-            return WorkloadEconomicsResponse(kpis=kpis, workloads=[])
-
-        workloads = [
-            WorkloadUnitEconomicsItem(
-                workload="Customer 360",
-                workload_type="Data pipeline",
-                owner="Data Eng",
-                monthly_spend=8420.0,
-                volume="2.0B records",
-                unit_cost="$4.21 / M records",
-                sla_quality="99.8% on-time",
-                business_outcome="Customer data availability",
-                efficiency_trend="Improving",
-            ),
-            WorkloadUnitEconomicsItem(
-                workload=app_names[0] if app_names else "Demand Forecast",
-                workload_type="Databricks App / ML",
-                owner="Supply Chain",
-                monthly_spend=12840.0,
-                volume="4,200 forecasts",
-                unit_cost="$3.06 / forecast",
-                sla_quality="MAPE 8.2%",
-                business_outcome="Inventory optimization",
-                efficiency_trend="Flat",
-            ),
-            WorkloadUnitEconomicsItem(
-                workload="Support Assistant",
-                workload_type="GenAI Agent",
-                owner="Customer Ops",
-                monthly_spend=6660.0,
-                volume="82,400 sessions",
-                unit_cost="$0.081 / session",
-                sla_quality="94.2% success",
-                business_outcome="5,800 hrs avoided",
-                efficiency_trend="Improving",
-            ),
-            WorkloadUnitEconomicsItem(
-                workload="Finance Genie",
-                workload_type="BI / Conversational",
-                owner="Finance",
-                monthly_spend=5420.0,
-                volume="32,400 questions",
-                unit_cost="$0.167 / question",
-                sla_quality="96% answer rate",
-                business_outcome="Self-service analytics",
-                efficiency_trend="Review",
-            ),
-        ]
-
-        kpis = {
-            "tracked_workloads": KpiMetric(
-                value=84.0 if not resource_id else 1.0,
-                formatted_value="84" if not resource_id else "1",
-                unit="workloads",
-                currency=None,
-                metric_id="tracked_workloads",
-                delta_label="Data, BI, ML and GenAI",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Workload Lineage Tracker",
-                source="Workload Lineage Tracker",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(registered_workloads)",
-            ),
-            "unit_metrics_coverage": KpiMetric(
-                value=62.0 if not resource_id else 1.0,
-                formatted_value="62" if not resource_id else "1",
-                unit="workloads",
-                currency=None,
-                metric_id="unit_metrics_coverage",
-                delta_label="74% coverage",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="Unit Cost Normalizer",
-                source="Unit Cost Normalizer",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(workloads_with_unit_cost)",
-            ),
-            "avg_cost_workload": KpiMetric(
-                value=2105.0 if not resource_id else 1240.0,
-                formatted_value="$2,105" if not resource_id else "$1,240",
-                unit="USD",
-                currency="USD",
-                metric_id="avg_cost_workload",
-                delta_label="Monthly average",
-                is_favorable=None,
-                status=KpiStatus.BASELINE,
-                data_source="FinOps Cost Engine",
-                source="FinOps Cost Engine",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="AVG",
-                formula="total_workload_spend / count(workloads)",
-            ),
-            "value_positive": KpiMetric(
-                value=78.0 if not resource_id else 1.0,
-                formatted_value="78" if not resource_id else "1",
-                unit="workloads",
-                currency=None,
-                metric_id="value_positive",
-                delta_label="93% of tracked",
-                is_favorable=True,
-                status=KpiStatus.BASELINE,
-                data_source="ROI Evaluation Model",
-                source="ROI Evaluation Model",
-                workspace_id="642006393507276",
-                resource_type=resource_type,
-                resource_id=resource_id,
-                last_refreshed=now_iso,
-                aggregation_method="COUNT",
-                formula="count(workloads WHERE net_benefit > 0)",
-            ),
-        }
-
-        return WorkloadEconomicsResponse(kpis=kpis, workloads=workloads)
-
-    def get_reports_audit(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> ReportsAuditResponse:
-        """Produce available report packs and actual audit event history with scope filtering."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            return ReportsAuditResponse(report_packs=[], audit_events=[])
-
-        packs = [
-            ReportPackItem(
-                report_id="rep-exec",
-                title="Executive FinOps Pack",
-                subtitle="Spend, forecast, savings, budget variance and decisions.",
-                format="CSV, PDF",
-            ),
-            ReportPackItem(
-                report_id="rep-ai",
-                title="AI Unit Economics",
-                subtitle="Model, tokens, endpoints, agents, cost per task and quality.",
-                format="CSV",
-            ),
-            ReportPackItem(
-                report_id="rep-opt",
-                title="Optimization Realization",
-                subtitle="Approved actions, realized savings and service impact.",
-                format="CSV",
-            ),
-            ReportPackItem(
-                report_id="rep-cloud",
-                title="Cloud Reconciliation",
-                subtitle="Databricks usage versus Azure billing invoices.",
-                format="CSV",
-            ),
-            ReportPackItem(
-                report_id="rep-alloc",
-                title="Allocation & Chargeback",
-                subtitle="Cost center statements and shared-cost methodology.",
-                format="CSV",
-            ),
-            ReportPackItem(
-                report_id="rep-gov",
-                title="Policy Compliance",
-                subtitle="Tagging, policy exceptions, approvals and audit trail.",
-                format="CSV",
-            ),
-        ]
-        return ReportsAuditResponse(report_packs=packs, audit_events=self._audit_events)
-
-    def get_settings_integrations(
-        self,
-        connection_id: str = "databricks-azure-dev",
-        workspace_id: str | None = None,
-        resource_id: str | None = None,
-        resource_type: str | None = None,
-    ) -> SettingsIntegrationsResponse:
-        """Produce the Settings & Integrations view including verified System Tables readiness."""
-        self.validate_scope(workspace_id)
-        _ = connection_id
-
-        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
-
-        if is_unknown:
-            return SettingsIntegrationsResponse(
-                connected_sources=[],
-                pipeline_health=[],
-                rate_cards=[],
-                system_tables_readiness={},
-            )
-
-        sources = [
-            ConnectedSourceItem(
-                source_name="Azure Databricks System Tables",
-                status="Connected",
-                last_verified="Live Metadata Verified",
-                details="system.billing, system.compute, system.serving, system.lakeflow schemas present",
-            ),
-            ConnectedSourceItem(
-                source_name="Azure Cost Management Export",
-                status="Connected",
-                last_verified="Today 10:15 UTC",
-                details="Daily subscription amortized and actual cost dataset",
-            ),
-            ConnectedSourceItem(
-                source_name="Model / Token Telemetry",
-                status="Connected",
-                last_verified="Live Endpoints Discovered",
-                details="27 endpoints discovered via Databricks Model Serving API",
-            ),
-            ConnectedSourceItem(
-                source_name="Identity & HR Cost-Center Map",
-                status="Connected",
-                last_verified="Today 08:00 UTC",
-                details="Directory sync active for 12 business units and 4 cost centers",
-            ),
-        ]
-
-        pipeline_health = [
-            PipelineHealthMetric(
-                metric_name="Billing Ingestion Cadence", metric_value="Every 30 minutes"
-            ),
-            PipelineHealthMetric(metric_name="Usage Event Latency p95", metric_value="18 minutes"),
-            PipelineHealthMetric(
-                metric_name="Last Successful Reconciliation", metric_value="Today 10:15 UTC"
-            ),
-            PipelineHealthMetric(
-                metric_name="Unmatched SKU Records", metric_value="0 (100% matched)"
-            ),
-            PipelineHealthMetric(metric_name="Missing Tags Ratio", metric_value="4.8%"),
-            PipelineHealthMetric(
-                metric_name="Currency Conversion Engine",
-                metric_value="Daily European Central Bank FX",
-            ),
-        ]
-
-        rate_cards = [
-            RateCardItem(
-                provider="Databricks",
-                sku_family="Jobs Compute",
-                region="East US",
-                list_rate="$0.30 / DBU",
-                contract_rate="$0.24 / DBU",
-                discount="20%",
-                effective_date="01 Nov 2026",
-                source="Enterprise Agreement",
-            ),
-            RateCardItem(
-                provider="Databricks",
-                sku_family="SQL Serverless",
-                region="East US",
-                list_rate="$0.70 / DBU",
-                contract_rate="$0.56 / DBU",
-                discount="20%",
-                effective_date="01 Nov 2026",
-                source="Enterprise Agreement",
-            ),
-            RateCardItem(
-                provider="Azure",
-                sku_family="Storage Hot LRS",
-                region="East US",
-                list_rate="Rate card",
-                contract_rate="Usage based",
-                discount="EA pricing",
-                effective_date="01 Nov 2026",
-                source="Cost Export",
-            ),
-        ]
-
-        system_tables_readiness = {
-            "catalog": "system",
-            "schemas_verified": [
-                "billing",
-                "compute",
-                "ai_gateway",
-                "serving",
-                "storage",
-                "access",
-                "lakeflow",
-                "query",
-            ],
-            "key_tables": [
-                {"name": "system.billing.usage", "columns_count": 18, "status": "VERIFIED_SCHEMA"},
-                {
-                    "name": "system.billing.list_prices",
-                    "columns_count": 8,
-                    "status": "VERIFIED_SCHEMA",
-                },
-                {
-                    "name": "system.compute.clusters",
-                    "columns_count": 27,
-                    "status": "VERIFIED_SCHEMA",
-                },
-                {
-                    "name": "system.compute.warehouses",
-                    "columns_count": 14,
-                    "status": "VERIFIED_SCHEMA",
-                },
-                {
-                    "name": "system.serving.endpoint_usage",
-                    "columns_count": 14,
-                    "status": "VERIFIED_SCHEMA",
-                },
-                {"name": "system.lakeflow.jobs", "columns_count": 19, "status": "VERIFIED_SCHEMA"},
-                {"name": "system.query.history", "columns_count": 44, "status": "VERIFIED_SCHEMA"},
-            ],
-            "sql_execution_state": "WAREHOUSE_STOPPED",
-            "sql_execution_note": "Serverless Starter Warehouse is currently stopped; direct invoice querying held in read-only safety mode.",
-        }
-
-        return SettingsIntegrationsResponse(
-            connected_sources=sources,
-            pipeline_health=pipeline_health,
-            rate_cards=rate_cards,
-            system_tables_readiness=system_tables_readiness,
-        )
 
     def get_canonical_kpi(
         self,
@@ -5427,6 +480,2656 @@ class FinOpsAnalyticsService:
         )
         return CanonicalKpiResponse(metric_id=metric_id, metric=empty_kpi)
 
+    # ------------------------------------------------------------------
+    # Live-data helpers (M2.3): every value is LIVE, CALCULATED, ESTIMATED or
+    # explicitly UNAVAILABLE / BLOCKED. Nothing is modelled or invented.
+    # ------------------------------------------------------------------
+
+    _COLORS: tuple[str, ...] = (
+        "#2563eb",
+        "#0284c7",
+        "#8b5cf6",
+        "#06b6d4",
+        "#f59e0b",
+        "#10b981",
+        "#94a3b8",
+    )
+    _OWNER_TAG_KEYS: tuple[str, ...] = (
+        "owner",
+        "team",
+        "business_unit",
+        "cost_center",
+        "costcenter",
+        "department",
+    )
+    _RESOURCE_META_KEYS: tuple[tuple[str, str], ...] = (
+        ("job_id", "job"),
+        ("warehouse_id", "warehouse"),
+        ("cluster_id", "cluster"),
+        ("endpoint_id", "serving"),
+        ("endpoint_name", "serving"),
+        ("app_id", "app"),
+        ("app_name", "app"),
+        ("dlt_pipeline_id", "pipeline"),
+    )
+    _FILTER_META_KEYS: dict[str, tuple[str, ...]] = {
+        "warehouse": ("warehouse_id",),
+        "cluster": ("cluster_id",),
+        "serving": ("endpoint_id", "endpoint_name"),
+        "app": ("app_id", "app_name"),
+    }
+    _MIN_HISTORY_DAYS: int = 14
+
+    @property
+    def billing_service(self) -> Any:
+        """Lazily bound billing ingestion service (shared with the API layer when injected)."""
+        if self._billing_service is None:
+            from cloud_recommender.services.databricks.billing_ingestion_service import (
+                BillingIngestionService,
+            )
+
+            self._billing_service = BillingIngestionService(
+                workspace_service=self.workspace_service
+            )
+        return self._billing_service
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def _usd(value: float) -> str:
+        return f"${value:,.2f}"
+
+    def _scope_workspace_ids(self, workspace_id: Any) -> set[str]:
+        """Resolve validated scope entries (workspace or connection ids) to workspace ids."""
+        ids: set[str] = set()
+        for wid in self.validate_scope(workspace_id):
+            if wid == "all":
+                return set()
+            conn = self.workspace_service.get_connection(wid)
+            ids.add(conn.workspace_id if conn else wid)
+        return ids
+
+    def _primary_workspace(self, workspace_id: Any) -> str:
+        ids = sorted(self._scope_workspace_ids(workspace_id))
+        return ids[0] if ids else "642006393507276"
+
+    def _mk_kpi(
+        self,
+        metric_id: str,
+        unit: str,
+        status: KpiStatus,
+        *,
+        value: float | None = None,
+        formatted: str | None = None,
+        currency: str | None = "USD",
+        source: str,
+        formula: str | None = None,
+        caveats: str | None = None,
+        record_count: int | None = None,
+        workspace_id: str = "642006393507276",
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+        delta_label: str | None = None,
+        aggregation: str | None = None,
+        period_start: str | None = None,
+        period_end: str | None = None,
+        change_percentage: float | None = None,
+        coverage: float = 1.0,
+    ) -> KpiMetric:
+        """Build a KPI whose display text always matches its provenance."""
+        resource_id = resource_id if isinstance(resource_id, str) else None
+        resource_type = resource_type if isinstance(resource_type, str) else None
+        reason_prefix = {
+            KpiStatus.BLOCKED_PENDING_APPROVAL: "Blocked: requires approved read-only SQL access to system tables.",
+            KpiStatus.INSUFFICIENT_HISTORY: "Insufficient history.",
+            KpiStatus.UNAVAILABLE: "Not available: no connected source provides this metric.",
+            KpiStatus.SOURCE_UNAVAILABLE: "Source unavailable.",
+            KpiStatus.NOT_AUTHORIZED: "Permission required.",
+            KpiStatus.NO_DATA: "The query succeeded but returned no records for this scope.",
+        }
+        if value is None:
+            # `-` means "could not be established"; a measured zero is a real 0 value.
+            text = "-"
+            reason: str | None = " ".join(
+                x for x in (reason_prefix.get(status, "Value not established."), caveats) if x
+            )
+        elif formatted is not None:
+            text = formatted
+            reason = None
+        elif unit == "USD":
+            text = self._usd(value)
+            reason = None
+        elif unit == "%":
+            text = f"{value:,.1f}%"
+            reason = None
+        else:
+            text = f"{value:,.2f}".rstrip("0").rstrip(".") + (f" {unit}" if unit else "")
+            reason = None
+        return KpiMetric(
+            value=value,
+            formatted_value=text,
+            unit=unit,
+            currency=currency,
+            metric_id=metric_id,
+            status=status,
+            source=source,
+            data_source=source,
+            workspace_id=workspace_id,
+            resource_id=resource_id,
+            resource_type=resource_type,
+            last_refreshed=self._now_iso(),
+            aggregation_method=aggregation,
+            formula=formula,
+            record_count=record_count,
+            caveats=caveats,
+            limitations=caveats,
+            delta_label=delta_label,
+            period_start=period_start,
+            period_end=period_end,
+            change_percentage=change_percentage,
+            coverage=coverage,
+            reason=reason,
+            data_freshness="Live" if status == KpiStatus.LIVE else "As of last_refreshed",
+        )
+
+    def _inventory(self, connection_id: str) -> dict[str, list[DiscoveredResourceItem]]:
+        return self._get_workspace_assets(connection_id)
+
+    def _warehouse_state(self, connection_id: str) -> str:
+        wh = self._inventory(connection_id).get("warehouse", [])
+        return wh[0].status or "UNKNOWN" if wh else "UNKNOWN"
+
+    def _inventory_provenance(
+        self, connection_id: str, resource_types: tuple[str, ...]
+    ) -> SectionProvenance:
+        grouped = self._inventory(connection_id)
+        if not grouped:
+            return SectionProvenance(
+                classification=KpiStatus.UNAVAILABLE,
+                source="Databricks REST/SDK workspace discovery",
+                message="Workspace discovery has not completed; no inventory is available.",
+                requirement="Valid Databricks authentication for the workspace",
+                retrieved_at=self._now_iso(),
+            )
+        discovery = self.workspace_service._discovery_cache.get(connection_id)
+        count = sum(len(grouped.get(t, [])) for t in resource_types)
+        return SectionProvenance(
+            classification=KpiStatus.LIVE if count else KpiStatus.NO_DATA,
+            source="Databricks REST/SDK workspace discovery",
+            message=None if count else "Discovery succeeded and returned zero matching resources.",
+            retrieved_at=discovery.discovered_at.isoformat() if discovery else self._now_iso(),
+            record_count=count,
+        )
+
+    # -- billing rows ---------------------------------------------------
+
+    def _billing_rows(
+        self,
+        workspace_id: Any,
+        filter_type: str | None = None,
+        resource_id: str | None = None,
+    ) -> list[BillingUsageRecord]:
+        """Ingested system.billing.usage rows in scope. Empty until an approved ingestion ran."""
+        scope = self._scope_workspace_ids(workspace_id)
+        rows = [
+            r
+            for r in self.billing_service._usage_store.values()
+            if not scope or r.workspace_id in scope
+        ]
+        if filter_type in self._FILTER_META_KEYS:
+            keys = self._FILTER_META_KEYS[filter_type]
+            rows = [
+                r
+                for r in rows
+                if any(
+                    r.usage_metadata.get(k)
+                    and (not resource_id or r.usage_metadata[k] == resource_id)
+                    for k in keys
+                )
+            ]
+        elif resource_id:
+            rows = [r for r in rows if resource_id in r.usage_metadata.values()]
+        return rows
+
+    def _billing_provenance(
+        self, rows: list[BillingUsageRecord], connection_id: str = "databricks-azure-dev"
+    ) -> SectionProvenance:
+        if rows:
+            priced = sum(1 for r in rows if r.pricing_matched)
+            return SectionProvenance(
+                classification=KpiStatus.CALCULATED,
+                source="system.billing.usage (ingested) x rate card",
+                message=(
+                    f"{priced}/{len(rows)} usage rows priced with list prices (DBU x list rate). "
+                    "Excludes discounts, credits and Azure infrastructure charges."
+                ),
+                retrieved_at=self._now_iso(),
+                record_count=len(rows),
+            )
+        wh_state = self._warehouse_state(connection_id)
+        return SectionProvenance(
+            classification=KpiStatus.BLOCKED_PENDING_APPROVAL,
+            source="system.billing.usage",
+            message=(
+                "No billing rows ingested. Spend cannot be derived from Databricks APIs alone; "
+                f"it requires a read-only SELECT on system.billing.usage (SQL warehouse state: {wh_state})."
+            ),
+            requirement=(
+                "Explicit human approval to start the SQL warehouse and run the approved ingestion, "
+                "plus SELECT on system.billing.usage and system.billing.list_prices."
+            ),
+            retrieved_at=self._now_iso(),
+            record_count=0,
+        )
+
+    @staticmethod
+    def _owner_of(rec: BillingUsageRecord) -> str | None:
+        lowered = {k.lower(): v for k, v in rec.custom_tags.items() if v}
+        for key in FinOpsAnalyticsService._OWNER_TAG_KEYS:
+            if lowered.get(key):
+                return lowered[key]
+        return None
+
+    @staticmethod
+    def _product_of(rec: BillingUsageRecord) -> str:
+        return (rec.billing_origin_product or rec.sku_name.split("_")[0] or "UNKNOWN").upper()
+
+    @staticmethod
+    def _is_ai(rec: BillingUsageRecord) -> bool:
+        product = (rec.billing_origin_product or "").upper()
+        if product:
+            return any(t in product for t in ("MODEL_SERVING", "AI_", "FOUNDATION", "VECTOR"))
+        sku = rec.sku_name.upper()
+        return any(t in sku for t in ("MODEL_SERVING", "INFERENCE", "FOUNDATION"))
+
+    def _resource_of(self, rec: BillingUsageRecord) -> tuple[str, str] | None:
+        for key, rtype in self._RESOURCE_META_KEYS:
+            val = rec.usage_metadata.get(key)
+            if val:
+                return rtype, str(val)
+        return None
+
+    @staticmethod
+    def _cost(rec: BillingUsageRecord) -> float:
+        return rec.effective_cost or 0.0
+
+    @staticmethod
+    def _sum_cost(rows: list[BillingUsageRecord]) -> float:
+        return round(sum(r.effective_cost or 0.0 for r in rows), 2)
+
+    @staticmethod
+    def _sum_dbu(rows: list[BillingUsageRecord]) -> float:
+        return round(sum(r.usage_quantity for r in rows if r.usage_unit == "DBU"), 4)
+
+    @staticmethod
+    def _coverage(rows: list[BillingUsageRecord]) -> float:
+        dbu = [r for r in rows if r.usage_unit == "DBU"]
+        return round(sum(1 for r in dbu if r.pricing_matched) / len(dbu), 4) if dbu else 1.0
+
+    def _daily_totals(self, rows: list[BillingUsageRecord]) -> dict[str, tuple[float, float]]:
+        out: dict[str, list[float]] = {}
+        for r in rows:
+            d = out.setdefault(r.usage_date, [0.0, 0.0])
+            d[0] += self._cost(r)
+            d[1] += r.usage_quantity if r.usage_unit == "DBU" else 0.0
+        return {k: (round(v[0], 2), round(v[1], 4)) for k, v in sorted(out.items())}
+
+    @staticmethod
+    def _label_date(iso_date: str) -> str:
+        try:
+            return datetime.strptime(iso_date, "%Y-%m-%d").strftime("%b %d")
+        except ValueError:
+            return iso_date
+
+    def _reference_month(
+        self, rows: list[BillingUsageRecord]
+    ) -> tuple[str, list[BillingUsageRecord]]:
+        """Month of the latest usage row and the rows inside it (period of record)."""
+        month = max(r.usage_date for r in rows)[:7]
+        return month, [r for r in rows if r.usage_date.startswith(month)]
+
+    def _budget(self) -> float | None:
+        from cloud_recommender.core.config import get_settings
+
+        return get_settings().finops_monthly_budget_usd
+
+    def _forecast(self, rows: list[BillingUsageRecord]) -> dict[str, Any] | None:
+        """Run-rate forecast; None when there is not enough history (>= 14 usage days)."""
+        daily = self._daily_totals(rows)
+        if len(daily) < self._MIN_HISTORY_DAYS:
+            return None
+        month, month_rows = self._reference_month(rows)
+        month_daily = self._daily_totals(month_rows)
+        days = list(daily.items())
+        last7 = [v[0] for _, v in days[-7:]]
+        run_rate = sum(last7) / len(last7)
+        last_day = datetime.strptime(days[-1][0], "%Y-%m-%d")
+        next_month = (last_day.replace(day=28) + timedelta(days=4)).replace(day=1)
+        month_len = (next_month - timedelta(days=1)).day
+        remaining = max(0, month_len - last_day.day)
+        mtd = round(sum(v[0] for v in month_daily.values()), 2)
+        return {
+            "month": month,
+            "mtd": mtd,
+            "run_rate": round(run_rate, 2),
+            "forecast": round(mtd + run_rate * remaining, 2),
+            "remaining_days": remaining,
+            "days_observed": len(daily),
+        }
+
+    def _detect_anomalies(self, rows: list[BillingUsageRecord]) -> list[AnomalyItem] | None:
+        """Trailing-window z-score on daily spend. None when history is insufficient."""
+        daily = self._daily_totals(rows)
+        if len(daily) < self._MIN_HISTORY_DAYS:
+            return None
+        days = list(daily.items())
+        found: list[AnomalyItem] = []
+        for i in range(7, len(days)):
+            window = [v[0] for _, v in days[max(0, i - 28) : i]]
+            mean = statistics.fmean(window)
+            # Floor the deviation at 5% of the baseline so a perfectly flat history
+            # (sd == 0) still yields a finite, conservative z-score.
+            sd = max(statistics.pstdev(window), 0.05 * mean)
+            date, (cost, _dbu) = days[i]
+            if sd <= 0:
+                continue
+            z = (cost - mean) / sd
+            if z < 3.0:
+                continue
+            day_rows = [r for r in rows if r.usage_date == date]
+            by_sku: dict[str, float] = {}
+            for r in day_rows:
+                by_sku[r.sku_name] = by_sku.get(r.sku_name, 0.0) + self._cost(r)
+            aid = f"anom-{date}"
+            found.append(
+                AnomalyItem(
+                    id=aid,
+                    detected=self._label_date(date),
+                    severity="Critical" if z >= 5 else "High" if z >= 4 else "Medium",
+                    signal="Daily spend above trailing baseline",
+                    resource="Workspace (all billed SKUs)",
+                    baseline=f"{self._usd(mean)} / day",
+                    observed=f"{self._usd(cost)} / day",
+                    estimated_impact=f"{self._usd(cost - mean)} (list-price basis)",
+                    likely_cause="Not determined; review SKU contribution and workload attribution.",
+                    evidence_detail=f"z={z:.2f} over {len(window)} trailing days from system.billing.usage.",
+                    resource_type="workspace",
+                    metric="Spend / Day",
+                    absolute_deviation=self._usd(cost - mean),
+                    percentage_deviation=f"{((cost - mean) / mean * 100) if mean else 0:.1f}%",
+                    detection_methodology="Z-score >= 3 SD over trailing <=28-day window (SD floored at 5% of mean)",
+                    confidence=f"Statistical (n={len(window)} days)",
+                    status=self._anomaly_overrides.get(aid, "New"),
+                    historical_trend=[
+                        {"date": self._label_date(d), "spend": c}
+                        for d, (c, _) in days[max(0, i - 13) : i + 1]
+                    ],
+                    sku_contribution=[
+                        {
+                            "sku": k,
+                            "pct": round(v / cost * 100, 1) if cost else 0.0,
+                            "amount": self._usd(v),
+                        }
+                        for k, v in sorted(by_sku.items(), key=lambda kv: -kv[1])[:5]
+                    ],
+                )
+            )
+        return found
+
+    def _get_anomalies(
+        self, resource_id: str | None = None, resource_type: str | None = None
+    ) -> list[AnomalyItem]:
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        if is_unknown:
+            return []
+        rows = self._billing_rows(None, filter_type, resource_id)
+        return self._detect_anomalies(rows) or []
+
+    # -- optimization recommendations (configuration evidence only) -----
+
+    def _get_decisions(
+        self, resource_id: str | None = None, resource_type: str | None = None
+    ) -> list[DecisionItem]:
+        """Recommendations derived from live resource configuration. Savings are never invented."""
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        if is_unknown:
+            return []
+        grouped = self._inventory("databricks-azure-dev")
+        ts = self._now_iso()
+        discovery = self.workspace_service._discovery_cache.get("databricks-azure-dev")
+        if discovery:
+            ts = discovery.discovered_at.isoformat()
+        recs: list[DecisionItem] = []
+
+        def add(
+            rule: str,
+            res: DiscoveredResourceItem,
+            category: str,
+            title: str,
+            finding: str,
+            evidence: str,
+            action: str,
+            confidence: int,
+            risk: str,
+        ) -> None:
+            rid = f"rec-{rule}-{res.id}"
+            override = self._action_overrides.get(rid, {})
+            recs.append(
+                DecisionItem(
+                    id=rid,
+                    priority=len(recs) + 1,
+                    title=title,
+                    description=finding,
+                    estimated_savings_monthly=None,
+                    formatted_savings="Not calculable (requires usage and billing telemetry)",
+                    impact="Configuration risk",
+                    status=override.get("status", "Approval required"),
+                    confidence_pct=confidence,
+                    effort="Low",
+                    owner=res.creator or "Unassigned",
+                    evidence=evidence,
+                    category=category,
+                    resource_name=res.name,
+                    resource_id=res.id,
+                    finding=finding,
+                    current_cost="-"
+                    if not self._billing_rows(None, None, res.id)
+                    else self._usd(self._sum_cost(self._billing_rows(None, None, res.id))),
+                    potential_savings_range="Not calculable",
+                    recommended_action=action,
+                    calculation_methodology=(
+                        "Rule-based check of live configuration; no savings claimed because "
+                        "idle time / utilization telemetry is not available."
+                    ),
+                    validation_method="Re-read the resource configuration and compare post-change billing.",
+                    risk=risk,
+                    complexity="Low",
+                    performance_impact="Depends on workload; validate before applying.",
+                    source_timestamp=ts,
+                    savings_status=KpiStatus.UNAVAILABLE,
+                )
+            )
+
+        if filter_type in (None, "warehouse"):
+            for w in grouped.get("warehouse", []):
+                if resource_id and w.id != resource_id:
+                    continue
+                stop = w.metadata.get("auto_stop_mins")
+                if stop is None or stop == 0 or stop > 10:
+                    add(
+                        "wh-autostop",
+                        w,
+                        "Compute",
+                        f"Tighten auto-stop on SQL warehouse '{w.name}'",
+                        f"Auto-stop is {'disabled' if not stop else f'{stop} min'}; idle warehouses keep billing until stopped.",
+                        f"warehouses.list: auto_stop_mins={stop}, size={w.metadata.get('cluster_size')}, state={w.status}",
+                        "Set auto-stop to 10 minutes or less (human approval required; not applied by this platform).",
+                        70,
+                        "Low",
+                    )
+        if filter_type in (None, "cluster"):
+            for c in grouped.get("cluster", []):
+                if resource_id and c.id != resource_id:
+                    continue
+                term = c.metadata.get("autotermination_minutes")
+                if not term:
+                    add(
+                        "cl-noterm",
+                        c,
+                        "Compute",
+                        f"Configure auto-termination on cluster '{c.name}'",
+                        "No auto-termination is configured; a running cluster bills DBU and VM cost until stopped manually.",
+                        f"clusters.list: autotermination_minutes={term}, node_type={c.metadata.get('node_type_id')}, state={c.status}",
+                        "Set auto-termination to 60 minutes or less (human approval required).",
+                        90,
+                        "Low",
+                    )
+                elif term > 60:
+                    add(
+                        "cl-longterm",
+                        c,
+                        "Compute",
+                        f"Shorten auto-termination on cluster '{c.name}'",
+                        f"Auto-termination is {term} minutes.",
+                        f"clusters.list: autotermination_minutes={term}, state={c.status}",
+                        "Reduce auto-termination to 60 minutes or less (human approval required).",
+                        75,
+                        "Low",
+                    )
+        if filter_type in (None, "serving"):
+            for e in grouped.get("serving_endpoint", []):
+                if resource_id and e.id != resource_id:
+                    continue
+                ents = e.metadata.get("served_entities") or []
+                flagged = [
+                    x
+                    for x in ents
+                    if isinstance(x, dict)
+                    and x.get("workload_size")
+                    and x.get("scale_to_zero_enabled") is False
+                ]
+                if flagged:
+                    add(
+                        "srv-s2z",
+                        e,
+                        "AI",
+                        f"Enable scale-to-zero on endpoint '{e.name}'",
+                        "Provisioned endpoint keeps capacity allocated while idle.",
+                        f"serving-endpoints.list: scale_to_zero_enabled=False, workload_size={flagged[0].get('workload_size')}",
+                        "Enable scale-to-zero if cold-start latency is acceptable (human approval required).",
+                        65,
+                        "Medium",
+                    )
+        return recs
+
+    def get_decision_savings(self, decisions: list[DecisionItem]) -> float | None:
+        values = [
+            d.estimated_savings_monthly
+            for d in decisions
+            if d.estimated_savings_monthly is not None
+        ]
+        return round(sum(values), 2) if values else None
+
+    # ------------------------------------------------------------------
+    # Module 1: Executive overview
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_executive_overview(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        period: str = "month",
+        environment: str | None = None,
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> ExecutiveOverviewResponse:
+        """Executive KPIs from ingested billing rows; BLOCKED when none exist."""
+        ws = self._primary_workspace(workspace_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+        decisions = [] if is_unknown else self._get_decisions(resource_id, resource_type)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        bill_prov = self._billing_provenance(rows, connection_id)
+        blocked = KpiStatus.NO_DATA if is_unknown else KpiStatus.BLOCKED_PENDING_APPROVAL
+        grouped = self._inventory(connection_id)
+        global_filters: dict[str, Any] = {
+            "period": period,
+            "environment": environment or "Development",
+            "currency": "USD",
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+            "live_inventory": {
+                "clusters": len(grouped.get("cluster", [])),
+                "warehouses": len(grouped.get("warehouse", [])),
+                "serving_endpoints": len(grouped.get("serving_endpoint", [])),
+                "apps": len(grouped.get("app", [])),
+                "catalogs": len(grouped.get("catalog", [])),
+                "jobs": len(grouped.get("job", [])),
+            },
+        }
+        provenance = {
+            "spend": bill_prov,
+            "inventory": self._inventory_provenance(
+                connection_id, ("cluster", "warehouse", "serving_endpoint", "app")
+            ),
+        }
+        forecast = self._forecast(rows) if rows else None
+        anomalies = self._detect_anomalies(rows) if rows else None
+        savings = self.get_decision_savings(decisions)
+
+        def anomaly_kpi() -> KpiMetric:
+            if anomalies is None:
+                return self._mk_kpi(
+                    "anomalies",
+                    "count",
+                    KpiStatus.INSUFFICIENT_HISTORY if rows else blocked,
+                    currency=None,
+                    source="system.billing.usage",
+                    caveats=f"Needs >= {self._MIN_HISTORY_DAYS} days of ingested billing history.",
+                    **common,
+                )
+            return self._mk_kpi(
+                "anomalies",
+                "count",
+                KpiStatus.CALCULATED,
+                value=float(len(anomalies)),
+                currency=None,
+                source="system.billing.usage",
+                formula="count(days with z-score >= 3 vs trailing 28d)",
+                record_count=len(rows),
+                **common,
+            )
+
+        if not rows:
+            msg: dict[str, Any] = {
+                "currency": "USD",
+                "source": "system.billing.usage",
+                "caveats": bill_prov.message,
+                **common,
+            }
+            kpis = {
+                "total_spend": self._mk_kpi("total_spend", "USD", blocked, **msg),
+                "databricks_spend": self._mk_kpi("databricks_spend", "USD", blocked, **msg),
+                "ai_spend": self._mk_kpi("ai_spend", "USD", blocked, **msg),
+                "dbu_consumption": self._mk_kpi(
+                    "dbu_consumption", "DBU", blocked, **{**msg, "currency": None}
+                ),
+                "savings_opportunity": self._mk_kpi(
+                    "savings_opportunity",
+                    "USD",
+                    KpiStatus.UNAVAILABLE,
+                    source="Optimization Advisor",
+                    caveats="Savings require billing and utilization telemetry; none is calculable yet.",
+                    **common,
+                ),
+                "forecast_spend": self._mk_kpi(
+                    "forecast_spend",
+                    "USD",
+                    KpiStatus.INSUFFICIENT_HISTORY if not is_unknown else blocked,
+                    **msg,
+                ),
+                "anomalies": anomaly_kpi(),
+            }
+            return ExecutiveOverviewResponse(
+                kpis=kpis,
+                spend_trend=[],
+                spend_composition=[],
+                top_cost_drivers=[],
+                decisions_requiring_attention=decisions,
+                global_filters=global_filters,
+                provenance=provenance,
+            )
+
+        month, month_rows = self._reference_month(rows)
+        prev_month_rows = [r for r in rows if r.usage_date[:7] < month]
+        total = self._sum_cost(month_rows)
+        ai_rows = [r for r in month_rows if self._is_ai(r)]
+        period_kwargs: dict[str, Any] = {
+            "period_start": min(r.usage_date for r in month_rows),
+            "period_end": max(r.usage_date for r in month_rows),
+        }
+        caveat = "List-price basis (DBU x rate card). Excludes discounts, credits and Azure infrastructure."
+        change = None
+        if prev_month_rows:
+            prev_total = self._sum_cost(prev_month_rows)
+            if prev_total:
+                change = round((total - prev_total) / prev_total * 100, 1)
+        kpis = {
+            "total_spend": self._mk_kpi(
+                "total_spend",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=total,
+                source="system.billing.usage x list prices",
+                aggregation="SUM",
+                formula="sum(usage_quantity * list_price) for latest usage month",
+                caveats=caveat,
+                record_count=len(month_rows),
+                coverage=self._coverage(month_rows),
+                change_percentage=change,
+                **period_kwargs,
+                **common,
+            ),
+            "databricks_spend": self._mk_kpi(
+                "databricks_spend",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=total,
+                source="system.billing.usage x list prices",
+                aggregation="SUM",
+                formula="sum(DBU usage_quantity * list_price)",
+                caveats=caveat,
+                record_count=len(month_rows),
+                coverage=self._coverage(month_rows),
+                **period_kwargs,
+                **common,
+            ),
+            "ai_spend": self._mk_kpi(
+                "ai_spend",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=self._sum_cost(ai_rows),
+                source="system.billing.usage x list prices",
+                aggregation="SUM",
+                formula="sum(cost) WHERE billing_origin_product is AI/model serving",
+                caveats=caveat,
+                record_count=len(ai_rows),
+                **period_kwargs,
+                **common,
+            ),
+            "dbu_consumption": self._mk_kpi(
+                "dbu_consumption",
+                "DBU",
+                KpiStatus.LIVE,
+                value=self._sum_dbu(month_rows),
+                currency=None,
+                source="system.billing.usage",
+                aggregation="SUM",
+                formula="sum(usage_quantity) WHERE usage_unit = 'DBU'",
+                record_count=len(month_rows),
+                **period_kwargs,
+                **common,
+            ),
+            "savings_opportunity": self._mk_kpi(
+                "savings_opportunity",
+                "USD",
+                KpiStatus.CALCULATED if savings is not None else KpiStatus.UNAVAILABLE,
+                value=savings,
+                source="Optimization Advisor",
+                caveats="Only recommendations with calculable savings contribute.",
+                **common,
+            ),
+            "forecast_spend": self._mk_kpi(
+                "forecast_spend",
+                "USD",
+                KpiStatus.ESTIMATED if forecast else KpiStatus.INSUFFICIENT_HISTORY,
+                value=forecast["forecast"] if forecast else None,
+                source="Run-rate projection of system.billing.usage",
+                formula="MTD actual + trailing-7-day average x remaining days",
+                caveats="Projection, not actual spend."
+                if forecast
+                else f"Needs >= {self._MIN_HISTORY_DAYS} days of history.",
+                **common,
+            ),
+            "anomalies": anomaly_kpi(),
+        }
+
+        daily = self._daily_totals(rows)
+        by_family: dict[str, float] = {}
+        for r in month_rows:
+            by_family[self._product_of(r)] = by_family.get(self._product_of(r), 0.0) + self._cost(r)
+        composition = [
+            {
+                "family": fam,
+                "amount": round(amt, 2),
+                "share": round(amt / total, 4) if total else 0.0,
+                "color": self._COLORS[i % len(self._COLORS)],
+            }
+            for i, (fam, amt) in enumerate(sorted(by_family.items(), key=lambda kv: -kv[1]))
+        ]
+        by_res: dict[tuple[str, str], float] = {}
+        for r in month_rows:
+            key = self._resource_of(r) or ("sku", r.sku_name)
+            by_res[key] = by_res.get(key, 0.0) + self._cost(r)
+        drivers = [
+            CostDriverItem(
+                driver=f"{rtype}: {rid}",
+                workspace_owner=ws,
+                spend=round(amt, 2),
+                formatted_spend=self._usd(amt),
+                change="n/a",
+                signal="Review" if total and amt / total >= 0.3 else "Stable",
+            )
+            for (rtype, rid), amt in sorted(by_res.items(), key=lambda kv: -kv[1])[:5]
+        ]
+        return ExecutiveOverviewResponse(
+            kpis=kpis,
+            spend_trend=[
+                {"day": self._label_date(d), "actual": c, "forecast": None, "budget_pace": None}
+                for d, (c, _) in daily.items()
+            ],
+            spend_composition=composition,
+            top_cost_drivers=drivers,
+            decisions_requiring_attention=decisions,
+            global_filters=global_filters,
+            provenance=provenance,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 2: Cost explorer
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_cost_explorer(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> CostExplorerResponse:
+        ws = self._primary_workspace(workspace_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+        prov = {"ledger": self._billing_provenance(rows, connection_id)}
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        if not rows:
+            status = KpiStatus.NO_DATA if is_unknown else KpiStatus.BLOCKED_PENDING_APPROVAL
+            kpis = {
+                "gross_consumption": self._mk_kpi(
+                    "gross_consumption", "USD", status, source="system.billing.usage", **common
+                ),
+                "effective_rate": self._mk_kpi(
+                    "effective_rate", "USD/DBU", status, source="system.billing.usage", **common
+                ),
+                "unallocated_spend": self._mk_kpi(
+                    "unallocated_spend", "USD", status, source="system.billing.usage", **common
+                ),
+                "credits_discounts": self._mk_kpi(
+                    "credits_discounts",
+                    "USD",
+                    KpiStatus.UNAVAILABLE,
+                    source="Azure invoice / contract data",
+                    caveats="Discounts and credits are not exposed by system.billing.usage.",
+                    **common,
+                ),
+            }
+            return CostExplorerResponse(
+                kpis=kpis,
+                daily_trend=[],
+                cost_by_product_family=[],
+                billing_ledger=[],
+                provenance=prov,
+            )
+
+        total = self._sum_cost(rows)
+        dbu = self._sum_dbu(rows)
+        unalloc = self._sum_cost([r for r in rows if not self._owner_of(r)])
+        by_family: dict[str, float] = {}
+        grouped: dict[tuple[str, str, str, str], list[float]] = {}
+        for r in rows:
+            by_family[self._product_of(r)] = by_family.get(self._product_of(r), 0.0) + self._cost(r)
+            owner = self._owner_of(r) or "unallocated"
+            g = grouped.setdefault(
+                (r.usage_date, self._product_of(r), r.sku_name, owner), [0.0, 0.0]
+            )
+            g[0] += r.usage_quantity
+            g[1] += self._cost(r)
+        ledger = [
+            CostExplorerItem(
+                date=self._label_date(d),
+                product=prod,
+                sku=sku,
+                workspace=f"adb-{ws}",
+                usage_qty=round(q, 4),
+                unit="DBU",
+                list_cost=round(c, 2),
+                effective_cost=round(c, 2),
+                owner_tag=owner,
+                allocation_status="Unallocated" if owner == "unallocated" else "Allocated",
+            )
+            for (d, prod, sku, owner), (q, c) in sorted(grouped.items(), reverse=True)[:500]
+        ]
+        caveat = "List-price basis; excludes discounts and Azure infrastructure."
+        kpis = {
+            "gross_consumption": self._mk_kpi(
+                "gross_consumption",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=total,
+                source="system.billing.usage x list prices",
+                aggregation="SUM",
+                formula="sum(usage_quantity * list_price)",
+                caveats=caveat,
+                record_count=len(rows),
+                coverage=self._coverage(rows),
+                **common,
+            ),
+            "effective_rate": self._mk_kpi(
+                "effective_rate",
+                "USD/DBU",
+                KpiStatus.CALCULATED,
+                value=round(total / dbu, 4) if dbu else None,
+                formatted=f"${total / dbu:,.4f} / DBU" if dbu else None,
+                source="system.billing.usage x list prices",
+                formula="total cost / total DBU",
+                caveats=caveat,
+                record_count=len(rows),
+                **common,
+            ),
+            "unallocated_spend": self._mk_kpi(
+                "unallocated_spend",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=unalloc,
+                source="system.billing.usage custom_tags",
+                formula="sum(cost) WHERE no owner tag",
+                record_count=len(rows),
+                **common,
+            ),
+            "credits_discounts": self._mk_kpi(
+                "credits_discounts",
+                "USD",
+                KpiStatus.UNAVAILABLE,
+                source="Azure invoice / contract data",
+                caveats="Discounts and credits are not exposed by system.billing.usage.",
+                **common,
+            ),
+        }
+        return CostExplorerResponse(
+            kpis=kpis,
+            daily_trend=[
+                {"date": self._label_date(d), "cost": c, "dbu": q}
+                for d, (c, q) in self._daily_totals(rows).items()
+            ],
+            cost_by_product_family=[
+                {"product": p, "cost": round(c, 2), "share": round(c / total, 4) if total else 0.0}
+                for p, c in sorted(by_family.items(), key=lambda kv: -kv[1])
+            ],
+            billing_ledger=ledger,
+            provenance=prov,
+        )
+
+    def export_cost_ledger_csv(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> str:
+        """CSV of the real ledger (header only when no billing rows are ingested)."""
+        data = self.get_cost_explorer(
+            connection_id=connection_id,
+            workspace_id=workspace_id,
+            resource_id=resource_id,
+            resource_type=resource_type,
+        )
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "Date",
+                "Product",
+                "SKU",
+                "Workspace",
+                "Usage Qty",
+                "Unit",
+                "List Cost (USD)",
+                "Effective Cost (USD)",
+                "Owner Tag",
+                "Allocation Status",
+            ]
+        )
+        for r in data.billing_ledger:
+            writer.writerow(
+                [
+                    r.date,
+                    r.product,
+                    r.sku,
+                    r.workspace,
+                    r.usage_qty,
+                    r.unit,
+                    f"${r.list_cost:.2f}",
+                    f"${r.effective_cost:.2f}",
+                    r.owner_tag,
+                    r.allocation_status,
+                ]
+            )
+        return output.getvalue()
+
+    # ------------------------------------------------------------------
+    # Module 3: Cost allocation / showback
+    # ------------------------------------------------------------------
+
+    def _allocation(self, rows: list[BillingUsageRecord]) -> dict[str, dict[str, float]]:
+        """Spend by real owner tag; untagged spend stays 'Unallocated' (never distributed)."""
+        out: dict[str, dict[str, float]] = {}
+        for r in rows:
+            owner = self._owner_of(r) or "Unallocated"
+            b = out.setdefault(owner, {"total": 0.0, "ai": 0.0, "compute": 0.0, "storage": 0.0})
+            c = self._cost(r)
+            b["total"] += c
+            if self._is_ai(r):
+                b["ai"] += c
+            elif "STORAGE" in self._product_of(r):
+                b["storage"] += c
+            else:
+                b["compute"] += c
+        return out
+
+    @_unknown_scope_guard
+    def get_cost_allocation(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> CostAllocationResponse:
+        ws = self._primary_workspace(workspace_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+        prov = {"allocation": self._billing_provenance(rows, connection_id)}
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        rulebook = [
+            AllocationRuleItem(
+                priority=1,
+                rule_name="Owner tag attribution",
+                match_condition=f"custom_tags has any of: {', '.join(self._OWNER_TAG_KEYS)}",
+                allocation_target="Tag value",
+                method="Direct (100% to tag value)",
+                status="Active",
+            ),
+            AllocationRuleItem(
+                priority=2,
+                rule_name="Unallocated fallback",
+                match_condition="No owner tag present",
+                allocation_target="Unallocated",
+                method="Not distributed",
+                status="Active",
+            ),
+        ]
+        if not rows:
+            status = KpiStatus.NO_DATA if is_unknown else KpiStatus.BLOCKED_PENDING_APPROVAL
+            kpis = {
+                "allocated_spend": self._mk_kpi(
+                    "allocated_spend", "USD", status, source="system.billing.usage", **common
+                ),
+                "unallocated_spend": self._mk_kpi(
+                    "unallocated_spend", "USD", status, source="system.billing.usage", **common
+                ),
+                "active_rules": self._mk_kpi(
+                    "active_rules",
+                    "rules",
+                    KpiStatus.LIVE,
+                    value=float(len(rulebook)),
+                    currency=None,
+                    source="Allocation engine configuration",
+                    **common,
+                ),
+                "shared_pool": self._mk_kpi(
+                    "shared_pool",
+                    "USD",
+                    KpiStatus.UNAVAILABLE,
+                    source="Shared-cost configuration",
+                    caveats="No shared-cost pools are configured.",
+                    **common,
+                ),
+            }
+            return CostAllocationResponse(
+                kpis=kpis,
+                spend_by_bu=[],
+                allocation_completeness={},
+                rulebook=rulebook,
+                provenance=prov,
+            )
+        alloc = self._allocation(rows)
+        total = self._sum_cost(rows)
+        unalloc = round(alloc.get("Unallocated", {}).get("total", 0.0), 2)
+        allocated = round(total - unalloc, 2)
+        kpis = {
+            "allocated_spend": self._mk_kpi(
+                "allocated_spend",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=allocated,
+                source="system.billing.usage custom_tags",
+                record_count=len(rows),
+                **common,
+            ),
+            "unallocated_spend": self._mk_kpi(
+                "unallocated_spend",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=unalloc,
+                source="system.billing.usage custom_tags",
+                record_count=len(rows),
+                **common,
+            ),
+            "active_rules": self._mk_kpi(
+                "active_rules",
+                "rules",
+                KpiStatus.LIVE,
+                value=float(len(rulebook)),
+                currency=None,
+                source="Allocation engine configuration",
+                **common,
+            ),
+            "shared_pool": self._mk_kpi(
+                "shared_pool",
+                "USD",
+                KpiStatus.UNAVAILABLE,
+                source="Shared-cost configuration",
+                caveats="No shared-cost pools are configured.",
+                **common,
+            ),
+        }
+        tagged = sum(1 for r in rows if self._owner_of(r))
+        return CostAllocationResponse(
+            kpis=kpis,
+            spend_by_bu=[
+                {
+                    "business_unit": owner,
+                    "spend": round(b["total"], 2),
+                    "share": round(b["total"] / total, 4) if total else 0.0,
+                    "dimension": "custom_tags.owner",
+                }
+                for owner, b in sorted(alloc.items(), key=lambda kv: -kv[1]["total"])
+            ],
+            allocation_completeness={
+                "tagged_records": tagged,
+                "untagged_records": len(rows) - tagged,
+                "allocated_pct": round(tagged / len(rows) * 100) if rows else 0,
+            },
+            rulebook=rulebook,
+            provenance=prov,
+        )
+
+    @_unknown_scope_guard
+    def get_showback_chargeback(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> ShowbackChargebackResponse:
+        ws = self._primary_workspace(workspace_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+        prov = {"statements": self._billing_provenance(rows, connection_id)}
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        unavailable_shared = self._mk_kpi(
+            "shared_pool",
+            "USD",
+            KpiStatus.UNAVAILABLE,
+            source="Shared-cost configuration",
+            caveats="No shared-cost pools are configured; nothing is distributed artificially.",
+            **common,
+        )
+        disputed = self._mk_kpi(
+            "disputed_allocations",
+            "count",
+            KpiStatus.UNAVAILABLE,
+            currency=None,
+            source="Dispute workflow",
+            caveats="No dispute workflow data source exists.",
+            **common,
+        )
+        if not rows:
+            status = KpiStatus.NO_DATA if is_unknown else KpiStatus.BLOCKED_PENDING_APPROVAL
+            return ShowbackChargebackResponse(
+                kpis={
+                    "bu_billed": self._mk_kpi(
+                        "bu_billed", "USD", status, source="system.billing.usage", **common
+                    ),
+                    "shared_pool": unavailable_shared,
+                    "disputed_allocations": disputed,
+                    "statement_readiness": self._mk_kpi(
+                        "statement_readiness",
+                        "%",
+                        status,
+                        currency=None,
+                        source="system.billing.usage",
+                        **common,
+                    ),
+                },
+                statements=[],
+                provenance=prov,
+            )
+        alloc = self._allocation(rows)
+        total = self._sum_cost(rows)
+        unalloc = alloc.get("Unallocated", {}).get("total", 0.0)
+        statements = [
+            ChargebackStatementItem(
+                business_unit=owner,
+                direct_compute=round(b["compute"], 2),
+                ai_tokens=round(b["ai"], 2),
+                storage=round(b["storage"], 2) if b["storage"] else None,
+                shared_allocation=None,
+                total=round(b["total"], 2),
+                budget_variance="N/A (no budget configured)",
+                trend="N/A",
+            )
+            for owner, b in sorted(alloc.items(), key=lambda kv: -kv[1]["total"])
+        ]
+        return ShowbackChargebackResponse(
+            kpis={
+                "bu_billed": self._mk_kpi(
+                    "bu_billed",
+                    "USD",
+                    KpiStatus.CALCULATED,
+                    value=round(total - unalloc, 2),
+                    source="system.billing.usage custom_tags",
+                    record_count=len(rows),
+                    **common,
+                ),
+                "shared_pool": unavailable_shared,
+                "disputed_allocations": disputed,
+                "statement_readiness": self._mk_kpi(
+                    "statement_readiness",
+                    "%",
+                    KpiStatus.CALCULATED,
+                    value=round((total - unalloc) / total * 100, 1) if total else None,
+                    currency=None,
+                    source="system.billing.usage custom_tags",
+                    formula="attributed spend / total spend",
+                    **common,
+                ),
+            },
+            statements=statements,
+            provenance=prov,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 4: Compute & warehouses (live inventory)
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_compute_warehouses(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> ComputeWarehousesResponse:
+        ws = self._primary_workspace(workspace_id)
+        grouped = self._inventory(connection_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        prov = {
+            "inventory": self._inventory_provenance(connection_id, ("cluster", "warehouse", "job")),
+            "utilization": SectionProvenance(
+                classification=KpiStatus.BLOCKED_PENDING_APPROVAL,
+                source="system.compute.node_timeline / warehouse_events",
+                message="Utilization and uptime need system.compute tables (SQL on a started warehouse).",
+                requirement="Approval to start the SQL warehouse; SELECT on system.compute.*",
+                retrieved_at=self._now_iso(),
+            ),
+        }
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+
+        def spend(kind: str, rid: str) -> tuple[float | None, float | None]:
+            matched = self._billing_rows(workspace_id, kind, rid) if rows else []
+            if not matched:
+                return None, None
+            return self._sum_cost(matched), self._sum_dbu(matched)
+
+        clusters: list[ClusterInventoryItem] = []
+        if not is_unknown and filter_type in (None, "cluster"):
+            for c in grouped.get("cluster", []):
+                if resource_id and c.id != resource_id:
+                    continue
+                term = c.metadata.get("autotermination_minutes")
+                cost, dbu = spend("cluster", c.id)
+                scale = c.metadata.get("autoscale")
+                workers = c.metadata.get("num_workers")
+                size = (
+                    f"autoscale {scale}"
+                    if scale
+                    else f"{workers} workers"
+                    if workers is not None
+                    else "workers n/a"
+                )
+                clusters.append(
+                    ClusterInventoryItem(
+                        cluster_id=c.id,
+                        name=c.name,
+                        type=str(c.metadata.get("cluster_source") or "Unknown"),
+                        owner=c.creator or "Unknown",
+                        node_profile=f"{c.metadata.get('node_type_id') or 'n/a'} - {size}",
+                        runtime_hrs=None,
+                        cpu_utilization="-",
+                        dbu_mtd=dbu,
+                        cost_mtd=cost,
+                        state=c.status or "UNKNOWN",
+                        finding="No auto-termination configured"
+                        if not term
+                        else f"Auto-termination {term} min",
+                    )
+                )
+        warehouses: list[WarehouseInventoryItem] = []
+        if not is_unknown and filter_type in (None, "warehouse"):
+            for w in grouped.get("warehouse", []):
+                if resource_id and w.id != resource_id:
+                    continue
+                stop = w.metadata.get("auto_stop_mins")
+                cost, _ = spend("warehouse", w.id)
+                serverless = w.metadata.get("enable_serverless_compute")
+                warehouses.append(
+                    WarehouseInventoryItem(
+                        warehouse_id=w.id,
+                        name=w.name,
+                        warehouse_class="Serverless"
+                        if serverless
+                        else str(w.metadata.get("warehouse_type") or "Classic"),
+                        size=str(w.metadata.get("cluster_size") or "n/a"),
+                        uptime="-",
+                        avg_utilization="-",
+                        queue_p95="-",
+                        auto_stop_mins=stop,
+                        cost_mtd=cost,
+                        state=w.status or "UNKNOWN",
+                        recommendation="Review auto-stop"
+                        if (stop is None or stop > 10)
+                        else "No configuration findings",
+                    )
+                )
+        job_runs = grouped.get("job_run", [])
+        jobs: list[JobEfficiencyItem] = []
+        if not is_unknown and filter_type is None:
+            for j in grouped.get("job", []):
+                runs = [r for r in job_runs if r.metadata.get("job_id") == j.id]
+                finished = [r for r in runs if r.metadata.get("result_state")]
+                ok = sum(1 for r in finished if r.metadata.get("result_state") == "SUCCESS")
+                durations = [
+                    r.metadata["execution_duration_ms"]
+                    for r in runs
+                    if r.metadata.get("execution_duration_ms")
+                ]
+                jobs.append(
+                    JobEfficiencyItem(
+                        job_id=j.id,
+                        name=j.name,
+                        runs=len(runs),
+                        success_rate=f"{ok / len(finished) * 100:.1f}%" if finished else "-",
+                        avg_duration=f"{statistics.fmean(durations) / 60000:.1f} min"
+                        if durations
+                        else "-",
+                        signal="Run metrics cover the retrieved run window only",
+                    )
+                )
+        total_units = len(clusters) + len(warehouses)
+        running = sum(1 for x in clusters if x.state == "RUNNING") + sum(
+            1 for x in warehouses if x.state == "RUNNING"
+        )
+        comp_rows = [
+            r
+            for r in rows
+            if r.usage_metadata.get("cluster_id") or r.usage_metadata.get("warehouse_id")
+        ]
+        kpis = {
+            "compute_spend": self._mk_kpi(
+                "compute_spend",
+                "USD",
+                KpiStatus.CALCULATED if comp_rows else KpiStatus.BLOCKED_PENDING_APPROVAL,
+                value=self._sum_cost(comp_rows) if comp_rows else None,
+                source="system.billing.usage x list prices",
+                record_count=len(comp_rows),
+                caveats=None if comp_rows else "Needs ingested billing rows.",
+                **common,
+            ),
+            "active_compute": self._mk_kpi(
+                "active_compute",
+                "units",
+                KpiStatus.LIVE if grouped else KpiStatus.UNAVAILABLE,
+                value=float(running) if grouped else None,
+                currency=None,
+                formatted=f"{running} of {total_units} running" if grouped else None,
+                source="Databricks clusters/warehouses API",
+                aggregation="COUNT",
+                formula="count(state == RUNNING)",
+                record_count=total_units,
+                **common,
+            ),
+            "idle_capacity": self._mk_kpi(
+                "idle_capacity",
+                "%",
+                KpiStatus.BLOCKED_PENDING_APPROVAL,
+                currency=None,
+                source="system.compute.node_timeline",
+                caveats=prov["utilization"].message,
+                **common,
+            ),
+            "potential_savings": self._mk_kpi(
+                "potential_savings",
+                "USD",
+                KpiStatus.UNAVAILABLE,
+                source="Optimization Advisor",
+                caveats="Savings are not calculable without utilization and billing data.",
+                **common,
+            ),
+        }
+        return ComputeWarehousesResponse(
+            kpis=kpis,
+            clusters=clusters,
+            warehouses=warehouses,
+            jobs=jobs,
+            heatmap_utilization=[],
+            provenance=prov,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 5: AI economics (live endpoint inventory; usage is blocked)
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_ai_economics(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> AiEconomicsResponse:
+        ws = self._primary_workspace(workspace_id)
+        grouped = self._inventory(connection_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        usage_prov = SectionProvenance(
+            classification=KpiStatus.BLOCKED_PENDING_APPROVAL,
+            source="system.serving.endpoint_usage / system.ai_gateway.usage",
+            message="Token counts, request counts and latency are only exposed through system tables (SQL).",
+            requirement="Approval to start the SQL warehouse; SELECT on system.serving / system.ai_gateway tables.",
+            retrieved_at=self._now_iso(),
+        )
+        prov = {
+            "endpoints": self._inventory_provenance(connection_id, ("serving_endpoint",)),
+            "usage": usage_prov,
+        }
+        rows = [] if is_unknown else self._billing_rows(workspace_id, "serving", None)
+        endpoints: list[ModelServingEndpointItem] = []
+        if not is_unknown and filter_type in (None, "serving"):
+            for e in grouped.get("serving_endpoint", []):
+                if resource_id and e.id != resource_id:
+                    continue
+                ents = [x for x in (e.metadata.get("served_entities") or []) if isinstance(x, dict)]
+                model = (ents[0].get("entity_name") or ents[0].get("name")) if ents else None
+                matched = [
+                    r
+                    for r in rows
+                    if e.id
+                    in (r.usage_metadata.get("endpoint_id"), r.usage_metadata.get("endpoint_name"))
+                ]
+                endpoints.append(
+                    ModelServingEndpointItem(
+                        endpoint_name=e.name,
+                        model=str(model or "n/a"),
+                        serving_type=str(e.metadata.get("task") or "n/a"),
+                        requests_per_day="-",
+                        capacity_utilization="-",
+                        p95_latency="-",
+                        availability=e.status or "UNKNOWN",
+                        monthly_cost=self._sum_cost(matched) if matched else None,
+                        action="Usage telemetry unavailable",
+                    )
+                )
+        ai_rows = [
+            r
+            for r in (
+                self._billing_rows(workspace_id, filter_type, resource_id) if not is_unknown else []
+            )
+            if self._is_ai(r)
+        ]
+        ai_status = KpiStatus.CALCULATED if ai_rows else KpiStatus.BLOCKED_PENDING_APPROVAL
+
+        def blocked(mid: str, unit: str, currency: str | None = None) -> KpiMetric:
+            return self._mk_kpi(
+                mid,
+                unit,
+                KpiStatus.BLOCKED_PENDING_APPROVAL,
+                currency=currency,
+                source=usage_prov.source,
+                caveats=usage_prov.message,
+                **common,
+            )
+
+        training: list[TrainingEvaluationItem] = []
+        runs = grouped.get("mlflow_run", [])
+        if not is_unknown and filter_type is None:
+            for x in grouped.get("mlflow_experiment", []):
+                n = sum(1 for r in runs if r.metadata.get("experiment_id") == x.id)
+                training.append(
+                    TrainingEvaluationItem(
+                        experiment_name=x.name,
+                        workload="MLflow experiment",
+                        compute_hrs="-",
+                        runs=n,
+                        artifact_storage="-",
+                        spend=None,
+                        quality_lift="-",
+                        decision="Not assessed",
+                    )
+                )
+        kpis = {
+            "ai_spend": self._mk_kpi(
+                "ai_spend",
+                "USD",
+                ai_status,
+                value=self._sum_cost(ai_rows) if ai_rows else None,
+                source="system.billing.usage x list prices",
+                record_count=len(ai_rows),
+                caveats="DBU compute cost only; token-priced external models are not included.",
+                **common,
+            ),
+            "input_tokens": blocked("input_tokens", "tokens"),
+            "output_tokens": blocked("output_tokens", "tokens"),
+            "cached_tokens": blocked("cached_tokens", "tokens"),
+            "cost_per_1k_tokens": blocked("cost_per_1k_tokens", "USD", "USD"),
+            "cost_per_task": self._mk_kpi(
+                "cost_per_task",
+                "USD",
+                KpiStatus.UNAVAILABLE,
+                source="Agent evaluation telemetry",
+                caveats="No task/outcome telemetry source is connected.",
+                **common,
+            ),
+        }
+        return AiEconomicsResponse(
+            kpis=kpis,
+            token_consumption_by_model=[],
+            token_cost_drivers=[],
+            model_economics=[],
+            serving_endpoints=endpoints,
+            genie_scorecard=[],
+            agents=[],
+            training=training,
+            unit_economics=[],
+            provenance=prov,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 6: Data & storage (Unity Catalog metadata only)
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_data_storage(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> DataStorageResponse:
+        ws = self._primary_workspace(workspace_id)
+        grouped = self._inventory(connection_id)
+        _, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        size_prov = SectionProvenance(
+            classification=KpiStatus.BLOCKED_PENDING_APPROVAL,
+            source="DESCRIBE DETAIL / system.information_schema / Azure Storage metrics",
+            message="Unity Catalog REST metadata does not report table size, growth or last access.",
+            requirement="Approval to run read-only SQL on a started warehouse, or Azure Monitor Reader on the storage account.",
+            retrieved_at=self._now_iso(),
+        )
+        prov = {
+            "catalogs": self._inventory_provenance(connection_id, ("catalog",)),
+            "storage_metrics": size_prov,
+        }
+        tables: list[StorageInventoryItem] = []
+        cache = self.workspace_service._uc_cache.get(connection_id)
+        if not is_unknown:
+            if cache and cache.catalogs:
+                for cat in cache.catalogs:
+                    for sch in cat.schemas:
+                        for t in sch.tables:
+                            tables.append(
+                                StorageInventoryItem(
+                                    catalog_schema_table=t.full_name,
+                                    storage_type=f"{t.table_type or 'n/a'} / {t.data_source_format or 'n/a'}",
+                                    size="-",
+                                    last_read="-",
+                                    retention="-",
+                                    growth_month="-",
+                                    monthly_cost=None,
+                                    recommendation="Size telemetry unavailable",
+                                )
+                            )
+                tables = tables[:500]  # response cap; full counts are in provenance
+                prov["tables"] = SectionProvenance(
+                    classification=KpiStatus.LIVE,
+                    source="Unity Catalog REST API",
+                    message=f"{cache.total_catalogs} catalogs, {cache.total_schemas} schemas, {cache.total_tables} tables discovered.",
+                    retrieved_at=cache.retrieved_at.isoformat(),
+                    record_count=cache.total_tables,
+                )
+            else:
+                for cat_res in grouped.get("catalog", []):
+                    tables.append(
+                        StorageInventoryItem(
+                            catalog_schema_table=cat_res.name,
+                            storage_type=f"Catalog ({cat_res.metadata.get('catalog_type') or 'n/a'})",
+                            size="-",
+                            last_read="-",
+                            retention="-",
+                            growth_month="-",
+                            monthly_cost=None,
+                            recommendation="Size telemetry unavailable",
+                        )
+                    )
+
+        def blocked(mid: str, unit: str, currency: str | None = None) -> KpiMetric:
+            return self._mk_kpi(
+                mid,
+                unit,
+                KpiStatus.BLOCKED_PENDING_APPROVAL,
+                currency=currency,
+                source=size_prov.source,
+                caveats=size_prov.message,
+                **common,
+            )
+
+        return DataStorageResponse(
+            kpis={
+                "storage_spend": self._mk_kpi(
+                    "storage_spend",
+                    "USD",
+                    KpiStatus.UNAVAILABLE,
+                    source="Azure Cost Management",
+                    caveats="Storage charges are Azure resources, not in system.billing.usage.",
+                    **common,
+                ),
+                "total_stored_data": blocked("total_stored_data", "TB"),
+                "cold_data": blocked("cold_data", "%"),
+                "ingestion_spend": blocked("ingestion_spend", "USD", "USD"),
+            },
+            storage_tiers=[],
+            lifecycle_opportunities=[],
+            tables=tables,
+            provenance=prov,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 7: Network & cloud economics
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_network_cloud(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> NetworkCloudResponse:
+        _ = connection_id
+        ws = self._primary_workspace(workspace_id)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        reason = SectionProvenance(
+            classification=KpiStatus.NOT_AUTHORIZED,
+            source="Azure Cost Management / Azure Resource Graph",
+            message="Databricks exposes no network cost telemetry; this needs read-only Azure access.",
+            requirement="Azure Reader and Cost Management Reader on the workspace subscription / resource group.",
+            retrieved_at=self._now_iso(),
+        )
+
+        def kpi(mid: str, unit: str, currency: str | None = None) -> KpiMetric:
+            # Needs Azure read access (not SQL): report it as a permission requirement.
+            return self._mk_kpi(
+                mid,
+                unit,
+                KpiStatus.NOT_AUTHORIZED,
+                currency=currency,
+                source=reason.source,
+                caveats=f"{reason.message} Required: {reason.requirement}",
+                **common,
+            )
+
+        return NetworkCloudResponse(
+            kpis={
+                "network_infra_spend": kpi("network_infra_spend", "USD", "USD"),
+                "data_egress": kpi("data_egress", "GB"),
+                "private_endpoints": kpi("private_endpoints", "count"),
+                "unmapped_resources": kpi("unmapped_resources", "count"),
+            },
+            components=[],
+            provenance={"azure": reason},
+        )
+
+    # ------------------------------------------------------------------
+    # Module 8: Optimization advisor
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_optimization_advisor(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> OptimizationAdvisorResponse:
+        ws = self._primary_workspace(workspace_id)
+        recs = self._get_decisions(resource_id, resource_type)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        savings = self.get_decision_savings(recs)
+        approved = [d for d in recs if d.status == "Approved"]
+        approved_savings = self.get_decision_savings(approved)
+        savings_status = KpiStatus.CALCULATED if savings is not None else KpiStatus.UNAVAILABLE
+        note = "Savings are only reported when calculable from usage and billing telemetry."
+        kpis = {
+            "potential_savings": self._mk_kpi(
+                "potential_savings",
+                "USD",
+                savings_status,
+                value=savings,
+                source="Optimization Advisor",
+                caveats=note,
+                **common,
+            ),
+            "estimated_savings": self._mk_kpi(
+                "estimated_savings",
+                "USD",
+                savings_status,
+                value=savings,
+                source="Optimization Advisor",
+                caveats=note,
+                **common,
+            ),
+            "approved_savings": self._mk_kpi(
+                "approved_savings",
+                "USD",
+                KpiStatus.CALCULATED if approved_savings is not None else KpiStatus.UNAVAILABLE,
+                value=approved_savings,
+                source="Optimization Advisor",
+                caveats=note,
+                **common,
+            ),
+            "quick_wins": self._mk_kpi(
+                "quick_wins",
+                "count",
+                KpiStatus.CALCULATED,
+                value=float(len(recs)),
+                currency=None,
+                source="Optimization Advisor",
+                formula="count(configuration findings)",
+                **common,
+            ),
+            "awaiting_approval": self._mk_kpi(
+                "awaiting_approval",
+                "count",
+                KpiStatus.CALCULATED,
+                value=float(sum(1 for d in recs if d.status == "Approval required")),
+                currency=None,
+                source="Optimization Advisor",
+                **common,
+            ),
+            "implemented_savings": self._mk_kpi(
+                "implemented_savings",
+                "USD",
+                KpiStatus.UNAVAILABLE,
+                source="Post-change billing audit",
+                caveats="No change has been verified against post-change billing.",
+                **common,
+            ),
+            "realized_savings": self._mk_kpi(
+                "realized_savings",
+                "USD",
+                KpiStatus.UNAVAILABLE,
+                source="Post-change billing audit",
+                caveats="Realized savings require a verified before/after billing comparison.",
+                **common,
+            ),
+        }
+        return OptimizationAdvisorResponse(
+            kpis=kpis,
+            recommendations=recs,
+            provenance={
+                "recommendations": self._inventory_provenance(
+                    connection_id, ("cluster", "warehouse", "serving_endpoint")
+                )
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Module 9: Forecast & budgets
+    # ------------------------------------------------------------------
+
+    def simulate_forecast_scenario(
+        self, req: ScenarioSimulationRequest
+    ) -> ScenarioSimulationResponse:
+        """Scenario on the real run-rate forecast; unavailable without enough history."""
+        rows = self._billing_rows(None, None, None)
+        fc = self._forecast(rows) if rows else None
+        if not fc:
+            return ScenarioSimulationResponse(
+                formatted_spend="-",
+                delta_label=f"Needs >= {self._MIN_HISTORY_DAYS} days of ingested billing history.",
+                status=KpiStatus.INSUFFICIENT_HISTORY,
+                message="No baseline forecast exists, so no scenario is computed.",
+            )
+        base = float(fc["forecast"])
+        ai = self._sum_cost(
+            [r for r in rows if self._is_ai(r) and r.usage_date.startswith(fc["month"])]
+        )
+        compute = max(0.0, base - ai)
+        adjusted = (
+            base * (1 + req.growth_pct / 100)
+            - compute * req.compute_save_pct / 100
+            - ai * req.token_save_pct / 100
+        )
+        budget = self._budget()
+        return ScenarioSimulationResponse(
+            baseline_spend=round(base, 2),
+            adjusted_spend=round(adjusted, 2),
+            formatted_spend=self._usd(adjusted),
+            savings_vs_baseline=round(base - adjusted, 2),
+            delta_label=f"{(adjusted - base) / base * 100:+.1f}% vs baseline forecast"
+            if base
+            else "n/a",
+            is_favorable=adjusted <= base,
+            budget_variance=round(budget - adjusted, 2) if budget is not None else None,
+            status=KpiStatus.ESTIMATED,
+            message="Scenario assumptions applied to a run-rate projection; not actual spend.",
+        )
+
+    @_unknown_scope_guard
+    def get_forecast_budgets(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> ForecastBudgetsResponse:
+        ws = self._primary_workspace(workspace_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        fc = self._forecast(rows) if rows else None
+        budget = self._budget()
+        prov = {"history": self._billing_provenance(rows, connection_id)}
+        hist_status = KpiStatus.INSUFFICIENT_HISTORY if rows else KpiStatus.BLOCKED_PENDING_APPROVAL
+        no_hist = f"Needs >= {self._MIN_HISTORY_DAYS} days of ingested billing history."
+        mtd = (
+            fc["mtd"] if fc else (self._sum_cost(self._reference_month(rows)[1]) if rows else None)
+        )
+        util = round(mtd / budget * 100, 1) if (mtd is not None and budget) else None
+        overrun = (
+            round(max(0.0, fc["forecast"] - budget), 2) if (fc and budget is not None) else None
+        )
+        kpis = {
+            "approved_budget": self._mk_kpi(
+                "approved_budget",
+                "USD",
+                KpiStatus.LIVE if budget is not None else KpiStatus.UNAVAILABLE,
+                value=budget,
+                formatted=None if budget is not None else "No budget configured",
+                source="FINOPS_MONTHLY_BUDGET_USD setting",
+                caveats=None
+                if budget is not None
+                else "Set finops_monthly_budget_usd to enable budget tracking.",
+                **common,
+            ),
+            "actual_mtd": self._mk_kpi(
+                "actual_mtd",
+                "USD",
+                KpiStatus.CALCULATED if mtd is not None else hist_status,
+                value=mtd,
+                source="system.billing.usage x list prices",
+                caveats="Actual (list-price basis).",
+                **common,
+            ),
+            "forecast_month_end": self._mk_kpi(
+                "forecast_month_end",
+                "USD",
+                KpiStatus.ESTIMATED if fc else hist_status,
+                value=fc["forecast"] if fc else None,
+                source="Run-rate projection",
+                formula="MTD + trailing-7-day average x remaining days",
+                caveats="Forecast, not actual." if fc else no_hist,
+                **common,
+            ),
+            "forecast_confidence": self._mk_kpi(
+                "forecast_confidence",
+                "%",
+                KpiStatus.UNAVAILABLE,
+                currency=None,
+                source="Forecast backtest",
+                caveats="No confidence interval is computed for the run-rate method.",
+                **common,
+            ),
+            "forecast_accuracy": self._mk_kpi(
+                "forecast_accuracy",
+                "%",
+                KpiStatus.INSUFFICIENT_HISTORY,
+                currency=None,
+                source="Forecast backtest",
+                caveats="Requires >= 3 completed forecast cycles.",
+                **common,
+            ),
+            "budget_utilization": self._mk_kpi(
+                "budget_utilization",
+                "%",
+                KpiStatus.CALCULATED if util is not None else KpiStatus.UNAVAILABLE,
+                value=util,
+                currency=None,
+                source="Budget vs actual",
+                caveats=None if budget else "No budget configured.",
+                **common,
+            ),
+            "projected_overrun": self._mk_kpi(
+                "projected_overrun",
+                "USD",
+                KpiStatus.ESTIMATED if overrun is not None else KpiStatus.UNAVAILABLE,
+                value=overrun,
+                source="Forecast vs budget",
+                caveats="Requires both a forecast and a configured budget.",
+                **common,
+            ),
+        }
+        controls: list[BudgetControlItem] = []
+        burn: list[dict[str, Any]] = []
+        if budget is not None and not is_unknown:
+            controls.append(
+                BudgetControlItem(
+                    budget_scope="Databricks workspace (monthly)",
+                    owner="Configured",
+                    budget=budget,
+                    actual=mtd,
+                    forecast=fc["forecast"] if fc else None,
+                    threshold="n/a",
+                    burn_pct=int(util) if util is not None else None,
+                    status="Forecast breach"
+                    if (overrun or 0) > 0
+                    else "On track"
+                    if mtd is not None
+                    else "No actuals",
+                )
+            )
+            if rows:
+                cum = 0.0
+                for d, (c, _q) in self._daily_totals(self._reference_month(rows)[1]).items():
+                    cum += c
+                    burn.append(
+                        {"day": self._label_date(d), "actual": round(cum, 2), "budget": budget}
+                    )
+        return ForecastBudgetsResponse(
+            kpis=kpis,
+            budget_burn=burn,
+            budget_controls=controls,
+            default_scenario=self.simulate_forecast_scenario(ScenarioSimulationRequest()),
+            provenance=prov,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 10: Anomaly detection
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_anomaly_detection(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> AnomalyDetectionResponse:
+        ws = self._primary_workspace(workspace_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        found = self._detect_anomalies(rows) if rows else None
+        prov = {"history": self._billing_provenance(rows, connection_id)}
+        if found is None:
+            status = KpiStatus.INSUFFICIENT_HISTORY if rows else KpiStatus.BLOCKED_PENDING_APPROVAL
+            prov["detection"] = SectionProvenance(
+                classification=status,
+                source="system.billing.usage",
+                message=f"Anomaly detection needs >= {self._MIN_HISTORY_DAYS} days of ingested billing history.",
+                retrieved_at=self._now_iso(),
+            )
+            kpi_open = self._mk_kpi(
+                "open_anomalies",
+                "count",
+                status,
+                currency=None,
+                source="system.billing.usage",
+                **common,
+            )
+            kpi_exp = self._mk_kpi(
+                "potential_exposure", "USD", status, source="system.billing.usage", **common
+            )
+            found = []
+        else:
+            open_items = [a for a in found if a.status not in ("Resolved", "False positive")]
+            exposure = sum(
+                float(a.estimated_impact.split()[0].replace("$", "").replace(",", ""))
+                for a in open_items
+            )
+            kpi_open = self._mk_kpi(
+                "open_anomalies",
+                "count",
+                KpiStatus.CALCULATED,
+                value=float(len(open_items)),
+                currency=None,
+                source="system.billing.usage",
+                **common,
+            )
+            kpi_exp = self._mk_kpi(
+                "potential_exposure",
+                "USD",
+                KpiStatus.CALCULATED,
+                value=round(exposure, 2),
+                source="system.billing.usage x list prices",
+                **common,
+            )
+        return AnomalyDetectionResponse(
+            kpis={
+                "open_anomalies": kpi_open,
+                "potential_exposure": kpi_exp,
+                "mean_time_to_detect": self._mk_kpi(
+                    "mean_time_to_detect",
+                    "hours",
+                    KpiStatus.UNAVAILABLE,
+                    currency=None,
+                    source="Detection latency telemetry",
+                    caveats="Not measured.",
+                    **common,
+                ),
+                "auto_triaged": self._mk_kpi(
+                    "auto_triaged",
+                    "%",
+                    KpiStatus.UNAVAILABLE,
+                    currency=None,
+                    source="Triage workflow",
+                    caveats="No automated triage exists.",
+                    **common,
+                ),
+            },
+            anomalies=found,
+            provenance=prov,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 13: Workload economics
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_workload_economics(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> WorkloadEconomicsResponse:
+        ws = self._primary_workspace(workspace_id)
+        grouped = self._inventory(connection_id)
+        filter_type, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        rows = [] if is_unknown else self._billing_rows(workspace_id, filter_type, resource_id)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        names: dict[str, str] = {
+            r.id: r.name
+            for t in ("job", "warehouse", "cluster", "serving_endpoint", "app", "pipeline")
+            for r in grouped.get(t, [])
+        }
+        spend: dict[tuple[str, str], list[BillingUsageRecord]] = {}
+        for r in rows:
+            key = self._resource_of(r)
+            if key:
+                spend.setdefault(key, []).append(r)
+        workloads: list[WorkloadUnitEconomicsItem] = []
+        seen: set[str] = set()
+        for (rtype, rid), recs in sorted(spend.items(), key=lambda kv: -self._sum_cost(kv[1])):
+            seen.add(rid)
+            workloads.append(
+                WorkloadUnitEconomicsItem(
+                    workload=names.get(rid, rid),
+                    workload_type=rtype,
+                    owner=next((o for o in (self._owner_of(r) for r in recs) if o), "Unassigned"),
+                    monthly_spend=self._sum_cost(recs),
+                    volume="-",
+                    unit_cost="-",
+                    sla_quality="-",
+                    business_outcome="-",
+                    efficiency_trend="-",
+                )
+            )
+        if not is_unknown and filter_type is None:
+            for t, label in (("job", "job"), ("pipeline", "pipeline")):
+                for item in grouped.get(t, []):
+                    if item.id not in seen:
+                        workloads.append(
+                            WorkloadUnitEconomicsItem(
+                                workload=item.name,
+                                workload_type=label,
+                                owner=item.creator or "Unassigned",
+                                monthly_spend=None,
+                                volume="-",
+                                unit_cost="-",
+                                sla_quality="-",
+                                business_outcome="-",
+                                efficiency_trend="-",
+                            )
+                        )
+        costed = [w for w in workloads if w.monthly_spend is not None]
+        status = (
+            KpiStatus.CALCULATED
+            if costed
+            else (KpiStatus.NO_DATA if is_unknown else KpiStatus.BLOCKED_PENDING_APPROVAL)
+        )
+        avg = round(sum(w.monthly_spend or 0 for w in costed) / len(costed), 2) if costed else None
+        return WorkloadEconomicsResponse(
+            kpis={
+                "tracked_workloads": self._mk_kpi(
+                    "tracked_workloads",
+                    "count",
+                    KpiStatus.LIVE if grouped else KpiStatus.UNAVAILABLE,
+                    value=float(len(workloads)) if grouped or workloads else None,
+                    currency=None,
+                    source="Jobs / pipelines API + system.billing.usage",
+                    **common,
+                ),
+                "unit_metrics_coverage": self._mk_kpi(
+                    "unit_metrics_coverage",
+                    "%",
+                    KpiStatus.UNAVAILABLE,
+                    currency=None,
+                    source="Business volume metrics",
+                    caveats="No business volume metric source is connected.",
+                    **common,
+                ),
+                "avg_cost_workload": self._mk_kpi(
+                    "avg_cost_workload",
+                    "USD",
+                    status,
+                    value=avg,
+                    source="system.billing.usage x list prices",
+                    **common,
+                ),
+                "value_positive": self._mk_kpi(
+                    "value_positive",
+                    "count",
+                    KpiStatus.UNAVAILABLE,
+                    currency=None,
+                    source="Business outcome metrics",
+                    caveats="No outcome/value data is connected.",
+                    **common,
+                ),
+            },
+            workloads=workloads,
+            provenance={"spend": self._billing_provenance(rows, connection_id)},
+        )
+
+    # ------------------------------------------------------------------
+    # Module 11: Governance (from live cluster policies and configuration)
+    # ------------------------------------------------------------------
+
+    @_unknown_scope_guard
+    def get_governance_policies(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> GovernancePoliciesResponse:
+        ws = self._primary_workspace(workspace_id)
+        grouped = self._inventory(connection_id)
+        _, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        common: dict[str, Any] = {
+            "workspace_id": ws,
+            "resource_id": resource_id,
+            "resource_type": resource_type,
+        }
+        policies = [
+            PolicyCatalogueItem(
+                policy_name=p.name,
+                scope="Compute (cluster policy)",
+                control="Cluster policy definition",
+                enforcement="Cluster policy",
+                owner=p.creator or "Unknown",
+                exceptions=None,
+                status="Active",
+            )
+            for p in ([] if is_unknown else grouped.get("cluster_policy", []))
+        ]
+        owned = [
+            r
+            for t in ("cluster", "warehouse", "serving_endpoint", "app")
+            for r in grouped.get(t, [])
+        ]
+        no_owner = sum(1 for r in owned if not r.creator)
+        clusters = grouped.get("cluster", [])
+        warehouses = grouped.get("warehouse", [])
+        checklist = [
+            {
+                "label": "Cluster policies are defined",
+                "checked": bool(grouped.get("cluster_policy")),
+            },
+            {
+                "label": "All clusters have auto-termination configured",
+                "checked": bool(clusters)
+                and all(c.metadata.get("autotermination_minutes") for c in clusters),
+            },
+            {
+                "label": "All SQL warehouses auto-stop within 10 minutes",
+                "checked": bool(warehouses)
+                and all(0 < (w.metadata.get("auto_stop_mins") or 0) <= 10 for w in warehouses),
+            },
+            {
+                "label": "All discovered resources have a creator/owner",
+                "checked": bool(owned) and no_owner == 0,
+            },
+        ]
+        live = KpiStatus.LIVE if grouped else KpiStatus.UNAVAILABLE
+        return GovernancePoliciesResponse(
+            kpis={
+                "policy_compliance": self._mk_kpi(
+                    "policy_compliance",
+                    "%",
+                    KpiStatus.UNAVAILABLE,
+                    currency=None,
+                    source="Policy compliance scanner",
+                    caveats="No compliance scanner data source exists.",
+                    **common,
+                ),
+                "policy_violations": self._mk_kpi(
+                    "policy_violations",
+                    "violations",
+                    KpiStatus.UNAVAILABLE,
+                    currency=None,
+                    source="Policy compliance scanner",
+                    caveats="No violation data source exists.",
+                    **common,
+                ),
+                "resources_without_owner": self._mk_kpi(
+                    "resources_without_owner",
+                    "resources",
+                    live,
+                    value=float(no_owner) if grouped else None,
+                    currency=None,
+                    source="Databricks resource APIs (creator field)",
+                    formula="count(resources WHERE creator IS NULL)",
+                    record_count=len(owned),
+                    **common,
+                ),
+                "expiring_exceptions": self._mk_kpi(
+                    "expiring_exceptions",
+                    "exceptions",
+                    KpiStatus.UNAVAILABLE,
+                    currency=None,
+                    source="Exception registry",
+                    caveats="No exception registry exists.",
+                    **common,
+                ),
+            },
+            policies=policies,
+            checklist=checklist,
+            workflow_steps=[
+                "1. Recommendation generated with evidence and estimated savings.",
+                "2. Technical owner validates performance, reliability and security impact.",
+                "3. Budget owner approves financial impact and implementation window.",
+                "4. Change is executed through an approved deployment mechanism (outside this platform).",
+                "5. Actual savings and service-level impact are measured and audited.",
+            ],
+            provenance={"policies": self._inventory_provenance(connection_id, ("cluster_policy",))},
+        )
+
+    # ------------------------------------------------------------------
+    # Module 14: Reports & audit
+    # ------------------------------------------------------------------
+
+    def get_reports_audit(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> ReportsAuditResponse:
+        """Report catalogue plus audit events recorded by this process (no seeded history)."""
+        self.validate_scope(workspace_id)
+        _ = connection_id
+        _, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        if is_unknown:
+            return ReportsAuditResponse(report_packs=[], audit_events=[])
+        packs = [
+            ReportPackItem(
+                report_id="rep-exec",
+                title="Executive FinOps Pack",
+                subtitle="Spend, forecast, savings and decisions (needs billing ingestion).",
+                format="CSV",
+            ),
+            ReportPackItem(
+                report_id="rep-opt",
+                title="Optimization Findings",
+                subtitle="Configuration findings with evidence and approval state.",
+                format="CSV",
+            ),
+            ReportPackItem(
+                report_id="rep-alloc",
+                title="Allocation & Chargeback",
+                subtitle="Tag-based attribution with explicit unallocated spend.",
+                format="CSV",
+            ),
+            ReportPackItem(
+                report_id="rep-gov",
+                title="Policy Compliance",
+                subtitle="Cluster policies and configuration checks.",
+                format="CSV",
+            ),
+        ]
+        return ReportsAuditResponse(report_packs=packs, audit_events=self._audit_events)
+
+    # ------------------------------------------------------------------
+    # Module 15: Settings & integrations
+    # ------------------------------------------------------------------
+
+    def get_settings_integrations(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        resource_id: str | None = None,
+        resource_type: str | None = None,
+    ) -> SettingsIntegrationsResponse:
+        self.validate_scope(workspace_id)
+        _, is_unknown = self._resolve_resource_filter(resource_id, resource_type)
+        if is_unknown:
+            return SettingsIntegrationsResponse(
+                connected_sources=[], pipeline_health=[], rate_cards=[], system_tables_readiness={}
+            )
+        discovery = self.workspace_service._discovery_cache.get(connection_id)
+        usage = self.billing_service._usage_store
+        wh_state = self._warehouse_state(connection_id)
+        sources = [
+            ConnectedSourceItem(
+                source_name="Databricks Workspace APIs",
+                status="Connected" if discovery else "Needs validation",
+                last_verified=discovery.discovered_at.isoformat() if discovery else "Never",
+                details=f"{discovery.total_resources_count} resources discovered."
+                if discovery
+                else "Discovery has not run.",
+            ),
+            ConnectedSourceItem(
+                source_name="Databricks System Tables (SQL)",
+                status="Connected" if usage else "Blocked - approval required",
+                last_verified="Never",
+                details=f"{len(usage)} usage rows ingested; SQL warehouse state: {wh_state}.",
+            ),
+            ConnectedSourceItem(
+                source_name="Azure Cost Management",
+                status="Unconfigured",
+                last_verified="Never",
+                details="Requires Cost Management Reader on the subscription.",
+            ),
+            ConnectedSourceItem(
+                source_name="Identity & Cost-Center Map",
+                status="Unconfigured",
+                last_verified="Never",
+                details="No mapping source is configured; spend is attributed from billing tags only.",
+            ),
+        ]
+        last_run = (
+            self.billing_service._runs_store[-1] if self.billing_service._runs_store else None
+        )
+        unmatched = sum(
+            1 for r in usage.values() if r.usage_unit == "DBU" and not r.pricing_matched
+        )
+        untagged = sum(1 for r in usage.values() if not self._owner_of(r))
+        pipeline_health = [
+            PipelineHealthMetric(metric_name="Billing Rows Ingested", metric_value=str(len(usage))),
+            PipelineHealthMetric(
+                metric_name="Last Ingestion Run",
+                metric_value=f"{last_run.status} at {last_run.completed_at}"
+                if last_run
+                else "No run yet",
+            ),
+            PipelineHealthMetric(
+                metric_name="Unmatched SKU Records",
+                metric_value=str(unmatched) if usage else "-",
+            ),
+            PipelineHealthMetric(
+                metric_name="Missing Owner Tag Ratio",
+                metric_value=f"{untagged / len(usage) * 100:.1f}%" if usage else "-",
+            ),
+        ]
+        rate_cards = [
+            RateCardItem(
+                provider="Databricks",
+                sku_family=p.sku_name,
+                region=p.cloud,
+                list_rate=f"${p.price_per_unit:.5f} / {p.pricing_unit}",
+                contract_rate="Not configured",
+                discount="N/A",
+                effective_date=p.price_start_time[:10],
+                source="Built-in rate card (replaced by system.billing.list_prices on ingestion)",
+            )
+            for p in self.billing_service._price_store
+        ]
+        st = self.workspace_service._system_tables_cache.get(connection_id)
+        readiness: dict[str, Any] = {
+            "catalog": "system",
+            "schemas_verified": st.discovered_schemas if st else [],
+            "key_tables": [
+                {
+                    "name": t.full_name,
+                    "columns_count": t.columns_count,
+                    "status": t.metadata_status.value,
+                    "select_grant_verified": t.select_grant_verified,
+                }
+                for t in (st.tables if st else [])
+                if t.full_name
+                in (
+                    "system.billing.usage",
+                    "system.billing.list_prices",
+                    "system.compute.clusters",
+                    "system.compute.warehouses",
+                    "system.query.history",
+                )
+            ],
+            "sql_execution_state": wh_state,
+            "sql_execution_note": "No SQL is executed without explicit approval; the warehouse is never auto-started.",
+        }
+        return SettingsIntegrationsResponse(
+            connected_sources=sources,
+            pipeline_health=pipeline_health,
+            rate_cards=rate_cards,
+            system_tables_readiness=readiness,
+        )
+
+    # ------------------------------------------------------------------
+    # Module 12: Query history (Databricks Query History REST API)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _classify_state(state: Any) -> KpiStatus:
+        name = str(getattr(state, "value", state))
+        return {
+            "LIVE": KpiStatus.LIVE,
+            "NO_DATA": KpiStatus.NO_DATA,
+            "ACCESS_DENIED": KpiStatus.NOT_AUTHORIZED,
+            "AUTH_FAILED": KpiStatus.NOT_AUTHORIZED,
+            "PARTIAL": KpiStatus.PARTIAL,
+        }.get(name, KpiStatus.UNAVAILABLE)
+
+    async def get_query_history(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+        warehouse_id: str | None = None,
+        user: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        page_token: str | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> QueryHistoryResponse:
+        """Live, paginated query history. No SQL is executed and no compute is started."""
+        self.validate_scope(workspace_id)
+        live = await self.workspace_service.get_query_history(
+            connection_id=connection_id,
+            warehouse_id=warehouse_id,
+            status_filter=status,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
+            max_results=limit,
+            page_token=page_token,
+        )
+        wh_names = {w.id: w.name for w in self._inventory(connection_id).get("warehouse", [])}
+        records: list[QueryHistoryRecordItem] = []
+        for q in live.records:
+            if user and user.lower() not in (q.executed_by_masked or "").lower():
+                continue
+            records.append(
+                QueryHistoryRecordItem(
+                    query_id=q.query_id,
+                    start_time=q.start_time or "",
+                    end_time=q.end_time,
+                    duration_ms=q.duration_ms or 0.0,
+                    duration_formatted=(
+                        f"{q.duration_ms / 1000:.2f}s"
+                        if q.duration_ms and q.duration_ms >= 1000
+                        else f"{q.duration_ms:.0f}ms"
+                        if q.duration_ms is not None
+                        else "n/a"
+                    ),
+                    status=q.status,
+                    warehouse_id=q.warehouse_id or "",
+                    warehouse_name=wh_names.get(q.warehouse_id or "", ""),
+                    rows_produced=q.rows_produced,
+                    bytes_read=q.read_bytes,
+                    bytes_written=None,
+                    user=q.executed_by_masked or "unknown",
+                    sql_statement=q.sql_summary,
+                    query_type=q.statement_type or "UNKNOWN",
+                    error_message=q.error_message,
+                )
+            )
+        buckets = [
+            ("< 1s", 0, 1000),
+            ("1s - 5s", 1000, 5000),
+            ("5s - 15s", 5000, 15000),
+            ("15s - 60s", 15000, 60000),
+            ("> 60s", 60000, float("inf")),
+        ]
+        n = len(records)
+        histogram = []
+        for label, lo, hi in buckets:
+            c = sum(1 for r in records if lo <= r.duration_ms < hi)
+            histogram.append(
+                {"bucket": label, "count": c, "percentage": round(c / n * 100, 1) if n else 0.0}
+            )
+        palette = {
+            "FINISHED": "#10b981",
+            "FAILED": "#ef4444",
+            "CANCELED": "#f59e0b",
+            "CANCELLED": "#f59e0b",
+        }
+        statuses: dict[str, int] = {}
+        for r in records:
+            statuses[r.status] = statuses.get(r.status, 0) + 1
+        distribution = [
+            {
+                "status": s,
+                "count": c,
+                "percentage": round(c / n * 100, 1),
+                "color": palette.get(s, "#94a3b8"),
+            }
+            for s, c in sorted(statuses.items(), key=lambda kv: -kv[1])
+        ]
+        per_day: dict[str, list[float]] = {}
+        for r in records:
+            per_day.setdefault(r.start_time[:10], []).append(r.duration_ms)
+        daily = [
+            {"date": d, "queries": len(v), "avg_duration_ms": round(statistics.fmean(v), 1)}
+            for d, v in sorted(per_day.items())
+        ]
+        state_cls = self._classify_state(live.discovery_state)
+        return QueryHistoryResponse(
+            records=records,
+            total_count=len(records),
+            duration_histogram=histogram,
+            status_distribution=distribution,
+            daily_volume=daily,
+            active_filters={
+                "warehouse_id": warehouse_id,
+                "user": user,
+                "status": status,
+                "limit": limit,
+                "start_time_ms": start_time_ms,
+                "end_time_ms": end_time_ms,
+            },
+            has_next_page=live.has_next_page,
+            next_page_token=live.next_page_token,
+            provenance=SectionProvenance(
+                classification=state_cls,
+                source=live.source_api,
+                message=live.error_message
+                or "Aggregates cover the returned page only. Users are masked by the source layer.",
+                retrieved_at=live.retrieved_at.isoformat(),
+                record_count=len(records),
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # System tables explorer (metadata only; no rows are read)
+    # ------------------------------------------------------------------
+
+    def get_system_tables(
+        self,
+        connection_id: str = "databricks-azure-dev",
+        workspace_id: str | None = None,
+    ) -> SystemTablesExplorerResponse:
+        """System table metadata from the live Unity Catalog API. Row access is a separate state."""
+        self.validate_scope(workspace_id)
+        wh_state = self._warehouse_state(connection_id)
+        st = self.workspace_service._system_tables_cache.get(connection_id)
+        if st is None:
+            return SystemTablesExplorerResponse(
+                tables=[],
+                catalog_status="UNAVAILABLE",
+                warehouse_state=wh_state,
+                governance_model="Unity Catalog System Schema (metadata not yet discovered)",
+            )
+        tables: list[SystemTableProbeItem] = []
+        for t in st.tables:
+            if t.select_grant_verified is False:
+                status = "PERMISSION_DENIED"
+            elif wh_state != "RUNNING":
+                status = "STOPPED_WAREHOUSE" if t.table_discovered else "SCHEMA_VERIFIED"
+            else:
+                status = "QUERY_ACCESSIBLE"
+            tables.append(
+                SystemTableProbeItem(
+                    table_name=t.full_name,
+                    catalog="system",
+                    schema_name=t.schema_name,
+                    description=t.comment or t.domain or "",
+                    status=status,
+                    columns_count=t.columns_count,
+                    columns=[
+                        {"name": c.name, "type": c.type_text or "", "comment": c.comment or ""}
+                        for c in t.columns
+                    ],
+                    row_count=None,
+                    latest_record_time=None,
+                    query_duration_ms=None,
+                    notes=(
+                        f"Metadata discovered via Unity Catalog API; SELECT grant verified: {t.select_grant_verified}. "
+                        "Row-level access has not been exercised (no SQL executed)."
+                    ),
+                    sample_records=[],
+                )
+            )
+        return SystemTablesExplorerResponse(
+            tables=tables,
+            catalog_status="METADATA_DISCOVERED",
+            warehouse_state=wh_state,
+            governance_model="Unity Catalog System Schema",
+        )
+
     def get_module_ai_analysis(
         self,
         module_id: str,
@@ -5435,434 +3138,93 @@ class FinOpsAnalyticsService:
         resource_type: str | None = None,
         connection_id: str = "databricks-azure-dev",
     ) -> FinOpsAiAnalysis:
-        """Generate structured, evidence-grounded AI analysis and optimization intelligence for any FinOps module."""
+        """Deterministic, evidence-grounded summary built only from the module's own live response.
+
+        No numbers are authored here: every statement is derived from KPI values, statuses
+        and provenance returned by the module getter.
+        """
         self.validate_scope(workspace_id)
-        _ = (
-            resource_id,
-            resource_type,
-            connection_id,
-        )  # Preserved for scoped contextual drill-downs
         mod = module_id.lower().strip()
-        now_iso = datetime.now(UTC).isoformat()
-
-        # Check if Azure AI Foundry is configured
-        from cloud_recommender.core.config import get_settings
-
-        settings = get_settings()
-        is_live_foundry = bool(
-            settings.azure_ai_foundry_endpoint
-            and settings.azure_ai_foundry_api_key
-            and settings.azure_ai_foundry_deployment_name
-        )
-
-        if mod == "overview":
-            return FinOpsAiAnalysis(
-                module_id="overview",
+        aliases = {
+            "overview": "get_executive_overview",
+            "cost_explorer": "get_cost_explorer",
+            "cost_allocation": "get_cost_allocation",
+            "compute_warehouses": "get_compute_warehouses",
+            "compute": "get_compute_warehouses",
+            "ai_economics": "get_ai_economics",
+            "ai": "get_ai_economics",
+            "data_storage": "get_data_storage",
+            "network_cloud": "get_network_cloud",
+            "optimization_advisor": "get_optimization_advisor",
+            "optimization": "get_optimization_advisor",
+            "forecast_budgets": "get_forecast_budgets",
+            "anomaly_detection": "get_anomaly_detection",
+            "anomalies": "get_anomaly_detection",
+            "governance_policies": "get_governance_policies",
+            "showback_chargeback": "get_showback_chargeback",
+            "workload_economics": "get_workload_economics",
+        }
+        findings: list[str] = []
+        warnings: list[str] = []
+        opportunities: list[FinOpsAiOpportunity] = []
+        refs: list[str] = []
+        getter = aliases.get(mod)
+        if getter:
+            resp = getattr(self, getter)(
+                connection_id=connection_id,
                 workspace_id=workspace_id,
-                executive_summary="Azure Databricks monthly expenditure is pacing at $176,840.00 against an authorized budget baseline of $185,000.00 (-4.4% favorable variance). Identified monthly optimization opportunities total $24,530.00 across 5 verified initiatives.",
-                important_findings=[
-                    "Metered compute spend stands at $168,834.25 across 42,180 Net DBUs (42,420 Gross DBUs minus 240 retraction adjustments).",
-                    "Serverless SQL compute represents $42,180.00 (24.9% of compute spend) with Serverless Starter Warehouse running at 18% average utilization.",
-                    "Model Serving GenAI inference represents $26,740.00 (15.8% of spend) with 27 always-on endpoints processing 10.28B tokens.",
-                    "ADLS Gen2 storage and external data tiering contributes $8,000.00 (4.5% of total spend).",
-                ],
-                cost_drivers=[
-                    "Serverless Starter Warehouse (05ed10a52697a344): $42,180 / mo (19,172 DBU)",
-                    "Model Serving LLM Inference (27 endpoints): $26,740 / mo (6,685 DBU)",
-                    "ADLS Gen2 Cloud Storage: $8,000 / mo (Hot tier blob storage)",
-                    "ETL & Data Engineering Clusters: $24,600 / mo (11,180 DBU)",
-                ],
-                unusual_changes=[
-                    "Spike in token generation on databricks-claude-fable-5 (+180.9% deviation, $760/day impact).",
-                    "Mid-day concurrency spike on Serverless Starter Warehouse (+65.4% deviation, $340/day impact).",
-                ],
-                optimization_opportunities=[
-                    FinOpsAiOpportunity(
-                        title="Downsize SQL Warehouse 05ed10a52697a344",
-                        description="Downsize from 2X-Small to Extra Small with aggressive 15m auto-stop timeout.",
-                        resource_id="05ed10a52697a344",
-                        estimated_savings="$8,400 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=91,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Consolidate Low-Density Model Serving Endpoints",
-                        description="Shift 14 batch-oriented endpoints to scale-to-zero serverless mode.",
-                        resource_id="27-serving-endpoints",
-                        estimated_savings="$6,100 / mo",
-                        effort="Medium",
-                        risk="Medium",
-                        confidence_pct=86,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Delta Table Vacuum & Snapshot Retention",
-                        description="Enforce 30-day vacuum policy on sample and non-production catalogs.",
-                        resource_id="sample-catalogs",
-                        estimated_savings="$2,750 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=82,
-                    ),
-                ],
-                expected_savings="$24,530 / month ($294,360 annualized)",
-                risk_assessment="Low operational risk. Downsizing serverless warehouses and consolidating low-density GPU serving endpoints preserves all workload SLOs.",
-                data_quality_warnings=[
-                    "Azure Infrastructure charges ($8,000 ADLS Gen2) sourced from Azure Cost Management export.",
-                    "Realized verified savings currently $0.00 pending post-implementation verification audit.",
-                ],
-                suggested_investigations=[
-                    "Investigate databricks-claude-fable-5 token spike (+180.9% deviation).",
-                    "Inspect Delta table vacuum retention in sample catalogs.",
-                ],
-                confidence_score=0.94,
-                source_references=[
-                    "system.billing.usage",
-                    "system.billing.list_prices",
-                    "Azure Cost Management",
-                    "REST Discovery Snapshot",
-                ],
-                analysis_timestamp=now_iso,
-                is_ai_live=is_live_foundry,
+                resource_id=resource_id,
+                resource_type=resource_type,
             )
-
-        if mod == "ai_economics" or mod == "ai":
-            return FinOpsAiAnalysis(
-                module_id="ai_economics",
-                workspace_id=workspace_id,
-                executive_summary="Total GenAI & Model Serving spend is $26,740.00 across 27 served models, processing 10.28B tokens. 82% of tokens are input prompt tokens, highlighting high potential for prompt caching.",
-                important_findings=[
-                    "Total AI Spend stands at $26,740.00 (6,685 DBUs), representing 15.8% of metered Databricks spend.",
-                    "Prompt tokens total 8.42B (81.9%) while completion tokens total 1.86B (18.1%).",
-                    "Blended rate is $0.0037 / 1K tokens with an average cost per successful task of $0.084.",
-                    "databricks-claude-fable-5 experienced an anomalous 180.9% spend spike ($760/day).",
-                ],
-                cost_drivers=[
-                    "databricks-claude-fable-5: $11,760 / mo (44% of AI spend)",
-                    "bge-large-en embedding pipelines: $5,240 / mo (20% of AI spend)",
-                    "dbrx-instruct code agent: $4,820 / mo (18% of AI spend)",
-                    "Uncategorized GenAI endpoints: $4,920 / mo (18% of AI spend)",
-                ],
-                unusual_changes=[
-                    "Spike of +180.9% on databricks-claude-fable-5 correlating with runaway multi-turn agent retries.",
-                ],
-                optimization_opportunities=[
+            for kpi in getattr(resp, "kpis", {}).values():
+                findings.append(f"{kpi.metric_id}: {kpi.formatted_value} [{kpi.status.value}]")
+                if kpi.source and kpi.source not in refs:
+                    refs.append(kpi.source)
+            for name, sec in getattr(resp, "provenance", {}).items():
+                if sec.classification not in (KpiStatus.LIVE, KpiStatus.CALCULATED):
+                    warnings.append(
+                        f"{name}: {sec.classification.value} - {sec.message or ''}".strip(" -")
+                    )
+            for rec in getattr(resp, "recommendations", []):
+                opportunities.append(
                     FinOpsAiOpportunity(
-                        title="Enable System Instruction & Context Caching",
-                        description="Cache repetitive prompt prefixes on Claude and Llama endpoints to reduce input tokens by up to 50%.",
-                        resource_id="databricks-claude-fable-5",
-                        estimated_savings="$3,820 / mo",
-                        effort="Medium",
-                        risk="Low",
-                        confidence_pct=88,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Enforce Scale-to-Zero on Inactive GPU Endpoints",
-                        description="Enable scale-to-zero with 15-minute inactivity termination on 14 dev/eval endpoints.",
-                        resource_id="model-serving-fleet",
-                        estimated_savings="$6,100 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=92,
-                    ),
-                ],
-                expected_savings="$9,920 / month",
-                risk_assessment="Low risk. Context caching has zero effect on response generation quality; scale-to-zero cold start is < 2.5s on serverless.",
-                data_quality_warnings=[
-                    "Strict unit separation enforced: token volume is derived from telemetry, not converted from DBUs.",
-                    "AI Gateway request-level metadata requires diagnostic logging enabled.",
-                ],
-                suggested_investigations=[
-                    "Inspect retry loop telemetry on databricks-claude-fable-5 calling applications.",
-                    "Review model parameter size requirements for classification tasks.",
-                ],
-                confidence_score=0.91,
-                source_references=[
-                    "system.ai_gateway.usage",
-                    "system.billing.usage",
-                    "REST Model Serving API",
-                ],
-                analysis_timestamp=now_iso,
-                is_ai_live=is_live_foundry,
-            )
-
-        if mod == "cost_explorer":
-            return FinOpsAiAnalysis(
-                module_id="cost_explorer",
-                workspace_id=workspace_id,
-                executive_summary="Cost Explorer indexes 124 reconciled daily billing records across 8 product categories, totaling $168,834.25 in metered compute with zero unallocated SKU drift.",
-                important_findings=[
-                    "Daily spend averages $5,627.80 with a peak of $6,840.00 on Nov 02 during month-end rollup.",
-                    "Compute clusters and SQL warehouses constitute 73.2% of platform billing lines.",
-                    "100% of usage records match commercial retail rate cards without pricing tier discrepancies.",
-                ],
-                cost_drivers=[
-                    "Serverless SQL Compute SKU: $42,180.00 (24.9%)",
-                    "Enterprise Jobs Compute SKU: $38,400.00 (22.7%)",
-                    "All-Purpose Compute SKU: $24,600.00 (14.6%)",
-                    "Model Serving Inference SKU: $26,740.00 (15.8%)",
-                ],
-                unusual_changes=[
-                    "Month-end batch processing spike on Nov 02 (+21.5% above 30-day baseline).",
-                ],
-                optimization_opportunities=[
-                    FinOpsAiOpportunity(
-                        title="Migrate All-Purpose Workflows to Jobs Compute",
-                        description="Re-point 4 recurring scheduled jobs from interactive clusters to automated job clusters.",
-                        resource_id="jobs-fleet",
-                        estimated_savings="$4,200 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=89,
-                    ),
-                ],
-                expected_savings="$4,200 / month",
-                risk_assessment="Low risk. Job compute offers lower DBU rate cards with identical execution semantics.",
-                data_quality_warnings=[
-                    "Retractions (-240 DBU) accounted for in net calculation.",
-                ],
-                suggested_investigations=[
-                    "Filter by owner_tag to verify untagged cluster runs.",
-                ],
-                confidence_score=0.95,
-                source_references=["system.billing.usage", "system.billing.list_prices"],
-                analysis_timestamp=now_iso,
-                is_ai_live=is_live_foundry,
-            )
-
-        if mod == "compute_warehouses" or mod == "compute":
-            return FinOpsAiAnalysis(
-                module_id="compute_warehouses",
-                workspace_id=workspace_id,
-                executive_summary="Compute fleet consists of 1 Serverless SQL Warehouse (STOPPED, 19,172 DBU, $42,180) and 3 compute clusters (11,180 DBU, $24,600). Rightsizing opportunities identified across both tiers.",
-                important_findings=[
-                    "SQL Warehouse 05ed10a52697a344 is currently STOPPED under zero-execution enforcement.",
-                    "Average warehouse utilization prior to stop was 18% with p95 queue time under 0.4 seconds.",
-                    "Compute cluster adf-deaccelator-compute accumulated 31% of uptime during idle non-business hours.",
-                ],
-                cost_drivers=[
-                    "Serverless Starter Warehouse: $42,180.00 / mo",
-                    "adf-deaccelator-compute: $14,200.00 / mo",
-                    "etl-streaming-cluster: $10,400.00 / mo",
-                ],
-                unusual_changes=[
-                    "Cluster adf-deaccelator-compute active for 7.5 hours outside normal maintenance windows.",
-                ],
-                optimization_opportunities=[
-                    FinOpsAiOpportunity(
-                        title="Tighten Auto-Stop Timeout to 15 Minutes",
-                        description="Enforce 15-minute auto-termination policy on all all-purpose compute clusters.",
-                        resource_id="adf-deaccelator-compute",
-                        estimated_savings="$3,460 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=95,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Downsize SQL Warehouse Cluster Sizing",
-                        description="Downsize from 2X-Small to Extra Small with max 1 cluster ceiling.",
-                        resource_id="05ed10a52697a344",
-                        estimated_savings="$8,400 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=91,
-                    ),
-                ],
-                expected_savings="$11,860 / month",
-                risk_assessment="Low risk. Sizing adjustments match observed concurrency and queue metrics.",
-                data_quality_warnings=[
-                    "Real-time CPU/memory utilization telemetry requires Azure Monitor / Ganglia integration.",
-                ],
-                suggested_investigations=[
-                    "Review cluster creator identities on adf-deaccelator-compute.",
-                ],
-                confidence_score=0.93,
-                source_references=[
-                    "system.compute.warehouses",
-                    "system.compute.clusters",
-                    "system.billing.usage",
-                ],
-                analysis_timestamp=now_iso,
-                is_ai_live=is_live_foundry,
-            )
-
-        if mod == "optimization_advisor" or mod == "optimization":
-            return FinOpsAiAnalysis(
-                module_id="optimization_advisor",
-                workspace_id=workspace_id,
-                executive_summary="Optimization Advisor has analyzed all active Databricks assets and identified 5 high-confidence optimization initiatives with $24,530.00 in monthly potential savings ($294,360 annualized).",
-                important_findings=[
-                    "Total potential savings: $24,530.00 / mo across Compute ($11,860), AI ($9,920), and Storage ($2,750).",
-                    "Verified realized savings remain strictly $0.00 until post-implementation audit certification.",
-                    "1 recommendation in Approval Required state (dec-01); 4 recommendations in New/Analyzed state.",
-                ],
-                cost_drivers=[
-                    "Overprovisioned SQL Warehouse compute ($8,400 potential savings)",
-                    "Low-density always-on model serving endpoints ($6,100 potential savings)",
-                    "Uncompressed prompt token context ($3,820 potential savings)",
-                    "Idle development cluster uptime ($3,460 potential savings)",
-                    "Unvacuumed historical Delta snapshots ($2,750 potential savings)",
-                ],
-                unusual_changes=[
-                    "Savings opportunity increased by $6,100 this month following expansion of Model Serving endpoints.",
-                ],
-                optimization_opportunities=[
-                    FinOpsAiOpportunity(
-                        title="Downsize SQL Warehouse",
-                        description="2X-Small to XS with 15m stop",
-                        resource_id="05ed10a52697a344",
-                        estimated_savings="$8,400 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=91,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Consolidate Serving Endpoints",
-                        description="Scale-to-zero serverless",
-                        resource_id="27-endpoints",
-                        estimated_savings="$6,100 / mo",
-                        effort="Medium",
-                        risk="Medium",
-                        confidence_pct=86,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Prompt Context Caching",
-                        description="Cache repeated system prompts",
-                        resource_id="fable-5",
-                        estimated_savings="$3,820 / mo",
-                        effort="Medium",
-                        risk="Low",
-                        confidence_pct=88,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Cluster Auto-Termination",
-                        description="Enforce 15m idle shutdown",
-                        resource_id="adf-compute",
-                        estimated_savings="$3,460 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=95,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Delta Table Vacuum",
-                        description="30-day snapshot purge",
-                        resource_id="catalogs",
-                        estimated_savings="$2,750 / mo",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=82,
-                    ),
-                ],
-                expected_savings="$24,530 / month",
-                risk_assessment="Low overall risk. All recommendations adhere to Zero-Execution human approval gates.",
-                data_quality_warnings=[
-                    "Potential savings are projections; realized savings are audited post-change.",
-                ],
-                suggested_investigations=[
-                    "Submit dec-01 for platform administrator approval.",
-                ],
-                confidence_score=0.96,
-                source_references=["FinOps Optimization Engine", "system.billing.usage"],
-                analysis_timestamp=now_iso,
-                is_ai_live=is_live_foundry,
-            )
-
-        if mod == "anomaly_detection" or mod == "anomalies":
-            return FinOpsAiAnalysis(
-                module_id="anomaly_detection",
-                workspace_id=workspace_id,
-                executive_summary="3 active cost and usage anomalies detected using statistical z-score outlier algorithms (>2.5 SD from baseline), representing an estimated $1,280.00 / day in financial exposure.",
-                important_findings=[
-                    "Critical Anomaly anom-01: Token cost spike on databricks-claude-fable-5 (+$760/day, +180.9% deviation).",
-                    "High Anomaly anom-02: Warehouse spend deviation on Serverless Starter Warehouse (+$340/day, +65.4% deviation).",
-                    "Medium Anomaly anom-03: Cluster adf-deaccelator-compute run outside maintenance schedule (+$180/day, 7.5 hrs).",
-                ],
-                cost_drivers=[
-                    "Model Serving agent retry loop: $760 / day",
-                    "Concurrent BI dashboard refreshes: $340 / day",
-                    "Unscheduled cluster idle run: $180 / day",
-                ],
-                unusual_changes=[
-                    "Total daily anomaly impact equals 22.7% of average daily platform spend.",
-                ],
-                optimization_opportunities=[
-                    FinOpsAiOpportunity(
-                        title="Resolve Anomaly anom-01 (Token Spike)",
-                        description="Enforce client backoff and rate-limiting on calling agent.",
-                        resource_id="databricks-claude-fable-5",
-                        estimated_savings="$760 / day",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=96,
-                    ),
-                    FinOpsAiOpportunity(
-                        title="Resolve Anomaly anom-02 (Warehouse Deviation)",
-                        description="Stagger BI dashboard refresh schedules by 15-minute offsets.",
-                        resource_id="05ed10a52697a344",
-                        estimated_savings="$340 / day",
-                        effort="Low",
-                        risk="Low",
-                        confidence_pct=91,
-                    ),
-                ],
-                expected_savings="$1,280 / day ($38,400 / month)",
-                risk_assessment="High financial exposure if unaddressed. Root causes are fully identified and verifiable.",
-                data_quality_warnings=[
-                    "Anomalies detected using statistical z-score and historical 30-day baseline models.",
-                ],
-                suggested_investigations=[
-                    "Investigate client API tokens generating requests to databricks-claude-fable-5.",
-                ],
-                confidence_score=0.94,
-                source_references=[
-                    "FinOps Anomaly Detection Engine",
-                    "system.billing.usage",
-                    "system.query.history",
-                ],
-                analysis_timestamp=now_iso,
-                is_ai_live=is_live_foundry,
-            )
-
-        # Default fallback for other modules (cost_allocation, data_storage, network_cloud, forecast_budgets, governance_policies, showback_chargeback, workload_economics, reports_audit, settings_integrations)
+                        title=rec.title,
+                        description=rec.finding,
+                        resource_id=rec.resource_id,
+                        estimated_savings=rec.formatted_savings,
+                        effort=rec.effort,
+                        risk=rec.risk,
+                        confidence_pct=rec.confidence_pct,
+                    )
+                )
+        else:
+            warnings.append(f"No analysis is defined for module '{mod}'.")
+        confirmed = [f for f in findings if "[LIVE]" in f or "[CALCULATED]" in f]
         return FinOpsAiAnalysis(
             module_id=mod,
             workspace_id=workspace_id,
-            executive_summary=f"Certified FinOps intelligence for module '{mod}' in workspace {workspace_id}. Metrics are reconciled against official System Tables and rate cards with zero unallocated variance.",
-            important_findings=[
-                f"Module '{mod}' telemetry is fully reconciled against official System Tables.",
-                "Zero unallocated variance detected across all active resource scopes.",
-                "Data availability state is verified as BASELINE / LIVE.",
-            ],
-            cost_drivers=[
-                "Compute and warehouse execution represent primary operational cost.",
-                "Model serving inference represents secondary growth driver.",
-            ],
+            executive_summary=(
+                f"{len(confirmed)} of {len(findings)} metrics are backed by live or calculated data; "
+                "the rest are explicitly unavailable or blocked."
+                if findings
+                else "No metrics are available for this module."
+            ),
+            important_findings=findings,
+            cost_drivers=[],
             unusual_changes=[],
-            optimization_opportunities=[
-                FinOpsAiOpportunity(
-                    title=f"Optimize {mod.replace('_', ' ').title()} Resources",
-                    description=f"Review tagging, allocation rules, and governance policies for {mod}.",
-                    resource_id=workspace_id,
-                    estimated_savings="$1,500 / mo",
-                    effort="Low",
-                    risk="Low",
-                    confidence_pct=85,
-                )
-            ],
-            expected_savings="$1,500 / month",
-            risk_assessment="Low operational risk. Configuration verified against enterprise FinOps guardrails.",
-            data_quality_warnings=[
-                "Zero-execution policy enforced. Compute modifications require human authorization.",
-            ],
+            optimization_opportunities=opportunities,
+            expected_savings="Not calculable"
+            if not opportunities
+            else "See per-recommendation status",
+            risk_assessment="Configuration findings only; validate against workload requirements before any change.",
+            data_quality_warnings=warnings,
             suggested_investigations=[
-                f"Audit detailed {mod} breakdown in FinOps Command Center.",
-            ],
-            confidence_score=0.90,
-            source_references=[
-                "system.billing.usage",
-                "system.billing.list_prices",
-                "REST API Snapshot",
-            ],
-            analysis_timestamp=now_iso,
-            is_ai_live=is_live_foundry,
+                "Approve read-only billing ingestion to unlock spend, forecast and anomaly analysis."
+            ]
+            if any("BLOCKED" in w for w in warnings)
+            else [],
+            confidence_score=round(len(confirmed) / len(findings), 2) if findings else 0.0,
+            source_references=refs,
+            analysis_timestamp=self._now_iso(),
+            is_ai_live=False,
         )

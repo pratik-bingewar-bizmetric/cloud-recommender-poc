@@ -4,11 +4,14 @@ Provides certified REST endpoints for Azure Databricks FinOps analytics,
 KPI cards, charts, ledgers, scenario simulator, and CSV reports.
 """
 
+import asyncio
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from cloud_recommender.core.auth import AuthenticatedUser, get_current_user
+from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.schemas.billing_ingestion import (
     BillingApprovalTokenRequest,
     BillingApprovalTokenResponse,
@@ -52,8 +55,11 @@ from cloud_recommender.services.databricks.billing_ingestion_service import (
     BillingIngestionService,
 )
 from cloud_recommender.services.databricks.finops_analytics_service import FinOpsAnalyticsService
+from cloud_recommender.services.databricks.refresher import get_refresher
 
-router = APIRouter(prefix="/finops", tags=["FinOps Command Center"])
+logger = structlog.get_logger(__name__)
+
+_FIRST_LOAD_TIMEOUT_SECONDS = 25
 
 # Shared service singletons
 _service_instance: FinOpsAnalyticsService | None = None
@@ -63,7 +69,7 @@ _billing_service_instance: BillingIngestionService | None = None
 def get_finops_service() -> FinOpsAnalyticsService:
     global _service_instance
     if _service_instance is None:
-        _service_instance = FinOpsAnalyticsService()
+        _service_instance = FinOpsAnalyticsService(billing_service=get_billing_service())
     return _service_instance
 
 
@@ -72,6 +78,42 @@ def get_billing_service() -> BillingIngestionService:
     if _billing_service_instance is None:
         _billing_service_instance = BillingIngestionService()
     return _billing_service_instance
+
+
+async def warm_live_metadata(
+    connection_id: str = Query("databricks-azure-dev", description="Connection identifier"),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Keep live inventory caches warm without blocking dashboard requests.
+
+    The background refresher owns periodic refresh. A request only waits (bounded) when no
+    inventory has ever been cached; slow Unity Catalog / system-table metadata is scheduled
+    in the background. Read-only REST only: no SQL, no compute start.
+    Skipped under the testing environment so the suite stays offline.
+    """
+    if settings.app_env == "testing":
+        return
+    refresher = get_refresher(get_finops_service().workspace_service)
+    refresher.touch(connection_id)
+    ws = refresher.workspace_service
+    cid = connection_id
+    try:
+        if not ws._discovery_cache.get(cid):
+            await asyncio.wait_for(
+                ws.get_or_discover_workspace(cid), timeout=_FIRST_LOAD_TIMEOUT_SECONDS
+            )
+        if cid not in ws._uc_cache or cid not in ws._system_tables_cache:
+            asyncio.create_task(refresher.refresh_once(cid, force=True))
+    except TimeoutError:
+        logger.info("finops_first_load_still_running", connection_id=cid)
+        asyncio.create_task(refresher.refresh_once(cid, force=True))
+    except Exception as exc:  # noqa: BLE001 - never fail a dashboard request on warm-up
+        logger.warning("finops_live_metadata_warmup_failed", error=type(exc).__name__)
+
+
+router = APIRouter(
+    prefix="/finops", tags=["FinOps Command Center"], dependencies=[Depends(warm_live_metadata)]
+)
 
 
 @router.get("/overview", response_model=ExecutiveOverviewResponse)
@@ -121,26 +163,32 @@ def get_cost_explorer(
 
 # =============================================================================
 @router.get("/query-history", response_model=QueryHistoryResponse)
-def get_query_history(
+async def get_query_history(
     connection_id: str = Query("databricks-azure-dev", description="Connection identifier"),
     workspace_id: str | None = Query(None, description="Workspace ID filter"),
     warehouse_id: str | None = Query(None, description="Warehouse ID filter"),
-    user: str | None = Query(None, description="User filter"),
+    user: str | None = Query(None, description="User filter (applied to the returned page)"),
     execution_status: str | None = Query(
-        None, alias="status", description="Status filter: FINISHED, FAILED, CANCELLED"
+        None, alias="status", description="Status filter: FINISHED, FAILED, CANCELED"
     ),
-    limit: int = Query(50, ge=1, le=200, description="Page limit"),
+    limit: int = Query(50, ge=1, le=100, description="Page size"),
+    page_token: str | None = Query(None, description="Opaque token from a previous page"),
+    start_time_ms: int | None = Query(None, ge=0, description="Window start (epoch ms)"),
+    end_time_ms: int | None = Query(None, ge=0, description="Window end (epoch ms)"),
     service: FinOpsAnalyticsService = Depends(get_finops_service),
 ) -> QueryHistoryResponse:
-    """Get actual query history records from system.query.history."""
+    """Live, paginated query history from the Databricks Query History REST API (no SQL executed)."""
     try:
-        return service.get_query_history(
+        return await service.get_query_history(
             connection_id=connection_id,
             workspace_id=workspace_id,
             warehouse_id=warehouse_id,
             user=user,
             status=execution_status,
             limit=limit,
+            page_token=page_token,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

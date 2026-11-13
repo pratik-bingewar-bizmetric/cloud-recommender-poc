@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   FinOpsModule,
   ExecutiveOverviewData,
@@ -25,6 +25,8 @@ import {
   BillingReconciliationResponse,
   IngestionValidateResponse,
   BillingIngestionRunResponse,
+  DatabricksConnection,
+  DatabricksConnectionHealth,
 } from "@/types";
 import {
   getFinOpsOverview,
@@ -70,6 +72,17 @@ import { ResourceDetailDrawer } from "@/components/shared/ResourceDetailDrawer";
 import { AnomalyDetailDrawer } from "@/components/shared/AnomalyDetailDrawer";
 import { FinOpsAiAnalysisSection } from "@/components/shared/FinOpsAiAnalysisSection";
 import { ConnectionStatusIndicator } from "@/components/shared/ConnectionStatusIndicator";
+import { environmentLabel, toIndicatorStatus } from "@/lib/connectionState";
+import type { ConnectionView } from "@/lib/connectionState";
+import { formatUpdatedAt } from "@/lib/refreshScheduler";
+import { OPERATIONAL_REFRESH_MS } from "@/lib/useDatabricksConnection";
+import { KpiCardGrid, ProvenanceBanner } from "@/components/shared/FinOpsProvenance";
+import {
+  fmtMoney,
+  fmtNumber,
+  statusBadgeClass,
+  statusLabel,
+} from "@/lib/finopsProvenance";
 import {
   formatCost as formatCostCurrency,
   getCurrencyMeta,
@@ -88,6 +101,10 @@ interface FinOpsCommandCenterViewProps {
   selectedWorkspaceId?: string;
   activeScope?: CloudScope | null;
   onSelectScope?: (scope: CloudScope) => void;
+  availableConnections?: DatabricksConnection[];
+  connectionHealth?: DatabricksConnectionHealth | null;
+  /** The single derived connection state; this view never computes its own badge. */
+  connectionView?: ConnectionView;
 }
 
 export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = ({
@@ -96,6 +113,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   selectedWorkspaceId = "databricks-azure-dev",
   activeScope,
   onSelectScope,
+  availableConnections = [],
+  connectionView,
 }) => {
   // Module Data States
   const [overviewData, setOverviewData] = useState<ExecutiveOverviewData | null>(null);
@@ -127,25 +146,6 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
     setSelectedKpiMetric(metric);
   };
 
-  const createFallbackKpi = (
-    value: number,
-    formatted_value: string,
-    unit: string,
-    extra?: Partial<FinOpsKpiMetric>
-  ): FinOpsKpiMetric => ({
-    value,
-    formatted_value,
-    unit,
-    status: "AVAILABLE" as FinOpsKpiMetric["status"],
-    data_freshness: "Verified Pipeline",
-    source: "Azure Databricks Telemetry",
-    workspace_id: activeScope?.workspace_id || selectedWorkspaceId || "642006393507276",
-    configuration_version: 1,
-    calculation_version: "v2.0.0-canonical",
-    coverage: 1.0,
-    ...extra,
-  });
-
   // Sub-tabs
   const [computeTab, setComputeTab] = useState<"clusters" | "warehouses" | "jobs" | "utilization">("clusters");
   const [aiTab, setAiTab] = useState<"token" | "models" | "genie" | "agents" | "training" | "unit">("token");
@@ -156,10 +156,13 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   const [costSkuFilter, setCostSkuFilter] = useState<string>("all");
   const [costGroupBy, setCostGroupBy] = useState<string>("product");
 
-  const [envFilter, setEnvFilter] = useState<string>("Production");
   const [periodFilter, setPeriodFilter] = useState<string>("month");
-  const [customStartDate, setCustomStartDate] = useState<string>("2026-10-01");
-  const [customEndDate, setCustomEndDate] = useState<string>("2026-11-08");
+  const [customStartDate, setCustomStartDate] = useState<string>(() =>
+    new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
+  );
+  const [customEndDate, setCustomEndDate] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  );
 
   // Optimization Advisor Filters
   const [recCategoryFilter, setRecCategoryFilter] = useState<string>("all");
@@ -210,107 +213,177 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const inFlightRef = useRef<boolean>(false);
+  const simResultRef = useRef<ScenarioSimulationResult | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   }, []);
 
+  // Resolve active Databricks connection & workspace ID cleanly
+  const requestedScopeId = activeScope?.workspace_id || selectedWorkspaceId || "";
+  const matchedConnection = availableConnections.find(
+    (c) => c.workspace_id === requestedScopeId || c.connection_id === requestedScopeId
+  );
+  const effectiveConnectionId =
+    matchedConnection?.connection_id ||
+    (requestedScopeId.startsWith("databricks-") ? requestedScopeId : "");
+  const effectiveWorkspaceId = matchedConnection?.workspace_id || requestedScopeId;
+  const workspaceEnvironment = environmentLabel(connectionView?.environment ?? matchedConnection?.environment);
+
   // Fetch active module data
-  const loadModuleData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+  const loadModuleData = useCallback(async (background = false) => {
+    if (inFlightRef.current || !effectiveConnectionId) return; // never overlap requests
+    inFlightRef.current = true;
+    if (!background) {
+      setIsLoading(true);
+      setError(null);
+    }
     try {
       const resId = activeScope?.selected_child_resource?.resource_id;
       const resType = activeScope?.selected_child_resource?.resource_type;
-      const wsId = activeScope?.workspace_id || selectedWorkspaceId;
+      const wsId = effectiveWorkspaceId;
       const effectivePeriod = periodFilter === "custom" ? `${customStartDate}:${customEndDate}` : periodFilter;
 
       if (activeModule === "overview") {
         const d = await getFinOpsOverview(
-          wsId,
+          effectiveConnectionId,
           effectivePeriod,
-          envFilter,
+          workspaceEnvironment,
           wsId,
           resId,
           resType
         );
         setOverviewData(d);
       } else if (activeModule === "cost") {
-        const d = await getFinOpsCostExplorer(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsCostExplorer(effectiveConnectionId, wsId, resId, resType);
         setCostData(d);
       } else if (activeModule === "allocation") {
-        const d = await getFinOpsCostAllocation(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsCostAllocation(effectiveConnectionId, wsId, resId, resType);
         setAllocData(d);
       } else if (activeModule === "compute") {
-        const d = await getFinOpsComputeWarehouses(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsComputeWarehouses(effectiveConnectionId, wsId, resId, resType);
         setComputeData(d);
       } else if (activeModule === "ai") {
-        const d = await getFinOpsAiEconomics(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsAiEconomics(effectiveConnectionId, wsId, resId, resType);
         setAiData(d);
       } else if (activeModule === "data") {
-        const d = await getFinOpsDataStorage(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsDataStorage(effectiveConnectionId, wsId, resId, resType);
         setStorageData(d);
       } else if (activeModule === "network") {
-        const d = await getFinOpsNetworkCloud(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsNetworkCloud(effectiveConnectionId, wsId, resId, resType);
         setNetworkData(d);
       } else if (activeModule === "recommend") {
-        const d = await getFinOpsOptimizationAdvisor(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsOptimizationAdvisor(effectiveConnectionId, wsId, resId, resType);
         setAdvisorData(d);
       } else if (activeModule === "forecast") {
-        const d = await getFinOpsForecastBudgets(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsForecastBudgets(effectiveConnectionId, wsId, resId, resType);
         setForecastData(d);
-        if (d.default_scenario && !simResult) setSimResult(d.default_scenario);
+        if (d.default_scenario && !simResultRef.current) setSimResult(d.default_scenario);
       } else if (activeModule === "anomaly") {
-        const d = await getFinOpsAnomalyDetection(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsAnomalyDetection(effectiveConnectionId, wsId, resId, resType);
         setAnomalyData(d);
       } else if (activeModule === "governance") {
-        const d = await getFinOpsGovernancePolicies(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsGovernancePolicies(effectiveConnectionId, wsId, resId, resType);
         setGovData(d);
       } else if (activeModule === "chargeback") {
-        const d = await getFinOpsShowbackChargeback(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsShowbackChargeback(effectiveConnectionId, wsId, resId, resType);
         setChargebackData(d);
       } else if (activeModule === "workloads") {
-        const d = await getFinOpsWorkloadEconomics(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsWorkloadEconomics(effectiveConnectionId, wsId, resId, resType);
         setWorkloadData(d);
       } else if (activeModule === "reports") {
-        const d = await getFinOpsReportsAudit(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsReportsAudit(effectiveConnectionId, wsId, resId, resType);
         setReportsData(d);
       } else if (activeModule === "settings") {
-        const d = await getFinOpsSettingsIntegrations(selectedWorkspaceId, wsId, resId, resType);
+        const d = await getFinOpsSettingsIntegrations(effectiveConnectionId, wsId, resId, resType);
         setSettingsData(d);
       }
 
       // Milestone 3H: Ingestion status and summary
       try {
         const [ingStatus, bSummary] = await Promise.all([
-          getFinOpsIngestionStatus(selectedWorkspaceId),
-          getFinOpsBillingSummary(selectedWorkspaceId, wsId, resId),
+          getFinOpsIngestionStatus(wsId),
+          getFinOpsBillingSummary(effectiveConnectionId, wsId, resId),
         ]);
         setIngestionStatus(ingStatus);
         setBillingSummary(bSummary);
       } catch (e) {
         console.warn("Could not fetch ingestion status", e);
       }
+      setLastUpdatedAt(Date.now());
+      setRefreshError(null);
+      setError(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error connecting to backend analytics engine");
-      showToast("Notice: Could not retrieve live metrics. Check backend connection.");
+      const msg = err instanceof Error ? err.message : "Error connecting to backend analytics engine";
+      // Keep the last data but flag it stale; only a user-initiated load interrupts with a toast.
+      setRefreshError(msg);
+      if (!background) {
+        setError(msg);
+        showToast("Notice: Could not retrieve live metrics. Check backend connection.");
+      }
     } finally {
+      inFlightRef.current = false;
       setIsLoading(false);
     }
-  }, [activeModule, selectedWorkspaceId, periodFilter, customStartDate, customEndDate, envFilter, activeScope, simResult, showToast]);
+  }, [activeModule, effectiveConnectionId, effectiveWorkspaceId, periodFilter, customStartDate, customEndDate, workspaceEnvironment, activeScope, showToast]);
 
   useEffect(() => {
-    loadModuleData();
+    simResultRef.current = simResult;
+  }, [simResult]);
+
+  // Selected workspace / resource scope changed: drop every previous value immediately so data
+  // from another workspace can never be shown as current.
+  useEffect(() => {
+    setOverviewData(null);
+    setCostData(null);
+    setAllocData(null);
+    setComputeData(null);
+    setAiData(null);
+    setAdvisorData(null);
+    setAnomalyData(null);
+    setSettingsData(null);
+    setStorageData(null);
+    setNetworkData(null);
+    setForecastData(null);
+    setGovData(null);
+    setChargebackData(null);
+    setWorkloadData(null);
+    setReportsData(null);
+    setIngestionStatus(null);
+    setBillingSummary(null);
+    setSimResult(null);
+    setLastUpdatedAt(null);
+    setRefreshError(null);
+  }, [effectiveConnectionId, effectiveWorkspaceId, activeScope?.selected_child_resource?.resource_id]);
+
+  useEffect(() => {
+    void loadModuleData();
+  }, [loadModuleData]);
+
+  // Controlled live refresh (paused while the tab is hidden)
+  useEffect(() => {
+    const tick = () => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        void loadModuleData(true);
+      }
+    };
+    const t = setInterval(tick, OPERATIONAL_REFRESH_MS);
+    return () => clearInterval(t);
   }, [loadModuleData]);
 
   // Milestone 3H: Ingestion modal helpers
   const handleFetchIngestionDetails = async () => {
     try {
+      const targetWs = effectiveWorkspaceId;
+      const targetWh = matchedConnection?.warehouse_id || ingestionStatus?.warehouse_id || "";
       const [prevRes, valRes, recRes] = await Promise.all([
-        previewFinOpsIngestion("642006393507276", 15),
-        validateFinOpsIngestion("642006393507276", "05ed10a52697a344"),
-        getFinOpsBillingReconciliation(selectedWorkspaceId, activeScope?.workspace_id || selectedWorkspaceId),
+        previewFinOpsIngestion(targetWs, 15),
+        validateFinOpsIngestion(targetWs, targetWh),
+        getFinOpsBillingReconciliation(effectiveConnectionId, targetWs),
       ]);
       setPreviewRecords(prevRes.preview_records || []);
       setValidationData(valRes);
@@ -323,10 +396,13 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   const handleExecuteIngestionRun = async () => {
     setIsRunExecuting(true);
     try {
+      const targetWs = effectiveWorkspaceId;
+      const today = new Date();
+      const startDay = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
       const res = await runFinOpsIngestion({
-        workspace_id: "642006393507276",
-        start_date: "2026-10-01",
-        end_date: "2026-11-04",
+        workspace_id: targetWs,
+        start_date: startDay.toISOString().slice(0, 10),
+        end_date: today.toISOString().slice(0, 10),
         is_approved: isApprovalChecked,
         limit: 1000,
       });
@@ -349,19 +425,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
       const res = await simulateFinOpsScenario(c, t, g);
       setSimResult(res);
     } catch {
-      // Fallback local formula
-      const base = 319500;
-      const resVal = base * (1 + g / 100) - (91420 * c) / 100 - (38460 * t) / 100;
-      const diff = 300000 - resVal;
-      setSimResult({
-        baseline_spend: base,
-        adjusted_spend: Math.round(resVal),
-        formatted_spend: `$${Math.round(resVal).toLocaleString()}`,
-        savings_vs_baseline: Math.round(base - resVal),
-        delta_label: diff >= 0 ? `Under budget by $${Math.abs(Math.round(diff)).toLocaleString()}` : `Over budget by $${Math.abs(Math.round(diff)).toLocaleString()}`,
-        is_favorable: diff >= 0,
-        budget_variance: Math.round(diff),
-      });
+      // No local formula: a scenario is only meaningful on top of a real forecast baseline.
+      setSimResult(null);
+      showToast("Scenario unavailable: could not reach the forecast engine.");
     }
   };
 
@@ -450,35 +516,36 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
       <div className="w-full px-4 sm:px-6 lg:px-8 pt-6 pb-12">
         {/* Global Filter Bar */}
         <div className="flex items-center gap-2.5 flex-wrap mb-6 text-xs text-[#344054]">
-          <select
-            value={envFilter}
-            onChange={(e) => setEnvFilter(e.target.value)}
+          <span
             className="bg-white border border-[#e5eaf1] px-3 py-1.5 rounded-lg font-medium shadow-2xs"
-            aria-label="Environment selection"
+            title="Environment of the selected Databricks workspace"
+            aria-label="Workspace environment"
           >
-            <option value="All environments">All Environments</option>
-            <option value="Production">Production</option>
-            <option value="Development">Development</option>
-            <option value="Sandbox">Sandbox</option>
-          </select>
+            Environment: {workspaceEnvironment}
+          </span>
 
           <select
-            value={activeScope?.workspace_id || selectedWorkspaceId}
+            value={activeScope?.workspace_id || effectiveWorkspaceId || "all"}
             onChange={(e) => {
               const newWsId = e.target.value;
+              const chosen = availableConnections.find((c) => c.workspace_id === newWsId);
               if (onSelectScope && activeScope) {
                 onSelectScope({
                   ...activeScope,
                   workspace_id: newWsId === "all" ? undefined : newWsId,
+                  workspace_name: chosen?.workspace_name || activeScope.workspace_name,
+                  workspace_url: chosen?.workspace_url || activeScope.workspace_url,
                 });
               }
             }}
             className="bg-white border border-[#e5eaf1] px-3 py-1.5 rounded-lg font-medium shadow-2xs"
             aria-label="Databricks workspace selection"
           >
-            <option value="databricks-azure-dev">Azure Databricks (adb-642006393507276)</option>
-            <option value="adb-7840192837148901">Databricks Analytics Dev (adb-7840192837148901)</option>
-            <option value="all">All Workspaces (Unified)</option>
+            {availableConnections.map((ws) => (
+              <option key={ws.connection_id} value={ws.workspace_id}>
+                {ws.workspace_name} ({ws.workspace_id})
+              </option>
+            ))}
           </select>
 
           <div className="flex items-center gap-1.5">
@@ -544,9 +611,29 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
           </div>
 
           <ConnectionStatusIndicator
-            status={error ? "failed" : isLoading ? "loading" : "connected"}
-            label="Azure Dev Connected"
+            status={connectionView ? toIndicatorStatus(connectionView) : "loading"}
+            label={connectionView ? `${matchedConnection?.workspace_name || "Databricks"} ${connectionView.label}` : "Checking"}
           />
+          {connectionView?.sqlWarehouse && (
+            <span
+              className="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-slate-50 text-slate-700 border-slate-200"
+              title={connectionView.sqlWarehouse.message}
+            >
+              SQL warehouse: {connectionView.sqlWarehouse.state ?? "-"}
+            </span>
+          )}
+          <span className="text-[11px] text-slate-500" data-testid="last-updated">
+            Updated {formatUpdatedAt(lastUpdatedAt)}
+          </span>
+          {(refreshError || connectionView?.stale) && (
+            <span
+              className="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-300"
+              title={refreshError || connectionView?.reason || "Latest refresh failed"}
+              data-testid="stale-badge"
+            >
+              Stale data: last refresh failed
+            </span>
+          )}
 
           {activeScope?.is_multi_scope && (
             <span className="bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-md text-[11px] font-bold border border-indigo-200">
@@ -573,21 +660,23 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 <span className="text-xs font-bold text-[#182230]">Databricks System Tables Billing Pipeline</span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                  WH: {ingestionStatus?.warehouse_status || "WAREHOUSE_STOPPED"}
+                  WH: {ingestionStatus?.warehouse_status || "UNKNOWN"}
                 </span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                  System Tables: {ingestionStatus?.system_tables_status || "APPROVAL_REQUIRED"}
+                  System Tables: {ingestionStatus?.system_tables_status || "UNKNOWN"}
                 </span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-50 text-slate-600 border border-slate-200">
-                  Mode: {billingSummary?.data_status || "BASELINE"}
+                  Billing rows: {(ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? "INGESTED" : "NONE INGESTED"}
                 </span>
               </div>
               <div className="text-[11px] text-[#667085] mt-1 flex items-center gap-3 flex-wrap">
-                <span>Target: <code className="text-[#344054] font-medium">{ingestionStatus?.warehouse_name || "Serverless Starter Warehouse"} ({ingestionStatus?.warehouse_id || "05ed10a52697a344"})</code></span>
+                <span>Target: <code className="text-[#344054] font-medium">{ingestionStatus?.warehouse_name || "—"} ({ingestionStatus?.warehouse_id || "—"})</code></span>
                 <span>•</span>
-                <span>Ingested: <strong className="text-[#182230]">{ingestionStatus?.total_dbu_consumed ? `${ingestionStatus.total_dbu_consumed.toLocaleString()} DBU` : "88,420 DBU"}</strong> ({billingSummary?.total_spend_verified ? `$${billingSummary.total_spend_verified.toLocaleString()}` : "$176,840.00"} Net Spend)</span>
-                <span>•</span>
-                <span>Records: <strong className="text-[#182230]">{ingestionStatus?.total_usage_records_ingested || 24} normalized</strong></span>
+                {(ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? (
+                  <span>Ingested: <strong className="text-[#182230]">{(ingestionStatus?.total_dbu_consumed ?? 0).toLocaleString()} DBU</strong> across <strong className="text-[#182230]">{ingestionStatus?.total_usage_records_ingested}</strong> usage records</span>
+                ) : (
+                  <span>No billing data ingested yet: spend figures stay <strong className="text-[#182230]">unavailable</strong> until an approved read-only ingestion runs.</span>
+                )}
               </div>
             </div>
           </div>
@@ -645,157 +734,30 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </div>
             )}
 
-            {/* 7 Interactive KPI Cards (Milestone 3E Enterprise Command Center) */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
-              {[
-                {
-                  key: "total_spend",
-                  label: "Total spend",
-                  val: overviewData?.kpis.total_spend?.status === "NO_DATA" || overviewData?.kpis.total_spend?.value === null
-                    ? "No data available"
-                    : overviewData?.kpis.total_spend?.formatted_value || (error ? "Unavailable" : "—"),
-                  delta: overviewData?.kpis.total_spend?.status === "NO_DATA"
-                    ? "No telemetry records"
-                    : overviewData?.kpis.total_spend?.delta_label || "",
-                  isBad: overviewData?.kpis.total_spend?.is_favorable === false,
-                  metric: overviewData?.kpis.total_spend,
-                },
-                {
-                  key: "databricks_spend",
-                  label: "Databricks spend",
-                  val: overviewData?.kpis.databricks_spend?.status === "NO_DATA" || overviewData?.kpis.databricks_spend?.value === null
-                    ? "No data available"
-                    : overviewData?.kpis.databricks_spend?.formatted_value || (error ? "Unavailable" : "—"),
-                  delta: overviewData?.kpis.databricks_spend?.status === "NO_DATA"
-                    ? "No telemetry records"
-                    : overviewData?.kpis.databricks_spend?.delta_label || "",
-                  isBad: overviewData?.kpis.databricks_spend?.is_favorable === false,
-                  metric: overviewData?.kpis.databricks_spend,
-                },
-                {
-                  key: "ai_spend",
-                  label: "AI & GenAI spend",
-                  val: overviewData?.kpis.ai_spend?.status === "NO_DATA" || overviewData?.kpis.ai_spend?.value === null
-                    ? "No data available"
-                    : overviewData?.kpis.ai_spend?.formatted_value || (error ? "Unavailable" : "—"),
-                  delta: overviewData?.kpis.ai_spend?.status === "NO_DATA"
-                    ? "No telemetry records"
-                    : overviewData?.kpis.ai_spend?.delta_label || "",
-                  isBad: overviewData?.kpis.ai_spend?.is_favorable === false,
-                  metric: overviewData?.kpis.ai_spend,
-                },
-                {
-                  key: "dbu_consumption",
-                  label: "DBU consumption",
-                  val: overviewData?.kpis.dbu_consumption?.status === "NO_DATA" || overviewData?.kpis.dbu_consumption?.value === null
-                    ? "No data available"
-                    : overviewData?.kpis.dbu_consumption?.formatted_value || (error ? "Unavailable" : "—"),
-                  delta: overviewData?.kpis.dbu_consumption?.status === "NO_DATA"
-                    ? "No telemetry records"
-                    : overviewData?.kpis.dbu_consumption?.delta_label || "",
-                  isBad: overviewData?.kpis.dbu_consumption?.is_favorable === false,
-                  metric: overviewData?.kpis.dbu_consumption,
-                },
-                {
-                  key: "savings_opportunity",
-                  label: "Identified savings",
-                  val: overviewData?.kpis.savings_opportunity?.status === "NO_DATA" || overviewData?.kpis.savings_opportunity?.value === null
-                    ? "No data available"
-                    : overviewData?.kpis.savings_opportunity?.formatted_value || (error ? "Unavailable" : "—"),
-                  delta: overviewData?.kpis.savings_opportunity?.status === "NO_DATA"
-                    ? "No telemetry records"
-                    : overviewData?.kpis.savings_opportunity?.delta_label || "",
-                  isBad: false,
-                  metric: overviewData?.kpis.savings_opportunity,
-                },
-                {
-                  key: "forecast_spend",
-                  label: "Forecast month-end",
-                  val: overviewData?.kpis.forecast_spend?.status === "NO_DATA" || overviewData?.kpis.forecast_spend?.value === null
-                    ? "No data available"
-                    : overviewData?.kpis.forecast_spend?.formatted_value || (error ? "Unavailable" : "—"),
-                  delta: overviewData?.kpis.forecast_spend?.status === "NO_DATA"
-                    ? "No telemetry records"
-                    : overviewData?.kpis.forecast_spend?.delta_label || "",
-                  isBad: true,
-                  metric: overviewData?.kpis.forecast_spend,
-                },
-                {
-                  key: "anomalies",
-                  label: "Cost anomalies",
-                  val: overviewData?.kpis.anomalies?.status === "NO_DATA" || overviewData?.kpis.anomalies?.value === null
-                    ? "No data available"
-                    : overviewData?.kpis.anomalies?.formatted_value || (error ? "Unavailable" : "—"),
-                  delta: overviewData?.kpis.anomalies?.status === "NO_DATA"
-                    ? "No telemetry records"
-                    : overviewData?.kpis.anomalies?.delta_label || "",
-                  isBad: true,
-                  metric: overviewData?.kpis.anomalies,
-                },
-              ].map((k, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => {
-                    setSelectedKpiKey(k.key);
-                    setSelectedKpiMetric(
-                      k.metric || (overviewData?.kpis[k.key] as FinOpsKpiMetric)
-                    );
-                  }}
-                  className="bg-white border border-[#e5eaf1] hover:border-brand-500 hover:shadow-md rounded-xl p-3 text-left transition group cursor-pointer"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase font-bold text-[#667085] leading-snug truncate group-hover:text-brand-600">
-                      {k.label}
-                    </span>
-                    {k.metric?.status && (
-                      <span
-                        className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${
-                          k.metric.status === "LIVE" ? "bg-emerald-100 text-emerald-800 border border-emerald-300" :
-                          k.metric.status === "BASELINE" ? "bg-blue-100 text-blue-800 border border-blue-200" :
-                          k.metric.status === "ESTIMATED" ? "bg-purple-100 text-purple-800 border border-purple-200" :
-                          k.metric.status === "STOPPED_WAREHOUSE" ? "bg-amber-100 text-amber-800 border border-amber-300" :
-                          k.metric.status === "NO_DATA" ? "bg-slate-100 text-slate-600 border border-slate-300" :
-                          "bg-slate-100 text-slate-700 border border-slate-200"
-                        }`}
-                        title={
-                          k.metric.status === "STOPPED_WAREHOUSE"
-                            ? "Warehouse 05ed10a52697a344 is STOPPED. Queries gated to prevent compute restart charges."
-                            : k.metric.status === "BASELINE"
-                            ? "Certified baseline from verified historical System Tables export."
-                            : k.metric.status === "ESTIMATED"
-                            ? "Algorithmic projection based on run-rate model."
-                            : k.metric.status === "NO_DATA"
-                            ? "No telemetry data found for specified resource scope."
-                            : k.metric.status
-                        }
-                      >
-                        {k.metric.status === "STOPPED_WAREHOUSE" ? "STOPPED WH" : k.metric.status}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-lg font-black text-[#182230] my-1 tracking-tight truncate">
-                    {k.val}
-                  </div>
-                  <div
-                    className={`text-[10px] font-semibold truncate ${
-                      k.isBad ? "text-rose-600" : "text-emerald-700"
-                    }`}
-                  >
-                    {k.delta}
-                  </div>
-                  <div className="mt-1 text-[9px] text-slate-400 group-hover:text-brand-600 flex items-center justify-between">
-                    <span>Inspect</span>
-                    <span>&rarr;</span>
-                  </div>
-                </button>
-              ))}
-            </div>
+            <ProvenanceBanner provenance={overviewData?.provenance} />
+
+            {/* 7 Interactive KPI Cards: values, status and caveats come only from the backend */}
+            <KpiCardGrid
+              kpis={overviewData?.kpis}
+              specs={[
+                { key: "total_spend", label: "Total spend" },
+                { key: "databricks_spend", label: "Databricks spend" },
+                { key: "ai_spend", label: "AI & GenAI spend" },
+                { key: "dbu_consumption", label: "DBU consumption" },
+                { key: "savings_opportunity", label: "Identified savings" },
+                { key: "forecast_spend", label: "Forecast month-end" },
+                { key: "anomalies", label: "Cost anomalies" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+              className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3"
+            />
 
             {/* AI FinOps Intelligence & Cost Analysis (Moved below all 7 KPI cards with Integrated Decisions) */}
             <FinOpsAiAnalysisSection
               moduleId="overview"
-              workspaceId={activeScope?.workspace_id || selectedWorkspaceId || "642006393507276"}
+              workspaceId={effectiveWorkspaceId}
               onNavigateToModule={(m) => onSelectModule?.(m as FinOpsModule)}
               decisions={advisorData?.recommendations || overviewData?.decisions_requiring_attention || []}
               onDecisionAction={handleDecisionAction}
@@ -816,43 +778,42 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     <p className="text-[11px] text-[#667085]">Daily actuals, forecast and approved budget · USD</p>
                   </div>
                   <span className="text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
-                    Month to date
+                    Actuals · list-price basis
                   </span>
                 </div>
-                {/* SVG Line Chart */}
-                <div className="h-56 w-full flex items-end pt-4">
-                  <svg className="w-full h-full overflow-visible" viewBox="0 0 500 180">
-                    <line x1="0" y1="180" x2="500" y2="180" stroke="#f1f5f9" strokeWidth="1" />
-                    <line x1="0" y1="135" x2="500" y2="135" stroke="#f1f5f9" strokeWidth="1" />
-                    <line x1="0" y1="90" x2="500" y2="90" stroke="#f1f5f9" strokeWidth="1" />
-                    <line x1="0" y1="45" x2="500" y2="45" stroke="#f1f5f9" strokeWidth="1" />
-                    {/* Budget pace dashed */}
-                    <path
-                      d="M 10 160 L 50 148 L 100 135 L 150 120 L 200 105 L 250 92 L 300 78 L 350 65 L 400 50 L 490 25"
-                      fill="none"
-                      stroke="#f59e0b"
-                      strokeWidth="2"
-                      strokeDasharray="4 3"
-                    />
-                    {/* Actual line */}
-                    <path
-                      d="M 10 165 L 50 152 L 100 138 L 150 118 L 200 95 L 250 82 L 300 68 L 350 48 L 400 35 L 490 12"
-                      fill="none"
-                      stroke="#2563eb"
-                      strokeWidth="2.5"
-                    />
-                  </svg>
-                </div>
+                {(() => {
+                  const trend = overviewData?.spend_trend || [];
+                  if (trend.length === 0) {
+                    return (
+                      <div className="h-56 flex items-center justify-center text-center text-xs text-slate-500 px-6">
+                        {overviewData?.provenance?.spend?.message ||
+                          "No daily spend is available: billing rows have not been ingested."}
+                      </div>
+                    );
+                  }
+                  const max = Math.max(...trend.map((t) => t.actual ?? 0), 1);
+                  const stepX = trend.length > 1 ? 480 / (trend.length - 1) : 0;
+                  const pts = trend
+                    .map((t, i) => `${10 + i * stepX},${170 - ((t.actual ?? 0) / max) * 160}`)
+                    .join(" ");
+                  return (
+                    <div className="h-56 w-full flex items-end pt-4">
+                      <svg className="w-full h-full overflow-visible" viewBox="0 0 500 180" role="img" aria-label="Daily actual spend">
+                        <line x1="0" y1="170" x2="500" y2="170" stroke="#f1f5f9" strokeWidth="1" />
+                        <line x1="0" y1="90" x2="500" y2="90" stroke="#f1f5f9" strokeWidth="1" />
+                        <polyline points={pts} fill="none" stroke="#2563eb" strokeWidth="2.5" />
+                        <text x="0" y="12" fontSize="9" fill="#667085">
+                          peak ${max.toLocaleString(undefined, { maximumFractionDigits: 0 })}/day · {trend[0].day} – {trend[trend.length - 1].day}
+                        </text>
+                      </svg>
+                    </div>
+                  );
+                })()}
                 <div className="flex items-center gap-5 mt-2 text-[11px] text-[#667085]">
                   <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span> Actual spend
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span> Actual spend (from ingested system.billing.usage)
                   </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-cyan-500"></span> Forecast
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span> Budget pace
-                  </span>
+                  <span className="text-slate-400">Forecast and budget are shown on the Forecast &amp; Budgets page.</span>
                 </div>
               </div>
 
@@ -861,20 +822,16 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 <h3 className="text-sm font-bold text-[#182230]">Spend composition</h3>
                 <p className="text-[11px] text-[#667085] mb-4">Consolidated cost by service family</p>
                 <div className="flex flex-col gap-3">
-                  {(overviewData?.spend_composition && overviewData.spend_composition.length > 0
-                    ? overviewData.spend_composition.map((s) => ({
+                  {(overviewData?.spend_composition || []).length === 0 && (
+                    <div className="text-xs text-slate-500">No spend composition available: billing rows have not been ingested.</div>
+                  )}
+                  {(
+                    (overviewData?.spend_composition || []).map((s) => ({
                         name: s.family,
                         pct: Math.round(s.share * 100),
                         cost: `$${s.amount.toLocaleString()}`,
                         color: s.color || "#2563eb",
                       }))
-                    : [
-                        { name: "Compute", pct: 38, cost: "$108,155", color: "#2563eb" },
-                        { name: "SQL Warehouses", pct: 26, cost: "$74,285", color: "#0284c7" },
-                        { name: "AI / GenAI", pct: 14, cost: "$38,460", color: "#8b5cf6" },
-                        { name: "Storage", pct: 16, cost: "$45,540", color: "#06b6d4" },
-                        { name: "Other", pct: 6, cost: "$18,180", color: "#94a3b8" },
-                      ]
                   ).map((s, idx) => (
                     <div key={idx} className="space-y-1">
                       <div className="flex justify-between text-xs font-semibold">
@@ -908,7 +865,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     <p className="text-[11px] text-[#667085]">Highest spend dimensions requiring management attention across connected scopes</p>
                   </div>
                   <span className="text-[10px] font-bold text-slate-500 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
-                    5 Critical Dimensions
+                    {(overviewData?.top_cost_drivers || []).length} dimensions
                   </span>
                 </div>
                 <div className="overflow-x-auto">
@@ -923,69 +880,32 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#e5eaf1]">
-                      {(overviewData?.top_cost_drivers && overviewData.top_cost_drivers.length > 0
-                        ? overviewData.top_cost_drivers.map((drv) => ({
+                      {(overviewData?.top_cost_drivers || []).length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="py-6 text-center text-xs text-slate-500">
+                            No cost drivers available: billing rows have not been ingested.
+                          </td>
+                        </tr>
+                      )}
+                      {(
+                        (overviewData?.top_cost_drivers || []).map((drv) => ({
                             d: drv.driver,
                             w: drv.workspace_owner,
                             s: drv.formatted_spend,
                             c: drv.change,
                             sig: drv.signal,
                           }))
-                        : [
-                            {
-                              d: "Serverless Starter Warehouse",
-                              w: "adb-642006393507276 · Data Platform",
-                              s: "$42,180",
-                              c: "+21%",
-                              sig: "Review",
-                            },
-                            {
-                              d: "Model Serving Endpoints (27)",
-                              w: "adb-642006393507276 · AI COE",
-                              s: "$26,740",
-                              c: "+32%",
-                              sig: "High",
-                            },
-                            {
-                              d: "adf-deaccelator-compute",
-                              w: "adb-642006393507276 · Supply Chain",
-                              s: "$24,600",
-                              c: "+11%",
-                              sig: "Review",
-                            },
-                            {
-                              d: "ADLS Gen2 Storage",
-                              w: "Shared · Cloud Ops",
-                              s: "$18,950",
-                              c: "+2%",
-                              sig: "Stable",
-                            },
-                            {
-                              d: "Genie + AI Inference",
-                              w: "adb-642006393507276 · Finance",
-                              s: "$14,320",
-                              c: "+26%",
-                              sig: "High",
-                            },
-                          ]
                       ).map((r, idx) => {
-                        const isWh = r.d.toLowerCase().includes("warehouse");
-                        const isServing = r.d.toLowerCase().includes("serving");
-                        const isCluster =
-                          r.d.toLowerCase().includes("compute") ||
-                          r.d.toLowerCase().includes("adf");
-                        const isApp = r.d.toLowerCase().includes("app");
-                        const resType = isWh
-                          ? "warehouse"
-                          : isServing
-                          ? "serving_endpoint"
-                          : isCluster
-                          ? "cluster"
-                          : isApp
-                          ? "app"
-                          : "catalog";
-                        const resId = isWh ? "05ed10a52697a344" : r.d;
-                        const resStatus = isWh ? "STOPPED" : "RUNNING";
+                        // Driver labels are "<type>: <id>" from the backend (real attribution keys).
+                        const [drvType, ...drvRest] = r.d.split(": ");
+                        const resType =
+                          drvType === "warehouse" ? "warehouse"
+                          : drvType === "serving" ? "serving_endpoint"
+                          : drvType === "cluster" ? "cluster"
+                          : drvType === "app" ? "app"
+                          : drvType;
+                        const resId = drvRest.join(": ") || r.d;
+                        const resStatus = undefined;
 
                         return (
                           <tr
@@ -995,9 +915,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                                 id: resId,
                                 name: r.d,
                                 resource_type: resType,
-                                workspace_id: "642006393507276",
+                                workspace_id: effectiveWorkspaceId,
                                 status: resStatus,
-                                source_api: "databricks-rest-v2",
+                                source_api: "system.billing.usage",
                                 metadata: { spend: r.s, change: r.c, signal: r.sig, owner: r.w },
                                 discovered_at: new Date().toISOString(),
                               });
@@ -1101,39 +1021,30 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </button>
             </div>
 
-            {/* 4 KPIs */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Gross consumption</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$176,840</div>
-                <div className="text-[11px] text-slate-500">Before credits and adjustments</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Effective rate</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$0.148</div>
-                <div className="text-[11px] text-slate-500">Blended cost / DBU</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Unallocated spend</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$12,480</div>
-                <div className="text-[11px] text-rose-600 font-semibold">7.1% needs tagging</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Credits / discounts</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$8,260</div>
-                <div className="text-[11px] text-slate-500">Applied commercial adjustments</div>
-              </div>
-            </div>
+            <ProvenanceBanner provenance={costData?.provenance} />
+
+            <KpiCardGrid
+              kpis={costData?.kpis}
+              specs={[
+                { key: "gross_consumption", label: "Gross consumption" },
+                { key: "effective_rate", label: "Effective rate" },
+                { key: "unallocated_spend", label: "Unallocated spend" },
+                { key: "credits_discounts", label: "Credits / discounts" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             {/* Detailed Billing Ledger Table */}
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-bold text-[#182230]">Detailed billing ledger</h3>
-                  <p className="text-[11px] text-[#667085]">Verified normalized usage with source lineage and allocation status.</p>
+                  <p className="text-[11px] text-[#667085]">Usage rows ingested from system.billing.usage, priced at list rates, with allocation status from billing tags.</p>
                 </div>
                 <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
-                  USD · Month to Date
+                  USD · list-price basis
                 </span>
               </div>
               <div className="overflow-x-auto">
@@ -1153,6 +1064,13 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#e5eaf1]">
+                    {(costData?.billing_ledger || []).length === 0 && (
+                      <tr>
+                        <td colSpan={10} className="py-8 text-center text-xs text-slate-500">
+                          {costData?.provenance?.ledger?.message || "No billing ledger rows available."}
+                        </td>
+                      </tr>
+                    )}
                     {((costData?.billing_ledger || []).filter((row) => {
                       if (costOriginFilter !== "all") {
                         const m = costOriginFilter.toLowerCase();
@@ -1232,33 +1150,56 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Allocated spend</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$164,360</div>
-                <div className="text-[11px] text-emerald-700 font-semibold">92.9% of total</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Unallocated spend</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$12,480</div>
-                <div className="text-[11px] text-rose-600 font-semibold">Needs owner mapping</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Active allocation rules</div>
-                <div className="text-2xl font-black text-[#182230] my-1">28</div>
-                <div className="text-[11px] text-slate-500">Tag, workspace & custom</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Shared cost pool</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$21,600</div>
-                <div className="text-[11px] text-slate-500">Allocated by agreed driver</div>
-              </div>
+            <ProvenanceBanner provenance={allocData?.provenance} />
+
+            <KpiCardGrid
+              kpis={allocData?.kpis}
+              specs={[
+                { key: "allocated_spend", label: "Allocated spend" },
+                { key: "unallocated_spend", label: "Unallocated spend" },
+                { key: "active_rules", label: "Active allocation rules" },
+                { key: "shared_pool", label: "Shared cost pool" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
+
+            {/* Spend by real attribution key (billing tags); untagged spend stays Unallocated */}
+            <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
+              <h3 className="text-sm font-bold text-[#182230] mb-1">Spend by owner tag</h3>
+              <p className="text-[11px] text-[#667085] mb-3">
+                Attributed strictly from billing custom tags. Untagged spend is shown as Unallocated and is never distributed.
+              </p>
+              {(allocData?.spend_by_bu || []).length === 0 ? (
+                <div className="text-xs text-slate-500">
+                  {allocData?.provenance?.allocation?.message || "No attributed spend available."}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {(allocData?.spend_by_bu || []).map((b, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-xs border-b border-slate-100 py-1.5">
+                      <span className={`font-semibold ${b.business_unit === "Unallocated" ? "text-rose-700" : "text-slate-800"}`}>
+                        {b.business_unit}
+                      </span>
+                      <span className="font-bold text-[#182230]">
+                        {fmtMoney(b.spend)}
+                        {typeof (b as { share?: number }).share === "number" && (
+                          <span className="ml-2 text-slate-500 font-normal">
+                            ({Math.round(((b as { share?: number }).share ?? 0) * 100)}%)
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Rulebook Table */}
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
               <h3 className="text-sm font-bold text-[#182230] mb-1">Allocation rulebook</h3>
-              <p className="text-[11px] text-[#667085] mb-3">Rules are evaluated in priority order. Unmatched records flow to central IT.</p>
+              <p className="text-[11px] text-[#667085] mb-3">Rules are evaluated in priority order. Records without a matching tag stay Unallocated.</p>
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
@@ -1296,30 +1237,20 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "compute" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Compute spend MTD</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$91,420</div>
-                <div className="text-[11px] text-rose-600 font-semibold">+9.2%</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Active clusters / warehouses</div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {(computeData?.clusters.length || 1) + (computeData?.warehouses.length || 1)}
-                </div>
-                <div className="text-[11px] text-slate-500">Live Azure Databricks</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Idle capacity detected</div>
-                <div className="text-2xl font-black text-[#182230] my-1">22%</div>
-                <div className="text-[11px] text-rose-600 font-semibold">Estimated waste</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Potential compute savings</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$14,800</div>
-                <div className="text-[11px] text-emerald-700 font-semibold">Monthly run-rate</div>
-              </div>
-            </div>
+            <ProvenanceBanner provenance={computeData?.provenance} />
+
+            <KpiCardGrid
+              kpis={computeData?.kpis}
+              specs={[
+                { key: "compute_spend", label: "Compute spend" },
+                { key: "active_compute", label: "Running clusters / warehouses" },
+                { key: "idle_capacity", label: "Idle capacity" },
+                { key: "potential_savings", label: "Potential compute savings" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             {/* Sub-tabs */}
             <div className="flex gap-2 border-b border-[#e5eaf1]">
@@ -1343,6 +1274,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
             {computeTab === "clusters" && (
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
                 <h3 className="text-sm font-bold text-[#182230] mb-3">Live Discovered Cluster Inventory</h3>
+                {(computeData?.clusters || []).length === 0 && (
+                  <div className="text-xs text-slate-500 mb-2">No clusters discovered in this workspace scope.</div>
+                )}
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
@@ -1365,10 +1299,10 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 text-[#667085]">{c.type}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{c.owner}</td>
                         <td className="py-2.5 px-3 font-mono text-[11px]">{c.node_profile}</td>
-                        <td className="py-2.5 px-3">{c.runtime_hrs}</td>
+                        <td className="py-2.5 px-3 text-slate-500">{fmtNumber(c.runtime_hrs, " h")}</td>
                         <td className="py-2.5 px-3">{c.cpu_utilization}</td>
-                        <td className="py-2.5 px-3 text-right">{c.dbu_mtd.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">${c.cost_mtd.toLocaleString()}</td>
+                        <td className="py-2.5 px-3 text-right">{fmtNumber(c.dbu_mtd)}</td>
+                        <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(c.cost_mtd)}</td>
                         <td className="py-2.5 px-3">
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
                             {c.state}
@@ -1390,6 +1324,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
             {computeTab === "warehouses" && (
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
                 <h3 className="text-sm font-bold text-[#182230] mb-3">Live Discovered SQL Warehouses</h3>
+                {(computeData?.warehouses || []).length === 0 && (
+                  <div className="text-xs text-slate-500 mb-2">No SQL warehouses discovered in this workspace scope.</div>
+                )}
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
@@ -1412,8 +1349,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3">{w.size}</td>
                         <td className="py-2.5 px-3">{w.uptime}</td>
                         <td className="py-2.5 px-3">{w.avg_utilization}</td>
-                        <td className="py-2.5 px-3">{w.auto_stop_mins} min</td>
-                        <td className="py-2.5 px-3 text-right font-bold">${w.cost_mtd.toLocaleString()}</td>
+                        <td className="py-2.5 px-3">{w.auto_stop_mins === null ? "-" : `${w.auto_stop_mins} min`}</td>
+                        <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(w.cost_mtd)}</td>
                         <td className="py-2.5 px-3">
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
                             {w.state}
@@ -1427,11 +1364,52 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </div>
             )}
 
+            {/* Jobs Tab (live Jobs API; run metrics cover the retrieved window only) */}
+            {computeTab === "jobs" && (
+              <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
+                <h3 className="text-sm font-bold text-[#182230] mb-3">Live Discovered Jobs</h3>
+                {(computeData?.jobs || []).length === 0 ? (
+                  <div className="text-xs text-slate-500">No jobs exist in this workspace scope (confirmed by the Jobs API).</div>
+                ) : (
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
+                        <th className="py-2 px-3">Job</th>
+                        <th className="py-2 px-3">Runs (window)</th>
+                        <th className="py-2 px-3">Success rate</th>
+                        <th className="py-2 px-3">Avg duration</th>
+                        <th className="py-2 px-3">Note</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#e5eaf1]">
+                      {(computeData?.jobs || []).map((j, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="py-2.5 px-3 font-semibold text-[#182230]">{j.name}</td>
+                          <td className="py-2.5 px-3">{fmtNumber(j.runs)}</td>
+                          <td className="py-2.5 px-3">{j.success_rate}</td>
+                          <td className="py-2.5 px-3">{j.avg_duration}</td>
+                          <td className="py-2.5 px-3 text-slate-500">{j.signal}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
             {/* Heatmap Tab */}
             {computeTab === "utilization" && (
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
                 <h3 className="text-sm font-bold text-[#182230] mb-1">Compute utilization by hour and day</h3>
                 <p className="text-[11px] text-[#667085] mb-4">168-hour utilization matrix (7 days x 24 hours)</p>
+                {(computeData?.heatmap_utilization || []).length === 0 && (
+                  <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    {computeData?.provenance?.utilization?.message || "Utilization telemetry is not available."}
+                    {computeData?.provenance?.utilization?.requirement && (
+                      <div className="mt-1"><strong>To unblock:</strong> {computeData.provenance.utilization.requirement}</div>
+                    )}
+                  </div>
+                )}
                 <div className="grid grid-cols-24 gap-1 p-2 bg-slate-50 rounded-lg">
                   {(computeData?.heatmap_utilization || []).map((val, idx) => {
                     const intensity =
@@ -1471,38 +1449,23 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "ai" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">AI spend MTD</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$38,460</div>
-                <div className="text-[11px] text-rose-600 font-semibold">+18.7%</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Input tokens</div>
-                <div className="text-2xl font-black text-[#182230] my-1">8.42B</div>
-                <div className="text-[11px] text-slate-500">All metered models</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Output tokens</div>
-                <div className="text-2xl font-black text-[#182230] my-1">1.86B</div>
-                <div className="text-[11px] text-slate-500">All metered models</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Cached tokens</div>
-                <div className="text-2xl font-black text-[#182230] my-1">2.10B</div>
-                <div className="text-[11px] text-emerald-700 font-semibold">25% of input</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Cost / 1K tokens</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$0.0037</div>
-                <div className="text-[11px] text-slate-500">Blended rate</div>
-              </div>
-              <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
-                <div className="text-[11px] font-semibold text-[#667085]">Cost / successful task</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$0.084</div>
-                <div className="text-[11px] text-emerald-700 font-semibold">↓ 6.2% vs prior mo</div>
-              </div>
-            </div>
+            <ProvenanceBanner provenance={aiData?.provenance} />
+
+            <KpiCardGrid
+              kpis={aiData?.kpis}
+              specs={[
+                { key: "ai_spend", label: "AI spend" },
+                { key: "input_tokens", label: "Input tokens" },
+                { key: "output_tokens", label: "Output tokens" },
+                { key: "cached_tokens", label: "Cached tokens" },
+                { key: "cost_per_1k_tokens", label: "Cost / 1K tokens" },
+                { key: "cost_per_task", label: "Cost / successful task" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5"
+            />
 
             {/* Sub-tabs */}
             <div className="flex gap-2 border-b border-[#e5eaf1]">
@@ -1515,7 +1478,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   }`}
                 >
                   {t === "token" && "Token Economics"}
-                  {t === "models" && "Models & Endpoints (27)"}
+                  {t === "models" && `Models & Endpoints (${aiData?.serving_endpoints.length ?? 0})`}
                   {t === "genie" && "Genie Economics"}
                   {t === "agents" && "Agents & Tools"}
                   {t === "training" && "Training & Eval"}
@@ -1530,7 +1493,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 <div className="flex justify-between items-center mb-3">
                   <div>
                     <h3 className="text-sm font-bold text-[#182230]">Live Discovered Model Serving Endpoints</h3>
-                    <p className="text-[11px] text-[#667085]">Endpoints discovered via Databricks SDK on adb-642006393507276</p>
+                    <p className="text-[11px] text-[#667085]">Endpoints discovered via the Databricks Serving API on {effectiveWorkspaceId}. Usage columns need system.serving tables.</p>
                   </div>
                   <button
                     onClick={() => setIsModelModalOpen(true)}
@@ -1561,8 +1524,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                           <td className="py-2.5 px-3 text-right">{ep.requests_per_day}</td>
                           <td className="py-2.5 px-3">{ep.capacity_utilization}</td>
                           <td className="py-2.5 px-3">{ep.p95_latency}</td>
-                          <td className="py-2.5 px-3 text-emerald-700 font-semibold">{ep.availability}</td>
-                          <td className="py-2.5 px-3 text-right font-bold">${ep.monthly_cost.toLocaleString()}</td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-700">{ep.availability}</td>
+                          <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(ep.monthly_cost)}</td>
                           <td className="py-2.5 px-3">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700">
                               {ep.action}
@@ -1576,6 +1539,43 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </div>
             )}
 
+            {/* Genie / Agents / Training / Unit economics: live data only, otherwise the reason */}
+            {(aiTab === "genie" || aiTab === "agents" || aiTab === "training" || aiTab === "unit") && (
+              <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
+                {aiTab === "training" && (aiData?.training || []).length > 0 ? (
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
+                        <th className="py-2 px-3">Experiment</th>
+                        <th className="py-2 px-3">Runs (retrieved)</th>
+                        <th className="py-2 px-3">Compute hrs</th>
+                        <th className="py-2 px-3">Spend</th>
+                        <th className="py-2 px-3">Decision</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#e5eaf1]">
+                      {(aiData?.training || []).map((t, idx) => (
+                        <tr key={idx}>
+                          <td className="py-2.5 px-3 font-semibold text-[#182230]">{t.experiment_name}</td>
+                          <td className="py-2.5 px-3">{t.runs}</td>
+                          <td className="py-2.5 px-3 text-slate-500">{t.compute_hrs}</td>
+                          <td className="py-2.5 px-3">{fmtMoney(t.spend)}</td>
+                          <td className="py-2.5 px-3 text-slate-500">{t.decision}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="text-xs text-slate-500">
+                    {aiTab === "genie" && "Genie space economics are unavailable: no Genie usage telemetry source is connected."}
+                    {aiTab === "agents" && "Agent economics are unavailable: no agent run/tool-cost telemetry source is connected."}
+                    {aiTab === "training" && "No MLflow experiments were discovered in this workspace scope."}
+                    {aiTab === "unit" && "Unit economics are unavailable: they require token usage and task outcome telemetry."}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Token Tab */}
             {aiTab === "token" && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -1583,6 +1583,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   <h3 className="text-sm font-bold text-[#182230] mb-1">Token consumption by model</h3>
                   <p className="text-[11px] text-[#667085] mb-4">Input, output and context cached token mix.</p>
                   <div className="space-y-3">
+                    {(aiData?.token_consumption_by_model || []).length === 0 && (
+                      <div className="text-xs text-slate-500">{aiData?.provenance?.usage?.message || "No token telemetry available."}</div>
+                    )}
                     {(aiData?.token_consumption_by_model || []).map((m, idx) => (
                       <div key={idx} className="space-y-1">
                         <div className="flex justify-between text-xs font-semibold">
@@ -1620,141 +1623,24 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "recommend" && (
           <div className="space-y-6">
-            {/* Reconciled 5-Tier Savings Hierarchy Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Card 1: Approved / Staged Actionable Savings */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "approved_savings",
-                    advisorData?.kpis?.approved_savings ||
-                      createFallbackKpi(24530.0, "$24,530.00 / mo", "USD", {
-                        currency: "USD",
-                        source: "Optimization Advisor Decisions",
-                        delta_label: "5 Staged Initiatives (13.9% of spend)",
-                        formula: "sum(staged_recommendations.estimated_savings_monthly)",
-                        is_favorable: true,
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Approved / Staged Savings
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-brand-700 bg-brand-50 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {advisorData?.kpis?.approved_savings?.formatted_value || "$24,530.00"}
-                </div>
-                <div className="text-[11px] text-emerald-700 font-semibold">
-                  5 Staged Initiatives · 13.9% of spend
-                </div>
-              </button>
+            <ProvenanceBanner provenance={advisorData?.provenance} />
 
-              {/* Card 2: Potential & Estimated Savings */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "potential_savings",
-                    advisorData?.kpis?.potential_savings ||
-                      createFallbackKpi(31340.0, "$31,340.00 / mo", "USD", {
-                        currency: "USD",
-                        source: "Optimization Advisor Heuristics",
-                        delta_label: "Unconstrained addressable waste",
-                        formula: "sum(all_detected_anomalies_and_waste_candidates)",
-                        is_favorable: true,
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Potential monthly savings
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {advisorData?.kpis?.potential_savings?.formatted_value || "$31,340.00"}
-                </div>
-                <div className="text-[11px] text-slate-500 font-medium">
-                  Estimated: {advisorData?.kpis?.estimated_savings?.formatted_value || "$31,280.00"} (Pre-constraint)
-                </div>
-              </button>
-
-              {/* Card 3: Awaiting Approval & Quick Wins */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "awaiting_approval",
-                    advisorData?.kpis?.awaiting_approval ||
-                      createFallbackKpi(2, "2 Initiatives", "count", {
-                        source: "Optimization Advisor",
-                        delta_label: "Change control required",
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Awaiting approval
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {advisorData?.kpis?.awaiting_approval?.formatted_value || "2"}
-                </div>
-                <div className="text-[11px] text-amber-600 font-semibold">
-                  {advisorData?.kpis?.quick_wins?.formatted_value || "3"} Quick wins · Low risk/effort
-                </div>
-              </button>
-
-              {/* Card 4: Verified Realized Savings (Zero-Execution) */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "realized_savings",
-                    advisorData?.kpis?.realized_savings ||
-                      createFallbackKpi(0.0, "$0.00", "USD", {
-                        currency: "USD",
-                        source: "FinOps Billing Audit",
-                        delta_label: "Pending post-implementation audit (Zero-Execution)",
-                        formula: "sum(verified_post_implementation_telemetry) [strictly $0.00]",
-                        is_favorable: true,
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Verified realized savings
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {advisorData?.kpis?.realized_savings?.formatted_value || "$0.00"}
-                </div>
-                <div className="text-[11px] text-slate-500 font-semibold">
-                  Pending post-implementation audit (Zero-Execution)
-                </div>
-              </button>
-            </div>
+            {/* Savings KPIs: only calculable values are shown; otherwise the reason is */}
+            <KpiCardGrid
+              kpis={advisorData?.kpis}
+              specs={[
+                { key: "potential_savings", label: "Potential monthly savings" },
+                { key: "approved_savings", label: "Approved / staged savings" },
+                { key: "awaiting_approval", label: "Awaiting approval" },
+                { key: "quick_wins", label: "Configuration findings" },
+                { key: "implemented_savings", label: "Implemented savings" },
+                { key: "realized_savings", label: "Verified realized savings" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+              className="grid grid-cols-2 lg:grid-cols-6 gap-3"
+            />
 
             {/* Zero-Execution Policy & Governance Enforcement Banner */}
             <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-2xs">
@@ -1775,9 +1661,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 </div>
               </div>
               <div className="shrink-0 flex items-center gap-2 text-[10px] text-emerald-900 font-semibold bg-emerald-100/80 px-2.5 py-1 rounded-md border border-emerald-200">
-                <span>Warehouse 05ed10a52697a344:</span>
+                <span>SQL warehouse {ingestionStatus?.warehouse_id || "—"}:</span>
                 <span className="font-mono text-slate-600 bg-white px-1.5 py-0.5 rounded border border-slate-300">
-                  STOPPED
+                  {ingestionStatus?.warehouse_status || "UNKNOWN"}
                 </span>
               </div>
             </div>
@@ -1795,8 +1681,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   <option value="all">All Categories</option>
                   <option value="idle">Idle Resources</option>
                   <option value="sizing">Right-Sizing</option>
-                  <option value="serverless">Serverless Migration</option>
-                  <option value="storage">Storage &amp; Photon</option>
+                  <option value="serverless">Serverless</option>
+                  <option value="storage">Storage</option>
                 </select>
                 <select
                   value={recImpactFilter}
@@ -1825,6 +1711,11 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
 
             {/* List of Evidence-Backed Recommendations */}
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs divide-y divide-[#e5eaf1]">
+              {(advisorData?.recommendations || []).length === 0 && (
+                <div className="py-6 text-center text-xs text-slate-500">
+                  No configuration findings for the discovered resources in this scope.
+                </div>
+              )}
               {(advisorData?.recommendations || [])
                 .filter((rec) => {
                   if (recImpactFilter !== "all" && rec.impact !== recImpactFilter) return false;
@@ -1874,14 +1765,14 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                             <span className="font-mono text-slate-800">
                               {rec.resource_name || rec.resource_id}
                             </span>{" "}
-                            (Workspace: 642006393507276)
+                            (Workspace: {effectiveWorkspaceId})
                           </div>
                         </div>
                         <div className="text-right">
                           <span className="text-sm font-black text-emerald-700">
                             {rec.formatted_savings}
                           </span>
-                          <span className="text-[10px] text-slate-400 block">Estimated Savings</span>
+                          <span className="text-[10px] text-slate-400 block">Savings (only when calculable)</span>
                         </div>
                       </div>
 
@@ -1902,8 +1793,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                             Calculation Methodology &amp; Telemetry Source:
                           </span>{" "}
                           <span className="text-slate-600 font-mono text-[11px]">
-                            {rec.calculation_methodology ||
-                              "(Current observed compute run-rate) * addressable idle reduction"}
+                            {rec.calculation_methodology || "Not provided"}
                           </span>
                         </div>
                       </div>
@@ -1934,8 +1824,11 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                           Risk: {rec.risk || rec.impact}
                         </span>
                         <span className="text-slate-500">Owner: {rec.owner}</span>
+                        {rec.source_timestamp && (
+                          <span className="text-slate-500">Source: {new Date(rec.source_timestamp).toISOString().replace("T", " ").slice(0, 19)} UTC</span>
+                        )}
                         <span className="text-slate-500">
-                          Realized: {rec.formatted_realized_savings || "$0.00 (Unverified)"}
+                          Realized: Not verified (requires post-change billing comparison)
                         </span>
                       </div>
 
@@ -1958,7 +1851,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                             setModalTitle(rec.title);
                             setModalBody(
                               `${rec.evidence}\n\n[CALCULATION METHODOLOGY]\n${
-                                rec.calculation_methodology || "Heuristic run-rate reduction"
+                                rec.calculation_methodology || "Not provided"
                               }\n\n[RECOMMENDED ACTION]\n${
                                 rec.recommended_action || rec.title
                               }\n\n[ZERO-EXECUTION NOTICE]\nWorkflow state change only; no cloud infrastructure modified.`
@@ -1989,427 +1882,157 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "forecast" && (
           <div className="space-y-6">
-            {/* Context & Provenance Banner */}
+            <ProvenanceBanner provenance={forecastData?.provenance} />
+
+            {/* Method & provenance: forecasts are always distinguished from actuals */}
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-navy-900">Forecast Period:</span>
-                  <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold">
-                    November 2026 (MTD through Nov 30, 2026)
-                  </span>
-                  <span className="text-slate-400">·</span>
-                  <span className="font-bold text-navy-900">Currency:</span>
-                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
-                    USD ($)
-                  </span>
-                  <span className="text-slate-400">·</span>
-                  <span className="font-bold text-navy-900">Freshness:</span>
-                  <span className="text-emerald-700 font-semibold">
-                    Verified Pipeline Telemetry (2026-11-10T12:00:00Z)
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  <span className="font-semibold text-slate-700">Extrapolation Methodology:</span> Linear velocity extrapolation of 26.7236-day velocity to unrounded $319,515.33, rounded to nearest $100 milestone $319,500.00.
-                </p>
-              </div>
+              <p className="text-[11px] text-slate-500">
+                <span className="font-semibold text-slate-700">Method:</span> forecast = month-to-date actual + trailing 7-day average x remaining days of the month.
+                It is an <strong>estimate</strong> and is produced only with at least 14 days of ingested billing history. Budgets come from configuration
+                (<code>FINOPS_MONTHLY_BUDGET_USD</code>); none are assumed.
+              </p>
               <div className="flex items-center gap-2 shrink-0">
-                <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold uppercase">
-                  Actuals: Verified Billing
-                </span>
-                <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold uppercase">
-                  Forecast: Statistical Fit
-                </span>
+                <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold uppercase">Actuals: CALCULATED</span>
+                <span className="px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-bold uppercase">Forecast: ESTIMATED</span>
               </div>
             </div>
 
-            {/* Certified Forecast & Budget KPI Cards */}
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* Approved Budget */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "approved_budget",
-                    forecastData?.kpis?.approved_budget ||
-                      createFallbackKpi(300000.0, "$300,000", "USD", {
-                        currency: "USD",
-                        source: "Finance Budget Registry",
-                        delta_label: "Organization baseline",
-                        formula: "allocated_monthly_budget",
-                        is_favorable: true,
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Approved monthly budget
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {forecastData?.kpis?.approved_budget?.formatted_value || "$300,000"}
-                </div>
-                <div className="text-[11px] text-slate-500 font-medium">Organization baseline</div>
-              </button>
+            <KpiCardGrid
+              kpis={forecastData?.kpis}
+              specs={[
+                { key: "approved_budget", label: "Approved monthly budget" },
+                { key: "actual_mtd", label: "Actual spend (month to date)" },
+                { key: "forecast_month_end", label: "Forecast month-end (estimate)" },
+                { key: "projected_overrun", label: "Projected overrun" },
+                { key: "budget_utilization", label: "Budget utilization" },
+                { key: "forecast_confidence", label: "Forecast confidence" },
+                { key: "forecast_accuracy", label: "Forecast accuracy (MAPE)" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+              className="grid grid-cols-2 lg:grid-cols-4 gap-4"
+            />
 
-              {/* Actual MTD */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "actual_mtd",
-                    forecastData?.kpis?.actual_mtd ||
-                      createFallbackKpi(284620.0, "$284,620", "USD", {
-                        currency: "USD",
-                        source: "Azure Databricks Billing",
-                        delta_label: "94.9% consumed",
-                        formula: "sum(mtd_consumption_cost)",
-                        is_favorable: false,
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Actual MTD Spend
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {forecastData?.kpis?.actual_mtd?.formatted_value || "$284,620"}
-                </div>
-                <div className="text-[11px] text-rose-600 font-semibold">
-                  {forecastData?.kpis?.budget_utilization?.formatted_value || "94.9%"} consumed · Actuals
-                </div>
-              </button>
-
-              {/* Forecast Month-End */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "forecast_month_end",
-                    forecastData?.kpis?.forecast_month_end ||
-                      createFallbackKpi(319500.0, "$319,500", "USD", {
-                        currency: "USD",
-                        source: "Forecasting Model",
-                        delta_label: "$19,500 over budget",
-                        formula: "round(mtd_actual * (30.0 / 26.7236), -2)",
-                        is_favorable: false,
-                        status: "ESTIMATED" as FinOpsKpiMetric["status"],
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Forecast month-end
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {forecastData?.kpis?.forecast_month_end?.formatted_value || "$319,500"}
-                </div>
-                <div className="text-[11px] text-rose-600 font-semibold">
-                  {forecastData?.kpis?.projected_overrun?.formatted_value || "+$19,500"} over budget (+6.5%)
-                </div>
-              </button>
-
-              {/* Forecast Statistical Confidence */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "forecast_confidence",
-                    forecastData?.kpis?.forecast_confidence ||
-                      createFallbackKpi(87.0, "87%", "%", {
-                        source: "Statistical Fit",
-                        delta_label: "Confidence interval: ±3.4%",
-                        formula: "r_squared_fit_score",
-                        is_favorable: true,
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Forecast Confidence
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-2xl font-black text-[#182230] my-1">
-                  {forecastData?.kpis?.forecast_confidence?.formatted_value || "87%"}
-                </div>
-                <div className="text-[11px] text-emerald-700 font-semibold">
-                  R² = 0.87 · High confidence
-                </div>
-              </button>
-
-              {/* Forecast Accuracy Metric (MAPE) */}
-              <button
-                type="button"
-                onClick={() =>
-                  handleKpiClick(
-                    "forecast_accuracy",
-                    forecastData?.kpis?.forecast_accuracy ||
-                      createFallbackKpi(0, "NOT AVAILABLE", "MAPE", {
-                        source: "Forecasting Model Benchmark",
-                        delta_label: "Requires min. 3 completed monthly cycles",
-                        formula: "mean_absolute_percentage_error",
-                        status: "UNAVAILABLE" as FinOpsKpiMetric["status"],
-                        limitations:
-                          "Insufficient 90-day continuous historical actuals. Minimum 3 completed billing cycles required to certify MAPE accuracy.",
-                      })
-                  )
-                }
-                className="bg-white border border-[#e5eaf1] hover:border-brand-500 rounded-xl p-4 shadow-2xs text-left transition group cursor-pointer col-span-2 lg:col-span-1"
-              >
-                <div className="flex justify-between items-center">
-                  <div className="text-[11px] font-semibold text-[#667085] group-hover:text-brand-600">
-                    Forecast Accuracy (MAPE)
-                  </div>
-                  <span className="text-[9px] uppercase font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                    Details →
-                  </span>
-                </div>
-                <div className="text-lg font-bold text-slate-600 my-1">
-                  {forecastData?.kpis?.forecast_accuracy?.formatted_value || "NOT AVAILABLE"}
-                </div>
-                <div className="text-[10px] text-slate-400 font-medium truncate">
-                  Min. 3 completed cycles required
-                </div>
-              </button>
-            </div>
-
-            {/* Interactive Scenario Simulator & Budget Burn */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {/* Left Chart: Budget Burn and Forecast Pace */}
+              {/* Budget burn: cumulative actuals vs configured budget */}
               <div className="lg:col-span-7 bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <h3 className="text-sm font-bold text-[#182230]">Budget burn and forecast pace</h3>
-                    <p className="text-[11px] text-[#667085]">
-                      Cumulative actual daily burn ($284,620) versus linear budget trajectory ($300,000)
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 text-[11px]">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-0.5 bg-blue-600 inline-block" />
-                      <span className="text-slate-700 font-semibold">Actual Burn</span>
+                <h3 className="text-sm font-bold text-[#182230]">Budget burn</h3>
+                <p className="text-[11px] text-[#667085] mb-2">Cumulative actual spend versus the configured monthly budget.</p>
+                {(() => {
+                  const burn = forecastData?.budget_burn || [];
+                  if (burn.length === 0) {
+                    return (
+                      <div className="h-48 flex items-center justify-center text-center text-xs text-slate-500 px-6">
+                        Budget burn needs both a configured budget and ingested billing rows.
+                      </div>
+                    );
+                  }
+                  const max = Math.max(...burn.map((b) => Math.max(b.actual, b.budget)), 1);
+                  const stepX = burn.length > 1 ? 480 / (burn.length - 1) : 0;
+                  const y = (v: number) => 170 - (v / max) * 160;
+                  const actual = burn.map((b, i) => `${10 + i * stepX},${y(b.actual)}`).join(" ");
+                  return (
+                    <div className="h-56 w-full flex items-end pt-4">
+                      <svg className="w-full h-full overflow-visible" viewBox="0 0 500 180" role="img" aria-label="Cumulative spend versus budget">
+                        <line x1="10" y1={y(burn[0].budget)} x2="490" y2={y(burn[0].budget)} stroke="#f59e0b" strokeWidth="2" strokeDasharray="4 3" />
+                        <polyline points={actual} fill="none" stroke="#2563eb" strokeWidth="2.5" />
+                      </svg>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-3 h-0.5 bg-amber-500 border-dashed inline-block" />
-                      <span className="text-slate-700 font-semibold">Linear Budget</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="h-56 w-full flex items-end pt-4">
-                  <svg className="w-full h-full overflow-visible" viewBox="0 0 500 180">
-                    {/* Grid lines */}
-                    <line x1="0" y1="170" x2="500" y2="170" stroke="#f1f5f9" strokeWidth="1" />
-                    <line x1="0" y1="120" x2="500" y2="120" stroke="#f1f5f9" strokeWidth="1" />
-                    <line x1="0" y1="70" x2="500" y2="70" stroke="#f1f5f9" strokeWidth="1" />
-                    <line x1="0" y1="20" x2="500" y2="20" stroke="#f1f5f9" strokeWidth="1" />
-
-                    {/* Linear Pace (Amber Dashed) */}
-                    <path
-                      d="M 10 170 L 100 145 L 200 120 L 300 95 L 400 70 L 490 45"
-                      fill="none"
-                      stroke="#f59e0b"
-                      strokeWidth="2"
-                      strokeDasharray="4 3"
-                    />
-
-                    {/* Actual Burn (Blue Solid) */}
-                    <path
-                      d="M 10 170 L 100 140 L 200 110 L 300 75 L 400 40 L 490 10"
-                      fill="none"
-                      stroke="#2563eb"
-                      strokeWidth="2.5"
-                    />
-
-                    {/* Overrun Zone Marker */}
-                    <circle cx="490" cy="10" r="4" fill="#ef4444" />
-                    <text x="360" y="15" fill="#ef4444" fontSize="10" fontWeight="bold">
-                      +$19,500 Overrun
-                    </text>
-                  </svg>
-                </div>
+                  );
+                })()}
               </div>
 
-              {/* Right: Sliders & Independent Assumptions Documentation */}
+              {/* Scenario simulator: runs on the real forecast only */}
               <div className="lg:col-span-5 bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs space-y-4">
                 <div>
                   <h3 className="text-sm font-bold text-[#182230]">Scenario simulator</h3>
                   <p className="text-[11px] text-[#667085]">
-                    Adjust levers to project revised month-end spend against $300,000 budget.
+                    Adjust levers on top of the estimated month-end forecast. Unavailable until a forecast exists.
                   </p>
                 </div>
-
                 <div className="space-y-3.5">
-                  <div>
-                    <div className="flex justify-between text-xs font-semibold mb-1">
-                      <label htmlFor="compute-opt-slider">Compute rightsizing (%)</label>
-                      <span className="text-blue-600 font-bold">{computeSlider}%</span>
+                  {[
+                    { id: "compute-opt-slider", label: "Compute rightsizing (%)", min: 0, max: 30, value: computeSlider, set: (v: number) => { setComputeSlider(v); handleRecalculateScenario(v, tokenSlider, growthSlider); } },
+                    { id: "token-opt-slider", label: "AI spend reduction (%)", min: 0, max: 50, value: tokenSlider, set: (v: number) => { setTokenSlider(v); handleRecalculateScenario(computeSlider, v, growthSlider); } },
+                    { id: "workload-growth-slider", label: "Workload growth (%)", min: -10, max: 40, value: growthSlider, set: (v: number) => { setGrowthSlider(v); handleRecalculateScenario(computeSlider, tokenSlider, v); } },
+                  ].map((sl) => (
+                    <div key={sl.id}>
+                      <div className="flex justify-between text-xs font-semibold mb-1">
+                        <label htmlFor={sl.id}>{sl.label}</label>
+                        <span className="text-blue-600 font-bold">{sl.value}%</span>
+                      </div>
+                      <input
+                        id={sl.id}
+                        type="range"
+                        min={sl.min}
+                        max={sl.max}
+                        value={sl.value}
+                        onChange={(e) => sl.set(Number(e.target.value))}
+                        className="w-full accent-blue-600"
+                      />
                     </div>
-                    <input
-                      id="compute-opt-slider"
-                      type="range"
-                      min="0"
-                      max="30"
-                      value={computeSlider}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setComputeSlider(val);
-                        handleRecalculateScenario(val, tokenSlider, growthSlider);
-                      }}
-                      className="w-full accent-blue-600"
-                    />
-                    <div className="text-[10px] text-slate-400">
-                      Applies to $91,420 monthly spend pool (SQL warehouses &amp; dev clusters)
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-xs font-semibold mb-1">
-                      <label htmlFor="token-opt-slider">AI token reduction (%)</label>
-                      <span className="text-blue-600 font-bold">{tokenSlider}%</span>
-                    </div>
-                    <input
-                      id="token-opt-slider"
-                      type="range"
-                      min="0"
-                      max="50"
-                      value={tokenSlider}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setTokenSlider(val);
-                        handleRecalculateScenario(computeSlider, val, growthSlider);
-                      }}
-                      className="w-full accent-blue-600"
-                    />
-                    <div className="text-[10px] text-slate-400">
-                      Applies to $38,460 monthly token pool via prompt caching &amp; context compression
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-xs font-semibold mb-1">
-                      <label htmlFor="workload-growth-slider">Workload growth (%)</label>
-                      <span className="text-blue-600 font-bold">{growthSlider}%</span>
-                    </div>
-                    <input
-                      id="workload-growth-slider"
-                      type="range"
-                      min="-10"
-                      max="40"
-                      value={growthSlider}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setGrowthSlider(val);
-                        handleRecalculateScenario(computeSlider, tokenSlider, val);
-                      }}
-                      className="w-full accent-blue-600"
-                    />
-                    <div className="text-[10px] text-slate-400">
-                      Projected month-over-month organic telemetry workload increase
-                    </div>
-                  </div>
-
+                  ))}
                   <div className="p-3.5 rounded-xl bg-blue-50/80 border border-blue-200">
-                    <div className="text-[11px] font-bold text-blue-900 uppercase">
-                      Scenario Projected Spend
+                    <div className="flex items-center justify-between">
+                      <div className="text-[11px] font-bold text-blue-900 uppercase">Scenario projected spend</div>
+                      {simResult?.status && (
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded font-bold uppercase ${statusBadgeClass(simResult.status)}`}>
+                          {statusLabel(simResult.status)}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-2xl font-black text-blue-950 my-1">
-                      {simResult?.formatted_spend || "$319,500"}
+                    <div className="text-xl font-black text-blue-950 my-1">
+                      {simResult?.formatted_spend || "-"}
                     </div>
-                    <div
-                      className={`text-xs font-bold ${
-                        simResult?.is_favorable ? "text-emerald-700" : "text-rose-700"
-                      }`}
-                    >
-                      {simResult?.delta_label || "Calculated against $300,000 budget"}
+                    <div className={`text-xs font-bold ${simResult?.is_favorable ? "text-emerald-700" : "text-slate-600"}`}>
+                      {simResult?.delta_label || "Needs an ingested billing history to forecast."}
                     </div>
+                    {simResult?.message && <div className="text-[10px] text-slate-500 mt-1">{simResult.message}</div>}
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Departmental & Scope Budget Controls */}
+            {/* Budget controls: configured budgets only */}
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
-              <h3 className="text-sm font-bold text-[#182230] mb-3">
-                Scope Budget Controls & Threshold Tracking
-              </h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
-                      <th className="py-2.5 px-3">Budget Scope</th>
-                      <th className="py-2.5 px-3">Owner</th>
-                      <th className="py-2.5 px-3">Approved Budget</th>
-                      <th className="py-2.5 px-3">Actual MTD</th>
-                      <th className="py-2.5 px-3">Month-End Forecast</th>
-                      <th className="py-2.5 px-3">Burn Rate</th>
-                      <th className="py-2.5 px-3">Threshold</th>
-                      <th className="py-2.5 px-3">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#e5eaf1]">
-                    {(forecastData?.budget_controls || []).map((bc, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="py-2.5 px-3 font-semibold text-slate-800">
-                          {bc.budget_scope}
-                        </td>
-                        <td className="py-2.5 px-3 text-[#667085]">{bc.owner}</td>
-                        <td className="py-2.5 px-3 font-bold">${bc.budget.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 font-semibold text-slate-700">
-                          ${bc.actual.toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-3 font-bold text-blue-700">
-                          ${bc.forecast.toLocaleString()}
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span
-                            className={`font-semibold ${
-                              bc.burn_pct > 90 ? "text-rose-600" : "text-emerald-700"
-                            }`}
-                          >
-                            {bc.burn_pct}%
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3 text-slate-600">{bc.threshold}</td>
-                        <td className="py-2.5 px-3">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              bc.status === "Forecast breach"
-                                ? "bg-rose-50 text-rose-700 border border-rose-200"
-                                : bc.status === "At risk"
-                                ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            }`}
-                          >
-                            {bc.status}
-                          </span>
-                        </td>
+              <h3 className="text-sm font-bold text-[#182230] mb-3">Scope Budget Controls & Threshold Tracking</h3>
+              {(forecastData?.budget_controls || []).length === 0 ? (
+                <div className="text-xs text-slate-500">No budgets are configured. Set <code>FINOPS_MONTHLY_BUDGET_USD</code> to enable budget tracking.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
+                        <th className="py-2.5 px-3">Budget Scope</th>
+                        <th className="py-2.5 px-3">Owner</th>
+                        <th className="py-2.5 px-3">Approved Budget</th>
+                        <th className="py-2.5 px-3">Actual MTD</th>
+                        <th className="py-2.5 px-3">Month-End Forecast (est.)</th>
+                        <th className="py-2.5 px-3">Burn Rate</th>
+                        <th className="py-2.5 px-3">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-[#e5eaf1]">
+                      {(forecastData?.budget_controls || []).map((bc, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50">
+                          <td className="py-2.5 px-3 font-semibold text-slate-800">{bc.budget_scope}</td>
+                          <td className="py-2.5 px-3 text-[#667085]">{bc.owner}</td>
+                          <td className="py-2.5 px-3 font-bold">{fmtMoney(bc.budget)}</td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-700">{fmtMoney(bc.actual)}</td>
+                          <td className="py-2.5 px-3 font-bold text-blue-700">{fmtMoney(bc.forecast)}</td>
+                          <td className="py-2.5 px-3">{bc.burn_pct === null ? "-" : `${bc.burn_pct}%`}</td>
+                          <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {bc.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -2422,15 +2045,29 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-base font-bold text-[#182230]">Cost & Usage Anomaly Queue</h2>
-                <p className="text-xs text-[#667085]">Detect abnormal consumption spikes and suspicious resource drift.</p>
+                <p className="text-xs text-[#667085]">Statistical spike detection over ingested daily billing history (needs at least 14 days).</p>
               </div>
               <button
-                onClick={() => showToast("Anomaly scan started on active telemetry...")}
+                onClick={() => loadModuleData()}
                 className="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white font-semibold text-xs hover:bg-blue-700 transition"
               >
-                Run Anomaly Scan
+                Refresh detection
               </button>
             </div>
+
+            <ProvenanceBanner provenance={anomalyData?.provenance} />
+            <KpiCardGrid
+              kpis={anomalyData?.kpis}
+              specs={[
+                { key: "open_anomalies", label: "Open anomalies" },
+                { key: "potential_exposure", label: "Potential exposure" },
+                { key: "mean_time_to_detect", label: "Mean time to detect" },
+                { key: "auto_triaged", label: "Auto-triaged" },
+              ]}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             {/* Filter Toolbar for Anomalies */}
             <div className="flex items-center justify-between gap-4 flex-wrap bg-white border border-[#e5eaf1] rounded-xl p-3 shadow-2xs">
@@ -2455,7 +2092,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 >
                   <option value="all">All Statuses</option>
                   <option value="New">New</option>
-                  <option value="Under Investigation">Under Investigation</option>
+                  <option value="Investigating">Investigating</option>
                   <option value="Acknowledged">Acknowledged</option>
                   <option value="Resolved">Resolved</option>
                 </select>
@@ -2489,6 +2126,13 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#e5eaf1]">
+                  {(anomalyData?.anomalies || []).length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-xs text-slate-500">
+                        {anomalyData?.provenance?.detection?.message || "No anomalies detected in the ingested billing history."}
+                      </td>
+                    </tr>
+                  )}
                   {(anomalyData?.anomalies || []).filter((anom) => {
                     if (anomalySeverityFilter !== "all" && anom.severity !== anomalySeverityFilter) return false;
                     if (anomalyStatusFilter !== "all" && (anom.status || "New") !== anomalyStatusFilter) return false;
@@ -2560,7 +2204,11 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <div className="font-semibold text-[#182230]">{s.source_name}</div>
                         <div className="text-[11px] text-[#667085]">{s.details}</div>
                       </div>
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          s.status === "Connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+                        }`}
+                      >
                         {s.status}
                       </span>
                     </div>
@@ -2571,19 +2219,22 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               {/* System Tables Readiness Card */}
               <div className="lg:col-span-6 bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-bold text-[#182230]">Azure Databricks System Tables Verification</h3>
-                  <span className="bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded text-[10px]">
-                    Verified Live
+                  <h3 className="text-sm font-bold text-[#182230]">System Tables Metadata</h3>
+                  <span className="bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded text-[10px]">
+                    Metadata only
                   </span>
                 </div>
                 <p className="text-[11px] text-[#667085] mb-3">
-                  Read-only catalog probe on adb-642006393507276 confirmed schema presence without modifying cluster states.
+                  Table existence and SELECT grants discovered through the Unity Catalog API. Row-level access has not been exercised: no SQL is executed without approval.
                 </p>
+                {(settingsData?.system_tables_readiness?.key_tables || []).length === 0 && (
+                  <div className="text-xs text-slate-500 mb-2">System table metadata has not been discovered for this workspace.</div>
+                )}
                 <div className="space-y-1.5 text-xs">
                   {(settingsData?.system_tables_readiness?.key_tables || []).map((tbl, idx) => (
                     <div key={idx} className="flex justify-between items-center py-1 border-b border-slate-100">
                       <span className="font-mono text-[11px] text-blue-700 font-semibold">{tbl.name}</span>
-                      <span className="text-slate-500">{tbl.columns_count} columns verified</span>
+                      <span className="text-slate-500">{tbl.columns_count} columns · {tbl.status}</span>
                     </div>
                   ))}
                 </div>
@@ -2593,9 +2244,22 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </div>
             </div>
 
+            <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
+              <h3 className="text-sm font-bold text-[#182230] mb-3">Ingestion Pipeline Health</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 text-xs">
+                {(settingsData?.pipeline_health || []).map((m, idx) => (
+                  <div key={idx} className="flex justify-between py-1.5 border-b border-slate-100">
+                    <span className="text-[#667085]">{m.metric_name}</span>
+                    <span className="font-semibold text-[#182230]">{m.metric_value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Commercial Rate Card */}
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
-              <h3 className="text-sm font-bold text-[#182230] mb-3">Commercial Rate Card</h3>
+              <h3 className="text-sm font-bold text-[#182230] mb-1">Rate Card (list prices)</h3>
+              <p className="text-[11px] text-[#667085] mb-3">Used only to price ingested usage rows. These are not actual billing records and do not include discounts.</p>
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-[#e5eaf1] bg-slate-50 text-[10px] font-bold text-[#667085] uppercase">
@@ -2616,8 +2280,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       <td className="py-2.5 px-3">{r.sku_family}</td>
                       <td className="py-2.5 px-3">{r.region}</td>
                       <td className="py-2.5 px-3">{r.list_rate}</td>
-                      <td className="py-2.5 px-3 font-bold text-blue-600">{r.contract_rate}</td>
-                      <td className="py-2.5 px-3 text-emerald-700 font-bold">{r.discount}</td>
+                      <td className="py-2.5 px-3 text-slate-600">{r.contract_rate}</td>
+                      <td className="py-2.5 px-3 text-slate-600">{r.discount}</td>
                       <td className="py-2.5 px-3 text-[#667085]">{r.effective_date}</td>
                       <td className="py-2.5 px-3 text-[#667085]">{r.source}</td>
                     </tr>
@@ -2633,21 +2297,17 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "data" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(storageData?.kpis || {}).map(([k, metric]) => (
-                <div
-                  key={k}
-                  onClick={() => handleKpiClick(k, metric)}
-                  className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs cursor-pointer hover:border-blue-400 transition"
-                >
-                  <div className="text-[11px] font-semibold text-[#667085]">{k.replace(/_/g, " ").toUpperCase()}</div>
-                  <div className="text-2xl font-black text-[#182230] my-1">
-                    {metric.value === null ? "—" : metric.formatted_value}
-                  </div>
-                  <div className="text-[10px] text-slate-500">{metric.delta_label || metric.source || metric.status}</div>
-                </div>
-              ))}
-            </div>
+            <ProvenanceBanner provenance={storageData?.provenance} />
+            <KpiCardGrid
+              kpis={storageData?.kpis}
+              specs={Object.keys(storageData?.kpis || {}).map((k) => ({
+                key: k,
+                label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()),
+              }))}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
               <div className="lg:col-span-6 bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
@@ -2697,8 +2357,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3">{t.size}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{t.last_read}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{t.retention}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">${t.monthly_cost.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-emerald-700 font-semibold">{t.recommendation}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(t.monthly_cost)}</td>
+                        <td className="py-2.5 px-3 text-slate-500">{t.recommendation}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2713,21 +2373,17 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "network" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(networkData?.kpis || {}).map(([k, metric]) => (
-                <div
-                  key={k}
-                  onClick={() => handleKpiClick(k, metric)}
-                  className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs cursor-pointer hover:border-blue-400 transition"
-                >
-                  <div className="text-[11px] font-semibold text-[#667085]">{k.replace(/_/g, " ").toUpperCase()}</div>
-                  <div className="text-2xl font-black text-[#182230] my-1">
-                    {metric.value === null ? "—" : metric.formatted_value}
-                  </div>
-                  <div className="text-[10px] text-slate-500">{metric.delta_label || metric.source || metric.status}</div>
-                </div>
-              ))}
-            </div>
+            <ProvenanceBanner provenance={networkData?.provenance} />
+            <KpiCardGrid
+              kpis={networkData?.kpis}
+              specs={Object.keys(networkData?.kpis || {}).map((k) => ({
+                key: k,
+                label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()),
+              }))}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
               <h3 className="text-sm font-bold text-[#182230] mb-3">Cloud Infrastructure & Network Components</h3>
@@ -2753,9 +2409,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 font-mono text-blue-700">{c.resource}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{c.region}</td>
                         <td className="py-2.5 px-3 text-slate-600">{c.usage_driver}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">${c.cost_mtd.toLocaleString()}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(c.cost_mtd)}</td>
                         <td className="py-2.5 px-3">{c.allocation}</td>
-                        <td className="py-2.5 px-3 text-emerald-700 font-semibold">{c.opportunity}</td>
+                        <td className="py-2.5 px-3 text-slate-500">{c.opportunity}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2770,21 +2426,17 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "governance" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(govData?.kpis || {}).map(([k, metric]) => (
-                <div
-                  key={k}
-                  onClick={() => handleKpiClick(k, metric)}
-                  className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs cursor-pointer hover:border-blue-400 transition"
-                >
-                  <div className="text-[11px] font-semibold text-[#667085]">{k.replace(/_/g, " ").toUpperCase()}</div>
-                  <div className="text-2xl font-black text-[#182230] my-1">
-                    {metric.value === null ? "—" : metric.formatted_value}
-                  </div>
-                  <div className="text-[10px] text-slate-500">{metric.delta_label || metric.source || metric.status}</div>
-                </div>
-              ))}
-            </div>
+            <ProvenanceBanner provenance={govData?.provenance} />
+            <KpiCardGrid
+              kpis={govData?.kpis}
+              specs={Object.keys(govData?.kpis || {}).map((k) => ({
+                key: k,
+                label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()),
+              }))}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
               <h3 className="text-sm font-bold text-[#182230] mb-3">Cluster Policy Catalogue</h3>
@@ -2809,9 +2461,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3">{p.control}</td>
                         <td className="py-2.5 px-3 font-medium text-blue-700">{p.enforcement}</td>
                         <td className="py-2.5 px-3 text-slate-600">{p.owner}</td>
-                        <td className="py-2.5 px-3">{p.exceptions}</td>
+                        <td className="py-2.5 px-3">{p.exceptions ?? "-"}</td>
                         <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
                             {p.status}
                           </span>
                         </td>
@@ -2851,21 +2503,17 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "chargeback" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(chargebackData?.kpis || {}).map(([k, metric]) => (
-                <div
-                  key={k}
-                  onClick={() => handleKpiClick(k, metric)}
-                  className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs cursor-pointer hover:border-blue-400 transition"
-                >
-                  <div className="text-[11px] font-semibold text-[#667085]">{k.replace(/_/g, " ").toUpperCase()}</div>
-                  <div className="text-2xl font-black text-[#182230] my-1">
-                    {metric.value === null ? "—" : metric.formatted_value}
-                  </div>
-                  <div className="text-[10px] text-slate-500">{metric.delta_label || metric.source || metric.status}</div>
-                </div>
-              ))}
-            </div>
+            <ProvenanceBanner provenance={chargebackData?.provenance} />
+            <KpiCardGrid
+              kpis={chargebackData?.kpis}
+              specs={Object.keys(chargebackData?.kpis || {}).map((k) => ({
+                key: k,
+                label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()),
+              }))}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
               <h3 className="text-sm font-bold text-[#182230] mb-3">Business Unit Showback & Chargeback Statements</h3>
@@ -2889,8 +2537,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 font-semibold text-slate-800">{s.business_unit}</td>
                         <td className="py-2.5 px-3">${s.direct_compute.toLocaleString()}</td>
                         <td className="py-2.5 px-3">${s.ai_tokens.toLocaleString()}</td>
-                        <td className="py-2.5 px-3">${s.storage.toLocaleString()}</td>
-                        <td className="py-2.5 px-3">${s.shared_allocation.toLocaleString()}</td>
+                        <td className="py-2.5 px-3">{fmtMoney(s.storage)}</td>
+                        <td className="py-2.5 px-3">{fmtMoney(s.shared_allocation)}</td>
                         <td className="py-2.5 px-3 font-bold text-blue-700">${s.total.toLocaleString()}</td>
                         <td className="py-2.5 px-3 font-semibold text-slate-700">{s.budget_variance}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{s.trend}</td>
@@ -2908,21 +2556,17 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "workloads" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(workloadData?.kpis || {}).map(([k, metric]) => (
-                <div
-                  key={k}
-                  onClick={() => handleKpiClick(k, metric)}
-                  className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs cursor-pointer hover:border-blue-400 transition"
-                >
-                  <div className="text-[11px] font-semibold text-[#667085]">{k.replace(/_/g, " ").toUpperCase()}</div>
-                  <div className="text-2xl font-black text-[#182230] my-1">
-                    {metric.value === null ? "—" : metric.formatted_value}
-                  </div>
-                  <div className="text-[10px] text-slate-500">{metric.delta_label || metric.source || metric.status}</div>
-                </div>
-              ))}
-            </div>
+            <ProvenanceBanner provenance={workloadData?.provenance} />
+            <KpiCardGrid
+              kpis={workloadData?.kpis}
+              specs={Object.keys(workloadData?.kpis || {}).map((k) => ({
+                key: k,
+                label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()),
+              }))}
+              onSelect={handleKpiClick}
+              loading={isLoading}
+              error={!!error}
+            />
 
             <div className="bg-white border border-[#e5eaf1] rounded-xl p-5 shadow-2xs">
               <h3 className="text-sm font-bold text-[#182230] mb-3">Workload Unit Economics & Efficiency</h3>
@@ -2947,12 +2591,12 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 font-semibold text-slate-800">{w.workload}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{w.workload_type}</td>
                         <td className="py-2.5 px-3 text-slate-600">{w.owner}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">${w.monthly_spend.toLocaleString()}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(w.monthly_spend)}</td>
                         <td className="py-2.5 px-3">{w.volume}</td>
                         <td className="py-2.5 px-3 font-mono font-medium text-blue-700">{w.unit_cost}</td>
-                        <td className="py-2.5 px-3 text-emerald-700 font-semibold">{w.sla_quality}</td>
+                        <td className="py-2.5 px-3 text-slate-500">{w.sla_quality}</td>
                         <td className="py-2.5 px-3 text-slate-600">{w.business_outcome}</td>
-                        <td className="py-2.5 px-3 text-emerald-700 font-bold">{w.efficiency_trend}</td>
+                        <td className="py-2.5 px-3 text-slate-500">{w.efficiency_trend}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3068,7 +2712,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               <label htmlFor="action-title-input" className="block text-xs font-medium text-slate-600 mb-1">Action Title</label>
               <input
                 id="action-title-input"
-                placeholder="e.g. Downsize Serverless Starter Warehouse"
+                placeholder="e.g. Reduce auto-stop on a SQL warehouse"
                 className="w-full text-xs p-2.5 border border-[#e5eaf1] rounded-lg"
               />
             </div>
@@ -3076,13 +2720,13 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               <label htmlFor="action-workload-input" className="block text-xs font-medium text-slate-600 mb-1">Workload / Resource</label>
               <input
                 id="action-workload-input"
-                placeholder="adb-642006393507276 / Serverless Starter Warehouse"
+                placeholder="workspace id / resource name"
                 className="w-full text-xs p-2.5 border border-[#e5eaf1] rounded-lg"
               />
             </div>
             <div>
               <label htmlFor="action-savings-input" className="block text-xs font-medium text-slate-600 mb-1">Estimated Monthly Savings (USD)</label>
-              <input id="action-savings-input" type="number" placeholder="8400" className="w-full text-xs p-2.5 border border-[#e5eaf1] rounded-lg" />
+              <input id="action-savings-input" type="number" placeholder="Only if calculable" className="w-full text-xs p-2.5 border border-[#e5eaf1] rounded-lg" />
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button
@@ -3094,7 +2738,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               <button
                 onClick={() => {
                   setIsActionModalOpen(false);
-                  showToast("Cost action recorded in audit log");
+                  showToast("Not saved: manual cost actions are not persisted yet. Use Approve / Defer on the Optimization Advisor to record workflow decisions.");
                 }}
                 className="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold"
               >
@@ -3152,17 +2796,17 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   const filename = `finops-${exportReportType.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}`;
 
                   if (exportFormat === "CSV (Direct Download)" || exportFormat.includes("CSV")) {
-                    const csvRows = [
-                      { metric: "Total Spend Verified", value: billingSummary?.total_spend_verified ?? 176840, unit: selectedCurrency },
-                      { metric: "Total DBU Ingested", value: ingestionStatus?.total_dbu_consumed ?? 88420, unit: "DBU" },
-                      { metric: "Verified Storage", value: 43200, unit: "GB" },
-                      { metric: "Active Workspaces", value: 3, unit: "Count" },
-                      { metric: "Compute Warehouses", value: 4, unit: "Count" },
+                    const spendKnown = (ingestionStatus?.total_usage_records_ingested ?? 0) > 0;
+                    const csvRows: Array<{ metric: string; value: string | number; unit: string }> = [
+                      { metric: "Total Spend (list-price basis)", value: spendKnown ? billingSummary?.total_spend_verified ?? "-" : "-", unit: spendKnown ? selectedCurrency : "n/a" },
+                      { metric: "Total DBU Ingested", value: spendKnown ? ingestionStatus?.total_dbu_consumed ?? "-" : "-", unit: "DBU" },
+                      { metric: "Billing Rows Ingested", value: ingestionStatus?.total_usage_records_ingested ?? 0, unit: "Count" },
+                      { metric: "Billing Source Status", value: spendKnown ? "INGESTED" : "BLOCKED_PENDING_APPROVAL", unit: "n/a" },
                     ];
                     const csvString = [
                       `# BIZMETRIC FINOPS COMMAND CENTER REPORT - ${exportReportType.toUpperCase()}`,
                       `# Scope: ${activeScopeId} | Currency: ${selectedCurrency} | Generated: ${formatDeterministicDateTime(new Date())}`,
-                      `# Zero-Execution Guardrail: Verified 100% Read-Only Telemetry`,
+                      `# Zero-Execution Guardrail: read-only; values not shown are unavailable, never estimated`,
                       "",
                       "Metric,Value,Unit",
                       ...csvRows.map((r) => `"${r.metric}",${r.value},"${r.unit}"`),
@@ -3178,16 +2822,15 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       generatedAt: formatDeterministicDateTime(new Date()),
                       currency: selectedCurrency,
                       kpis: [
-                        { label: "Total Net Spend", value: formatCost(billingSummary?.total_spend_verified ?? 176840) },
-                        { label: "Total DBU Consumed", value: `${(ingestionStatus?.total_dbu_consumed ?? 88420).toLocaleString()} DBU` },
-                        { label: "Identified Inactive Warehouses", value: "1 Stopped (05ed10a52697a344)" },
+                        { label: "Total Spend (list-price basis)", value: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 && billingSummary?.total_spend_verified != null ? formatCost(billingSummary.total_spend_verified) : "-" },
+                        { label: "Total DBU Ingested", value: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? `${(ingestionStatus?.total_dbu_consumed ?? 0).toLocaleString()} DBU` : "-" },
+                        { label: "SQL Warehouse State", value: ingestionStatus?.warehouse_status || "UNKNOWN" },
                         { label: "Currency Traceability", value: getCurrencyTraceability(selectedCurrency) },
                       ],
                       summaryRows: [
-                        ["Workload Profile", "Enterprise Analytics & Lakehouse Workflows"],
                         ["Target Cloud Scope", activeScopeId],
-                        ["Pricing Source", "Azure Retail API & System Tables Live Billing"],
-                        ["Compliance Audit", "ISO 27001 & SOC-2 Type II Read-Only Telemetry"],
+                        ["Pricing Source", "List prices (rate card) applied to ingested system.billing.usage rows"],
+                        ["Data Provenance", "Values not backed by live Databricks data are shown as -"],
                       ],
                     });
                     showToast(`Exported ${exportReportType} as genuine PDF-1.4`);
@@ -3199,11 +2842,11 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       currency: selectedCurrency,
                       currency_traceability: getCurrencyTraceability(selectedCurrency),
                       kpis: {
-                        total_spend: billingSummary?.total_spend_verified ?? 176840,
-                        total_dbu: ingestionStatus?.total_dbu_consumed ?? 88420,
+                        total_spend: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? billingSummary?.total_spend_verified ?? null : null,
+                        total_dbu: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? ingestionStatus?.total_dbu_consumed ?? null : null,
                         currency: selectedCurrency,
                       },
-                      compliance: "100% Read-Only Zero-Execution Invariant Enforced",
+                      compliance: "Read-only; no cloud mutations performed",
                     };
                     const blob = new Blob([JSON.stringify(jsonPayload, null, 2)], { type: "application/json" });
                     const url = URL.createObjectURL(blob);
@@ -3239,9 +2882,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     Databricks System Tables Billing Ingestion & Compute Gate
                   </h3>
                   <div className="text-xs text-[#667085] flex items-center gap-2 mt-0.5">
-                    <span>Target Workspace: <code className="font-semibold text-slate-700">adb-642006393507276</code></span>
+                    <span>Target Workspace: <code className="font-semibold text-slate-700">{effectiveWorkspaceId}</code></span>
                     <span>•</span>
-                    <span>Warehouse: <code className="font-semibold text-slate-700">Serverless Starter Warehouse (05ed10a52697a344)</code></span>
+                    <span>Warehouse: <code className="font-semibold text-slate-700">{validationData?.warehouse_name || ingestionStatus?.warehouse_name || "—"} ({validationData?.warehouse_id || ingestionStatus?.warehouse_id || "—"})</code></span>
                   </div>
                 </div>
               </div>
@@ -3264,9 +2907,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   </span>
                 </div>
                 <p className="text-amber-800 leading-relaxed">
-                  SQL Warehouse <code className="font-bold text-amber-950">05ed10a52697a344</code> is currently <strong>STOPPED</strong>.
-                  Antigravity will <strong>never resume compute or execute unapproved SQL automatically</strong>.
-                  All calculations and analytics in the Command Center are actively served by deterministic, verified baseline fixtures (24 records, 88,420 DBU, $176,840.00 Net Verified Spend).
+                  SQL Warehouse <code className="font-bold text-amber-950">{validationData?.warehouse_id || ingestionStatus?.warehouse_id || "—"}</code> is currently <strong>{validationData?.warehouse_state || ingestionStatus?.warehouse_status || "UNKNOWN"}</strong>.
+                  This platform will <strong>never resume compute or execute unapproved SQL automatically</strong>.
+                  Until an approved read-only ingestion loads billing rows, spend, forecast and anomaly figures stay <strong>unavailable</strong>; nothing is modelled or substituted.
                 </p>
               </div>
             </div>
@@ -3291,7 +2934,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     : "border-transparent text-slate-500 hover:text-slate-700"
                 }`}
               >
-                Baseline Usage Records ({previewRecords.length || 24})
+                Ingested Usage Records ({previewRecords.length})
               </button>
               <button
                 onClick={() => setIngestionModalTab("reconciliation")}
@@ -3329,19 +2972,19 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="font-bold text-blue-600">2.</span>
-                      <span><strong>Warehouse:</strong> Serverless Starter Warehouse (<code>05ed10a52697a344</code>)</span>
+                      <span><strong>Warehouse:</strong> {validationData?.warehouse_name || ingestionStatus?.warehouse_name || "—"} (<code>{validationData?.warehouse_id || ingestionStatus?.warehouse_id || "—"}</code>)</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="font-bold text-blue-600">3.</span>
-                      <span><strong>Compute Impact:</strong> Warehouse state is currently STOPPED; queries resume compute</span>
+                      <span><strong>Compute Impact:</strong> Warehouse state is currently {validationData?.warehouse_state || ingestionStatus?.warehouse_status || "UNKNOWN"}; a stopped warehouse must be started by an operator to run queries</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="font-bold text-blue-600">4.</span>
-                      <span><strong>Auto-Stop:</strong> 10-minute auto-termination to prevent idle burn</span>
+                      <span><strong>Auto-Stop:</strong> Governed by the warehouse&apos;s own auto-stop setting (not changed by this platform)</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="font-bold text-blue-600">5.</span>
-                      <span><strong>Cost Ceiling:</strong> Est. 30-45s execution (~$0.15 - $0.35 serverless DBU burst)</span>
+                      <span><strong>Cost Ceiling:</strong> Not estimated; depends on warehouse size and query runtime</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="font-bold text-blue-600">6.</span>
@@ -3349,11 +2992,11 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="font-bold text-blue-600">7.</span>
-                      <span><strong>Rollback:</strong> Compute auto-stops or manual stop command issued upon ingest</span>
+                      <span><strong>Rollback:</strong> Read-only queries; warehouse stops via its own auto-stop setting</span>
                     </div>
                     <div className="flex items-start gap-2">
                       <span className="font-bold text-blue-600">8.</span>
-                      <span><strong>Active Fallback:</strong> Local baseline cache verified (88,420 DBU, $176,840)</span>
+                      <span><strong>Fallback:</strong> None. Modules show unavailable states rather than modelled values</span>
                     </div>
                   </div>
                 </div>
@@ -3368,7 +3011,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                     />
                     <span className="text-slate-800 font-medium">
-                      I explicitly acknowledge that triggering live ingestion will resume compute warehouse <code className="font-bold">05ed10a52697a344</code> and incur serverless DBU charges.
+                      I explicitly acknowledge that triggering live ingestion will use compute warehouse <code className="font-bold">{validationData?.warehouse_id || ingestionStatus?.warehouse_id || "—"}</code> and may incur DBU charges.
                     </span>
                   </label>
 
@@ -3406,7 +3049,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       <div className="mt-2 text-xs space-y-1">
                         <p><strong>Gate Notice:</strong> {runResult.error_message}</p>
                         <p className="text-[11px] text-amber-800">
-                          Warehouse <code>{(runResult.approval_request?.warehouse_id as string) || "05ed10a52697a344"}</code> is stopped. Execution blocked until human approval is supplied.
+                          Warehouse <code>{(runResult.approval_request?.warehouse_id as string) || "—"}</code> requires approval. Execution is blocked until human approval is supplied.
                         </p>
                       </div>
                     ) : (
@@ -3426,8 +3069,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
             {ingestionModalTab === "preview" && (
               <div className="space-y-3 text-xs">
                 <div className="flex items-center justify-between text-slate-600">
-                  <span>Showing {previewRecords.length} normalized usage records from canonical baseline fixture</span>
-                  <span className="font-semibold text-slate-800">Total DBU: 88,420.00 | Net Cost: $176,840.00</span>
+                  <span>Showing {previewRecords.length} normalized usage records from the ingested store</span>
+                  <span className="font-semibold text-slate-800">{previewRecords.length === 0 ? "No rows ingested" : `Preview total DBU: ${previewRecords.filter((r) => r.usage_unit === "DBU").reduce((a, r) => a + r.usage_quantity, 0).toLocaleString()}`}</span>
                 </div>
                 <div className="border border-[#e5eaf1] rounded-lg overflow-x-auto max-h-[350px]">
                   <table className="w-full text-left text-xs">
@@ -3474,35 +3117,30 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
                     <div className="text-[10px] uppercase font-bold text-slate-500">Gross Usage</div>
-                    <div className="text-base font-bold text-[#182230] mt-0.5">{reconciliationData?.gross_dbu.toLocaleString() || "88,440"} DBU</div>
-                    <div className="text-[11px] text-slate-500">Gross Cost: ${reconciliationData?.gross_cost.toLocaleString() || "176,880.00"}</div>
+                    <div className="text-base font-bold text-[#182230] mt-0.5">{reconciliationData ? `${reconciliationData.gross_dbu.toLocaleString()} DBU` : "—"}</div>
+                    <div className="text-[11px] text-slate-500">Gross Cost: {reconciliationData ? `$${reconciliationData.gross_cost.toLocaleString()}` : "—"}</div>
                   </div>
                   <div className="p-3 bg-rose-50 border border-rose-100 rounded-lg">
                     <div className="text-[10px] uppercase font-bold text-rose-600">Retractions</div>
-                    <div className="text-base font-bold text-rose-700 mt-0.5">{reconciliationData?.retraction_dbu.toLocaleString() || "-20"} DBU</div>
-                    <div className="text-[11px] text-rose-600">Retracted Cost: -${Math.abs((reconciliationData?.gross_cost || 176880) - (reconciliationData?.net_cost || 176840)).toFixed(2)}</div>
+                    <div className="text-base font-bold text-rose-700 mt-0.5">{reconciliationData ? `${reconciliationData.retraction_dbu.toLocaleString()} DBU` : "—"}</div>
+                    <div className="text-[11px] text-rose-600">Retracted Cost: {reconciliationData ? `-$${Math.abs(reconciliationData.gross_cost - reconciliationData.net_cost).toFixed(2)}` : "—"}</div>
                   </div>
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg">
                     <div className="text-[10px] uppercase font-bold text-emerald-700">Net Verified Spend</div>
-                    <div className="text-base font-bold text-emerald-800 mt-0.5">${reconciliationData?.net_cost.toLocaleString() || "176,840.00"}</div>
-                    <div className="text-[11px] text-emerald-600">Net DBU: {reconciliationData?.net_dbu.toLocaleString() || "88,420"} DBU</div>
+                    <div className="text-base font-bold text-emerald-800 mt-0.5">{reconciliationData ? `$${reconciliationData.net_cost.toLocaleString()}` : "—"}</div>
+                    <div className="text-[11px] text-emerald-600">Net DBU: {reconciliationData ? `${reconciliationData.net_dbu.toLocaleString()} DBU` : "—"}</div>
                   </div>
                   <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
                     <div className="text-[10px] uppercase font-bold text-blue-700">Reconciliation Status</div>
-                    <div className="text-base font-bold text-blue-800 mt-0.5">{reconciliationData?.reconciliation_status || "RECONCILED"}</div>
-                    <div className="text-[11px] text-blue-600">Discrepancy: $0.00</div>
+                    <div className="text-base font-bold text-blue-800 mt-0.5">{reconciliationData?.reconciliation_status || "NOT AVAILABLE"}</div>
+                    <div className="text-[11px] text-blue-600">{reconciliationData ? "See audit notes" : "No ingested rows to reconcile"}</div>
                   </div>
                 </div>
 
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
                   <div className="font-bold text-[#182230]">Reconciliation Audit Notes:</div>
                   <ul className="list-disc list-inside space-y-1 text-slate-600">
-                    {(reconciliationData?.audit_notes || [
-                      "All 24 usage records matched published Databricks rate card list prices.",
-                      "Retraction record REC-202611-0024 accurately credited 20 DBU ($40.00 USD).",
-                      "Zero orphaned usage records detected (unmatched_records_count = 0).",
-                      "Zero pricing rate ambiguities; 100% of interval joins aligned."
-                    ]).map((note, idx) => (
+                    {(reconciliationData?.audit_notes || ["No reconciliation notes: no billing rows have been ingested."                    ]).map((note, idx) => (
                       <li key={idx}>{note}</li>
                     ))}
                   </ul>
@@ -3516,25 +3154,20 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
                     <span className="text-[10px] uppercase font-bold text-slate-500">Warehouse ID</span>
-                    <p className="font-mono font-bold text-[#182230] mt-1">{validationData?.warehouse_id || "05ed10a52697a344"}</p>
-                    <p className="text-slate-500 text-[11px] mt-0.5">State: <strong className="text-amber-600">{validationData?.warehouse_state || "STOPPED"}</strong></p>
+                    <p className="font-mono font-bold text-[#182230] mt-1">{validationData?.warehouse_id || ingestionStatus?.warehouse_id || "—"}</p>
+                    <p className="text-slate-500 text-[11px] mt-0.5">State: <strong className="text-amber-600">{validationData?.warehouse_state || ingestionStatus?.warehouse_status || "UNKNOWN"}</strong></p>
                   </div>
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
                     <span className="text-[10px] uppercase font-bold text-slate-500">System Tables Readiness</span>
-                    <p className="font-bold text-[#182230] mt-1">{validationData?.system_tables_ready ? "READY" : "STOPPED_WAREHOUSE"}</p>
-                    <p className="text-slate-500 text-[11px] mt-0.5">Offline fallback: <strong>ACTIVE</strong></p>
+                    <p className="font-bold text-[#182230] mt-1">{validationData ? (validationData.system_tables_ready ? "READY" : "NOT READY") : "—"}</p>
+                    <p className="text-slate-500 text-[11px] mt-0.5">Modelled fallback: <strong>NONE</strong></p>
                   </div>
                 </div>
 
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1.5">
                   <div className="font-bold text-[#182230]">Diagnostic Inspections:</div>
                   <ul className="space-y-1 text-slate-600">
-                    {(validationData?.diagnostic_messages || [
-                      "Databricks SDK authentication profile 'azure-dev' validated.",
-                      "Warehouse '05ed10a52697a344' confirmed in STOPPED state.",
-                      "Zero-Execution gate successfully intercepted live SQL trigger.",
-                      "Offline baseline fixtures validated against canonical schema."
-                    ]).map((msg, idx) => (
+                    {(validationData?.diagnostic_messages || ["Run validation to see diagnostics."                    ]).map((msg, idx) => (
                       <li key={idx} className="flex items-center gap-2">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                         <span>{msg}</span>

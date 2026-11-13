@@ -18,7 +18,11 @@ import structlog
 from databricks.sdk import WorkspaceClient
 
 from cloud_recommender.core.config import Settings, get_settings
-from cloud_recommender.services.databricks.auth import DatabricksAuthService
+from cloud_recommender.services.databricks.auth import (
+    DatabricksAuthError,
+    DatabricksAuthService,
+    classify_databricks_error,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -86,7 +90,9 @@ class DatabricksSqlService:
 
         # Direct overrides if supplied
         self.host = host or self.settings.databricks_host
-        self.warehouse_id = warehouse_id or self.settings.databricks_warehouse_id
+        self.warehouse_id = (
+            warehouse_id if warehouse_id is not None else self.settings.databricks_warehouse_id
+        )
         self.workspace_id = (
             workspace_id
             or getattr(self.settings, "databricks_workspace_id", None)
@@ -124,15 +130,14 @@ class DatabricksSqlService:
         """Inspect warehouse state without starting compute or executing SQL.
 
         Complies with the Zero-Mutation policy: reads warehouse metadata only.
+        Never uses llm_provider to suppress real warehouse checks, and never masks
+        403 / auth / connection failures as STOPPED.
         """
-        warehouse_id = self.warehouse_id
+        warehouse_id = (self.warehouse_id or "").strip()
         default_name = "Serverless Starter Warehouse"
 
-        if (
-            self.auth_type == "mock"
-            or self.settings.databricks_auth_type == "mock"
-            or self.settings.app_env == "testing"
-            or self.settings.llm_provider == "mock"
+        if self._client is None and (
+            self.auth_type == "mock" or self.settings.databricks_auth_type == "mock"
         ):
             return WarehouseHealthResult(
                 status="WAREHOUSE_STOPPED",
@@ -144,12 +149,29 @@ class DatabricksSqlService:
                 message=f"Zero-execution policy active. Warehouse '{warehouse_id}' observed STOPPED in offline/mock mode.",
             )
 
+        status_map = {
+            "auth_failed": "AUTH_ERROR",
+            "permission_denied": "PERMISSION_DENIED",
+            "connection_error": "CONNECTION_ERROR",
+        }
+
         try:
             client = self.get_client()
 
-            # Test basic authentication
+            # Test basic authentication and workspace membership
             me = client.current_user.me()
             username = me.user_name or me.display_name or "authenticated_user"
+
+            if not warehouse_id:
+                return WarehouseHealthResult(
+                    status="CONNECTION_ERROR",
+                    warehouse_id="",
+                    warehouse_name="Unconfigured SQL Warehouse",
+                    warehouse_state="UNCONFIGURED",
+                    can_execute=False,
+                    authenticated_user=username,
+                    message="No SQL Warehouse ID is configured for this workspace.",
+                )
 
             # Query warehouse metadata (READ-ONLY metadata inspection via SDK)
             try:
@@ -186,7 +208,7 @@ class DatabricksSqlService:
                         status="WAREHOUSE_STOPPED",
                         warehouse_id=warehouse_id,
                         warehouse_name=wh_name,
-                        warehouse_state=state_str,
+                        warehouse_state=state_str or "UNKNOWN",
                         can_execute=False,
                         authenticated_user=username,
                         message=f"Warehouse '{wh_name}' is in '{state_str}' state. Live execution gated.",
@@ -194,31 +216,42 @@ class DatabricksSqlService:
 
             except Exception as wh_exc:
                 scrubbed = self.auth_service.scrub_sensitive(str(wh_exc))
-                logger.warning("databricks_warehouse_metadata_failed", error=scrubbed)
-                # If warehouse get fails, default to safe STOPPED state
+                err_kind = classify_databricks_error(wh_exc)
+                health_status = status_map[err_kind]
+                logger.warning(
+                    "databricks_warehouse_metadata_failed",
+                    warehouse_id=warehouse_id,
+                    classified_status=health_status,
+                    error=scrubbed,
+                )
                 return WarehouseHealthResult(
-                    status="WAREHOUSE_STOPPED",
+                    status=health_status,
                     warehouse_id=warehouse_id,
                     warehouse_name=default_name,
-                    warehouse_state="STOPPED",
+                    warehouse_state="UNKNOWN",
                     can_execute=False,
                     authenticated_user=username,
-                    message=f"Observed warehouse state is STOPPED. Error inspecting metadata: {scrubbed}",
+                    message=f"{health_status}: Failed to inspect warehouse '{warehouse_id}' metadata ({scrubbed}).",
                 )
 
         except Exception as auth_exc:
             scrubbed = self.auth_service.scrub_sensitive(str(auth_exc))
-            logger.warning("databricks_sql_auth_check_failed", error=scrubbed)
-            # In offline/mock mode or when network authentication is unavailable,
-            # default safely to STOPPED per zero-execution policy.
+            err_kind = classify_databricks_error(auth_exc)
+            health_status = status_map[err_kind]
+            logger.warning(
+                "databricks_sql_auth_check_failed",
+                warehouse_id=warehouse_id,
+                classified_status=health_status,
+                error=scrubbed,
+            )
             return WarehouseHealthResult(
-                status="WAREHOUSE_STOPPED",
+                status=health_status,
                 warehouse_id=warehouse_id,
                 warehouse_name=default_name,
-                warehouse_state="STOPPED",
+                warehouse_state="UNKNOWN",
                 can_execute=False,
                 authenticated_user=None,
-                message=f"Zero-execution policy active. Observed warehouse state is STOPPED (offline/unreachable: {scrubbed})",
+                message=f"{health_status}: Unable to authenticate or connect to Databricks workspace ({scrubbed}).",
             )
 
     def generate_approval_request(
@@ -851,16 +884,18 @@ class DatabricksSqlService:
         wh_health = self.check_warehouse_status()
         if wh_health.warehouse_state == "STOPPED":
             raise WarehouseStoppedError(wh_health.warehouse_id, wh_health.warehouse_name)
+        if wh_health.status in ("AUTH_ERROR", "PERMISSION_DENIED", "CONNECTION_ERROR"):
+            raise DatabricksAuthError(wh_health.message)
 
         # Live execution (when approved and warehouse is running)
         client = self.get_client()
         logger.info(
             "databricks_executing_approved_sql",
-            warehouse_id=self.settings.databricks_warehouse_id,
+            warehouse_id=self.warehouse_id,
             timeout=self.settings.databricks_query_timeout_seconds,
         )
         response = client.statement_execution.execute_statement(
-            warehouse_id=self.settings.databricks_warehouse_id,
+            warehouse_id=self.warehouse_id,
             statement=cleaned_sql,
             wait_timeout=f"{self.settings.databricks_query_timeout_seconds}s",
         )

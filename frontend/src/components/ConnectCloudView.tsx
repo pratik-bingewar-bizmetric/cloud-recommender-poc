@@ -36,123 +36,13 @@ interface ConnectCloudViewProps {
   currentActiveConnectionId?: string;
 }
 
-// Canonical Enterprise Seed Connections with Microsoft Azure & Google Cloud Hierarchy
-const SEED_CONNECTIONS: CloudConnection[] = [
-  {
-    id: "conn-azure-prod",
-    name: "Azure Production Account",
-    provider: "azure",
-    scope_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-    display_name: "Azure Production Account (sub-prod-01)",
-    tenant_or_org_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-    auth_method: "Azure CLI Credentials",
-    status: "connected",
-    last_verified_at: "2026-11-08T12:00:00.000Z",
-    is_live: true,
-    capabilities: ["inventory", "monitoring", "pricing", "system_tables", "onelake"],
-    access_limitations: ["Strictly Read-Only (Reader & Cost Management Reader)"],
-    service_integrations: [
-      {
-        service_type: "arm",
-        display_name: "Azure Resource Manager",
-        status: "connected",
-        auth_method: "Reader Role (CLI OAuth)",
-        capabilities: ["ARM Inventory", "Metrics", "Cost Management API"],
-        details: "48 Resource Groups, 98 Resources discovered",
-      },
-      {
-        service_type: "databricks",
-        display_name: "Azure Databricks",
-        status: "connected",
-        auth_method: "Azure CLI OAuth & System Tables Probed",
-        capabilities: ["adb-lakehouse-eastus (642006393507276)", "system.billing", "query_history"],
-        details: "Unity Catalog & Billing System Tables Live",
-      },
-      {
-        service_type: "fabric",
-        display_name: "Microsoft Fabric",
-        status: "connected",
-        auth_method: "Service Principal (Fabric.Read.All)",
-        capabilities: ["ws-fabric-analytics-01", "Direct Lake", "F64 Capacity"],
-        details: "FinOps Lakehouse & Capacity Telemetry Synchronized",
-      },
-    ],
-  },
-  {
-    id: "conn-azure-dev",
-    name: "Azure Analytics & Dev Account",
-    provider: "azure",
-    scope_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
-    display_name: "Azure Analytics & Dev Account (sub-dev-02)",
-    tenant_or_org_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-    auth_method: "Service Principal (OAuth2)",
-    status: "ready_to_connect",
-    last_verified_at: "2026-11-08T11:00:00.000Z",
-    is_live: true,
-    capabilities: ["inventory", "monitoring", "pricing", "dbu_billing"],
-    access_limitations: ["Strictly Read-Only"],
-    service_integrations: [
-      {
-        service_type: "arm",
-        display_name: "Azure Resource Manager",
-        status: "connected",
-        auth_method: "Service Principal Reader",
-        capabilities: ["ARM Inventory", "Metrics"],
-        details: "36 Resource Groups, 56 Resources cataloged",
-      },
-      {
-        service_type: "databricks",
-        display_name: "Azure Databricks",
-        status: "connected",
-        auth_method: "Service Principal OAuth",
-        capabilities: ["adb-lakehouse-prod (7840192837148901)", "DBU Billing"],
-        details: "Automated Jobs & Cluster Telemetry Enabled",
-      },
-      {
-        service_type: "fabric",
-        display_name: "Microsoft Fabric",
-        status: "standby",
-        auth_method: "Not Configured",
-        capabilities: ["Workspace Discovery Available"],
-        details: "Requires Fabric workspace capacity assignment",
-      },
-    ],
-  },
-  {
-    id: "conn-gcp-prod",
-    name: "Smart Expense GCP Production",
-    provider: "gcp",
-    scope_id: "smart-expense-prod-8812",
-    display_name: "GCP Smart Expense (smart-expense-prod-8812)",
-    tenant_or_org_id: "organizations/44910293817",
-    auth_method: "GCP Service Account (Read-Only)",
-    status: "ready_to_connect",
-    last_verified_at: "2026-11-08T10:00:00.000Z",
-    is_live: false,
-    capabilities: ["pricing", "inventory", "billing_export"],
-    access_limitations: ["roles/viewer", "roles/billing.viewer"],
-    service_integrations: [
-      {
-        service_type: "gcp_core",
-        display_name: "Google Cloud Platform Core",
-        status: "connected",
-        auth_method: "Service Account Key",
-        capabilities: ["Compute Engine", "Cloud Storage", "BigQuery Billing Export"],
-        details: "Read-only inventory and pricing analysis",
-      },
-    ],
-  },
-];
-
 export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   onConnectionSelected,
   onCancel,
-  currentActiveConnectionId = "conn-azure-prod",
+  currentActiveConnectionId = "",
 }) => {
-  const [connections, setConnections] = useState<CloudConnection[]>(SEED_CONNECTIONS);
-  const [activeConnectionId, setActiveConnectionId] = useState<string>(
-    currentActiveConnectionId || "conn-azure-prod"
-  );
+  const [connections, setConnections] = useState<CloudConnection[]>([]);
+  const [activeConnectionId, setActiveConnectionId] = useState<string>(currentActiveConnectionId);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -192,22 +82,13 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     setFetchError(null);
     try {
       const serverConns = await listConnections();
-      if (serverConns && serverConns.length > 0) {
-        // Merge server conns with seed metadata if server lacks rich service integrations
-        setConnections((prev) => {
-          const map = new Map(prev.map((c) => [c.id, c]));
-          serverConns.forEach((sc) => {
-            if (map.has(sc.id)) {
-              map.set(sc.id, { ...map.get(sc.id)!, ...sc });
-            } else {
-              map.set(sc.id, sc);
-            }
-          });
-          return Array.from(map.values());
-        });
-      }
-    } catch {
-      // Offline fallback: keep seed connections
+      setConnections(serverConns || []);
+    } catch (err) {
+      // No offline fallback: an unreachable backend is shown as an error, never as seeded accounts.
+      setConnections([]);
+      setFetchError(
+        err instanceof Error ? `Could not load cloud connections: ${err.message}` : "Could not load cloud connections."
+      );
     } finally {
       setIsLoading(false);
     }
@@ -249,25 +130,11 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
       });
       setValidationStep("connected");
       onConnectionSelected(conn, res);
-    } catch {
-      // Offline mode fallback: continue directly
-      setValidationStep("connected");
-      const fallbackRes: ConnectionValidationResponse = {
-        success: true,
-        connection_id: conn.id,
-        provider: conn.provider,
-        scope_id: conn.scope_id,
-        scope_name: conn.display_name,
-        status: "connected",
-        details: "Validated with local offline cache credentials",
-        discovered_resource_count: 98,
-        discovered_resource_groups: ["rg-finops-eastus", "rg-analytics-core"],
-        permissions_verified: ["Reader", "Cost Management Reader"],
-        is_live: conn.is_live,
-        latency_ms: 12,
-        validated_at: new Date().toISOString(),
-      };
-      onConnectionSelected(conn, fallbackRes);
+    } catch (err) {
+      setValidationStep("failed");
+      setValidationError(
+        err instanceof Error ? `Validation failed: ${err.message}` : "Validation failed: backend unreachable."
+      );
     }
   };
 
@@ -277,12 +144,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     setValidationError(null);
     setValidationResult(null);
 
-    setValidationStep("connecting");
-    await new Promise((r) => setTimeout(r, 300));
     setValidationStep("validating");
-    await new Promise((r) => setTimeout(r, 400));
-    setValidationStep("discovering");
-    await new Promise((r) => setTimeout(r, 400));
 
     try {
       const res = await validateConnection({
@@ -294,24 +156,16 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
       setValidationStep("connected");
       setConnections((prev) =>
         prev.map((item) =>
-          item.id === conn.id
-            ? { ...item, status: "connected", last_verified_at: new Date().toISOString() }
-            : item
+          item.id === conn.id ? { ...item, status: "connected", last_verified_at: res.validated_at } : item
         )
       );
       setActionSuccessMessage(`Account "${conn.name}" re-verified successfully.`);
       setTimeout(() => setActionSuccessMessage(null), 4000);
-    } catch {
-      setValidationStep("connected");
-      setConnections((prev) =>
-        prev.map((item) =>
-          item.id === conn.id
-            ? { ...item, status: "connected", last_verified_at: new Date().toISOString() }
-            : item
-        )
+    } catch (err) {
+      setValidationStep("failed");
+      setValidationError(
+        err instanceof Error ? `Verification failed: ${err.message}` : "Verification failed: backend unreachable."
       );
-      setActionSuccessMessage(`Account "${conn.name}" refreshed in verified offline mode.`);
-      setTimeout(() => setActionSuccessMessage(null), 4000);
     }
   };
 
@@ -348,71 +202,6 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     e.preventDefault();
     if (!newConnName.trim() || !newScopeId.trim()) return;
 
-    const newId = `conn-${addEcosystem}-${Date.now().toString().slice(-6)}`;
-    const newConn: CloudConnection = {
-      id: newId,
-      name: newConnName,
-      provider: addEcosystem,
-      scope_id: newScopeId,
-      display_name: `${newConnName} (${newScopeId.slice(0, 14)}...)`,
-      tenant_or_org_id: newTenantId || (addEcosystem === "azure" ? "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41" : undefined),
-      auth_method: newAuthMethod,
-      status: "connected",
-      last_verified_at: new Date().toISOString(),
-      is_live: true,
-      capabilities:
-        addEcosystem === "azure"
-          ? ["inventory", "monitoring", "pricing", ...(enableDatabricksIntegration ? ["system_tables"] : []), ...(enableFabricIntegration ? ["onelake"] : [])]
-          : ["inventory", "monitoring", "pricing"],
-      access_limitations: ["Strictly Read-Only (Reader)"],
-      service_integrations:
-        addEcosystem === "azure"
-          ? [
-              {
-                service_type: "arm",
-                display_name: "Azure Resource Manager",
-                status: "connected",
-                auth_method: newAuthMethod,
-                capabilities: ["ARM Inventory", "Metrics"],
-                details: "ARM Read-Only Reader Role",
-              },
-              ...(enableDatabricksIntegration
-                ? [
-                    {
-                      service_type: "databricks" as const,
-                      display_name: "Azure Databricks",
-                      status: "connected" as const,
-                      auth_method: "Workspace OAuth & System Tables",
-                      capabilities: ["System Tables Probing", "DBU Billing"],
-                      details: "Linked via Azure Subscription hierarchy",
-                    },
-                  ]
-                : []),
-              ...(enableFabricIntegration
-                ? [
-                    {
-                      service_type: "fabric" as const,
-                      display_name: "Microsoft Fabric",
-                      status: "connected" as const,
-                      auth_method: "Fabric Capacity Read-Only",
-                      capabilities: ["FinOps Lakehouse", "Capacity Metrics"],
-                      details: "Associated Fabric tenant workspace",
-                    },
-                  ]
-                : []),
-            ]
-          : [
-              {
-                service_type: "gcp_core",
-                display_name: "Google Cloud Platform Core",
-                status: "connected",
-                auth_method: "Service Account",
-                capabilities: ["Compute", "BigQuery"],
-                details: "GCP Read-Only Access",
-              },
-            ],
-    };
-
     try {
       const req: CreateConnectionRequest = {
         provider: addEcosystem,
@@ -420,19 +209,20 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
         scope_id: newScopeId,
         azure_tenant_id: newTenantId,
       };
-      await createConnection(req).catch(() => null);
-    } catch {
-      // offline fallback
+      const created = await createConnection(req);
+      await refreshConnections();
+      if (created?.id) setActiveConnectionId(created.id);
+      setIsAddConnectionOpen(false);
+      setNewConnName("");
+      setNewScopeId("");
+      setNewTenantId("");
+      setActionSuccessMessage(`Account "${newConnName}" added; its status is whatever the backend verified.`);
+      setTimeout(() => setActionSuccessMessage(null), 4000);
+    } catch (err) {
+      setValidationError(
+        err instanceof Error ? `Could not add the connection: ${err.message}` : "Could not add the connection."
+      );
     }
-
-    setConnections((prev) => [newConn, ...prev]);
-    setActiveConnectionId(newId);
-    setIsAddConnectionOpen(false);
-    setNewConnName("");
-    setNewScopeId("");
-    setNewTenantId("");
-    setActionSuccessMessage(`New account "${newConnName}" added and validated.`);
-    setTimeout(() => setActionSuccessMessage(null), 4000);
   };
 
   return (
@@ -1108,7 +898,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                   onChange={(e) => setNewScopeId(e.target.value)}
                   placeholder={
                     addEcosystem === "azure"
-                      ? "e.g. f718c261-ab85-49fd-907e-99c022cc2aeb"
+                      ? "Azure subscription ID (GUID)"
                       : "e.g. smart-expense-prod-8812"
                   }
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"

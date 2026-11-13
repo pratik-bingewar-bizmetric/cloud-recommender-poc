@@ -37,6 +37,7 @@ from cloud_recommender.services.databricks.sql_client import (
     DatabricksSqlService,
     MutationProhibitedError,
 )
+from tests.fixtures.billing_baseline import load_baseline_usage
 
 
 @pytest.fixture
@@ -50,8 +51,10 @@ def sql_service() -> DatabricksSqlService:
 
 
 @pytest.fixture
-def ingestion_service() -> BillingIngestionService:
-    return BillingIngestionService()
+def ingestion_service(sql_service: DatabricksSqlService) -> BillingIngestionService:
+    svc = BillingIngestionService(sql_service=sql_service)
+    load_baseline_usage(svc)  # synthetic TEST-ONLY rows; the application never seeds usage
+    return svc
 
 
 # =============================================================================
@@ -339,13 +342,13 @@ def test_exact_resource_scope_attribution(
     assert summary.resource_id == "05ed10a52697a344"
     assert summary.net_dbu == 19172.0
     assert summary.total_spend_verified == 42178.4
-    assert summary.data_status == "BASELINE"
+    assert summary.data_status == "INGESTED"
 
 
 def test_adversarial_unknown_resource_scope(
     ingestion_service: BillingIngestionService,
 ) -> None:
-    """Verify unknown or heuristic resource IDs strictly return NO_DATA with 0 DBU."""
+    """Unknown or heuristic resource IDs return NO_DATA with null (unknown, not zero) DBU."""
     adversarial_ids = [
         "fake-cluster-999",
         "sample1",  # Substring of 1024-080000-sample1 (must be rejected)
@@ -355,8 +358,8 @@ def test_adversarial_unknown_resource_scope(
     for bad_id in adversarial_ids:
         summary = ingestion_service.get_billing_summary(resource_id=bad_id)
         assert summary.data_status == "NO_DATA"
-        assert summary.total_dbu == 0.0
-        assert summary.net_dbu == 0.0
+        assert summary.total_dbu is None
+        assert summary.net_dbu is None
         assert summary.total_spend_verified is None
 
 
