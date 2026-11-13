@@ -27,7 +27,11 @@ import { SectionTokenEconomics } from "@/components/SectionTokenEconomics";
 import { SectionCostWaste } from "@/components/SectionCostWaste";
 import { TelemetryCoverageDrawer } from "@/components/TelemetryCoverageDrawer";
 import { FinancialKpiDrawer } from "@/components/FinancialKpiDrawer";
-import { buildCanonicalFinancialSummary } from "@/lib/financials";
+import {
+  buildCanonicalFinancialSummary,
+  formatFinancialCurrency,
+  toFiniteNumber,
+} from "@/lib/financials";
 import { FinancialKpiType } from "@/types/financials";
 import { formatDeterministicTime, formatDeterministicDateTime } from "@/lib/dateTimeFormat";
 import {
@@ -1286,7 +1290,7 @@ export function SectionCentralizedMonitoring({
               <span className="text-[10px] text-slate-400 font-mono">USD</span>
             </div>
             <div className="text-xl font-extrabold text-slate-900 mt-1">
-              ${canonicalFinancials.estimated_monthly_spend.toFixed(2)}
+              {formatFinancialCurrency(canonicalFinancials?.estimated_monthly_spend)}
             </div>
             <div className="text-[10px] text-brand-600 font-semibold mt-0.5 flex items-center justify-between">
               <span>Catalog basis</span>
@@ -1308,7 +1312,7 @@ export function SectionCentralizedMonitoring({
               <TrendingDown className="w-3.5 h-3.5 text-emerald-600" />
             </div>
             <div className="text-xl font-extrabold text-emerald-700 mt-1">
-              ${canonicalFinancials.potential_monthly_savings.toFixed(2)}
+              {formatFinancialCurrency(canonicalFinancials?.potential_monthly_savings)}
               <span className="text-xs font-normal">/mo</span>
             </div>
             <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 flex items-center justify-between">
@@ -2458,10 +2462,8 @@ export function SectionCentralizedMonitoring({
                             Monthly Sizing Basis
                           </div>
                           <div className="text-base font-bold text-slate-900 mt-1">
-                            $
-                            {String(
-                              resourceDetail.cost_and_utilization
-                                ?.monthly_cost ?? "0.00"
+                            {formatFinancialCurrency(
+                              toFiniteNumber(resourceDetail.cost_and_utilization?.monthly_cost)
                             )}
                             /month
                           </div>
@@ -2566,7 +2568,7 @@ export function SectionCentralizedMonitoring({
       />
 
       {/* 14. Canonical Financial KPI Drill-Down Drawer */}
-      {financialDrawerKpi && (
+      {financialDrawerKpi && canonicalFinancials && (
         <FinancialKpiDrawer
           isOpen={Boolean(financialDrawerKpi)}
           onClose={() => setFinancialDrawerKpi(null)}

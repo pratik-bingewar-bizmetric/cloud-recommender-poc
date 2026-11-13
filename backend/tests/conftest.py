@@ -6,6 +6,8 @@ from collections.abc import AsyncGenerator
 # Configure fail-closed cryptographic signing key for test environment
 os.environ.setdefault("FINOPS_SIGNING_SECRET", "finops-test-signing-secret-2026-min-32-chars-long")
 os.environ.setdefault("FINOPS_SIGNING_KID", "k1-2026")
+# Tests opt in to labelled demo fixtures; production code fails closed when Azure auth is missing.
+os.environ.setdefault("ALLOW_DEMO_FIXTURES", "true")
 
 import httpx
 import pytest
@@ -28,6 +30,7 @@ def test_settings() -> Settings:
         llm_provider="mock",
         fabric_enabled=False,
         offline_pricing_mode=True,
+        allow_demo_fixtures=True,  # tests opt in to labelled fixtures; production fails closed
         finops_signing_secret="finops-test-signing-secret-2026-min-32-chars-long",
         finops_signing_kid="k1-2026",
     )

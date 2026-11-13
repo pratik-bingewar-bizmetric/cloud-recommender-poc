@@ -2,6 +2,7 @@
 
 import React from "react";
 import { ENABLE_AI_ARCHITECT } from "@/config/features";
+import { NO_DATA_LABEL } from "@/lib/financials";
 import {
   Sparkles,
   ShieldCheck,
@@ -126,8 +127,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   <CheckCircle2 className="w-3 h-3" /> Live Scope: {connectedScope.substring(0, 18)}...
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-medium text-[10px]" title="East US multi-tier reference benchmark model">
-                  <Layers className="w-3 h-3" /> Benchmark: sub-prod-enterprise-01
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-medium text-[10px]" title="No cloud scope is connected">
+                  <Layers className="w-3 h-3" /> No scope connected
                 </span>
               )}
               <span className="text-slate-400 font-mono text-[11px]">eastus</span>
@@ -142,10 +143,10 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <span className="text-[11px] text-slate-500 font-medium block">Monthly Spend</span>
                 <div className="mt-1 flex items-baseline gap-2">
                   <span className="text-xl font-bold text-navy-900 font-mono tabular-nums">
-                    {monthlyTotal ? `$${parseFloat(monthlyTotal).toFixed(2)}` : "$225.11"}
+                    {monthlyTotal ? `$${parseFloat(monthlyTotal).toFixed(2)}` : NO_DATA_LABEL}
                   </span>
                   <span className="text-[10px] text-accent-emerald font-semibold">
-                    {monthlyTotal ? "Live BOM" : "Retail Catalog"}
+                    {monthlyTotal ? "Live BOM" : ""}
                   </span>
                 </div>
               </div>
@@ -162,12 +163,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <span className="text-[11px] text-slate-500 font-medium block">Potential Savings</span>
                 <div className="mt-1 flex items-baseline gap-2">
                   <span className="text-xl font-bold text-accent-emerald font-mono tabular-nums">
-                    {potentialSavings ? `$${parseFloat(potentialSavings).toFixed(2)}` : "$118.27"}
+                    {potentialSavings ? `$${parseFloat(potentialSavings).toFixed(2)}` : NO_DATA_LABEL}
                   </span>
                   <span className="text-[10px] text-accent-emerald font-semibold">
-                    {monthlyTotal
-                      ? `${((parseFloat(potentialSavings || "0") / (parseFloat(monthlyTotal) || 1)) * 100).toFixed(0)}%`
-                      : "52.5%"}
+                    {monthlyTotal && potentialSavings && parseFloat(monthlyTotal) > 0
+                      ? `${((parseFloat(potentialSavings) / parseFloat(monthlyTotal)) * 100).toFixed(0)}%`
+                      : ""}
                   </span>
                 </div>
               </div>
@@ -232,28 +233,28 @@ export const LandingView: React.FC<LandingViewProps> = ({
                     <div>
                       <div className="flex justify-between text-[11px] mb-1">
                         <span className="text-slate-600">Compute (App Service, VMs)</span>
-                        <span className="font-mono font-medium text-navy-900">$91.25 (41%)</span>
+                        <span className="font-mono font-medium text-navy-900">{NO_DATA_LABEL}</span>
                       </div>
                       <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                        <div className="h-full bg-brand-600 rounded-full" style={{ width: "41%" }} />
+                        <div className="h-full bg-brand-600 rounded-full" style={{ width: "0%" }} />
                       </div>
                     </div>
                     <div>
                       <div className="flex justify-between text-[11px] mb-1">
                         <span className="text-slate-600">Databases &amp; Disks</span>
-                        <span className="font-mono font-medium text-navy-900">$105.21 (47%)</span>
+                        <span className="font-mono font-medium text-navy-900">{NO_DATA_LABEL}</span>
                       </div>
                       <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                        <div className="h-full bg-accent-emerald rounded-full" style={{ width: "47%" }} />
+                        <div className="h-full bg-accent-emerald rounded-full" style={{ width: "0%" }} />
                       </div>
                     </div>
                     <div>
                       <div className="flex justify-between text-[11px] mb-1">
                         <span className="text-slate-600">AI / ML Tokens</span>
-                        <span className="font-mono font-medium text-navy-900">$25.00 (11%)</span>
+                        <span className="font-mono font-medium text-navy-900">{NO_DATA_LABEL}</span>
                       </div>
                       <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                        <div className="h-full bg-purple-600 rounded-full" style={{ width: "11%" }} />
+                        <div className="h-full bg-purple-600 rounded-full" style={{ width: "0%" }} />
                       </div>
                     </div>
                   </div>
@@ -261,7 +262,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
                 <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
                   <span className="text-[11px] text-slate-500">Retail Prices Meter Confidence</span>
-                  <span className="text-xs font-bold text-accent-emerald font-mono">100% Verified</span>
+                  <span className="text-xs font-bold text-slate-500 font-mono">{NO_DATA_LABEL}</span>
                 </div>
               </div>
             </div>

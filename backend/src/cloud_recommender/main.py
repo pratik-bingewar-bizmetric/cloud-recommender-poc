@@ -15,6 +15,7 @@ from cloud_recommender.api.routes.health import router as health_router
 from cloud_recommender.api.v1.router import api_v1_router
 from cloud_recommender.core.config import Settings, get_settings, setup_logging
 from cloud_recommender.db.session import close_db_engine
+from cloud_recommender.services.inventory.azure_inventory import AzureAuthenticationRequired
 
 logger = structlog.get_logger(__name__)
 
@@ -99,6 +100,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "code": exc.status_code,
                     "message": exc.detail,
                     "type": "http_error",
+                }
+            },
+        )
+
+    @app.exception_handler(AzureAuthenticationRequired)
+    async def azure_auth_required_handler(
+        request: Request, exc: AzureAuthenticationRequired
+    ) -> JSONResponse:
+        """Expired/missing Azure identity: fail closed with 401, never fixture data."""
+        logger.warning("azure_authentication_required", path=request.url.path)
+        return JSONResponse(
+            status_code=401,
+            content={
+                "error": {
+                    "code": 401,
+                    "message": str(exc),
+                    "type": "azure_authentication_required",
                 }
             },
         )

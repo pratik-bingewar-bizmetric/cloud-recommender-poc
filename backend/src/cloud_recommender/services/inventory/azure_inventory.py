@@ -52,6 +52,17 @@ logger = structlog.get_logger(__name__)
 ROUND_CENTS = Decimal("0.01")
 
 
+class AzureAuthenticationRequired(Exception):
+    """No usable Azure identity (e.g. expired 'az login'); fixtures are never substituted silently."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or "Azure authentication required: no valid Azure identity. Run 'az login' or configure "
+            "AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET."
+        )
+
+
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(ROUND_CENTS, rounding=ROUND_HALF_UP)
 
@@ -248,7 +259,9 @@ class AzureInventoryService:
         if not token:
             token, _ = await self.get_access_token()
         if not token:
-            # Fallback to demo fixture subscription if unauthenticated
+            if not self.settings.allow_demo_fixtures:
+                raise AzureAuthenticationRequired()
+            # Explicit opt-in only: labelled demo fixture subscription
             return [
                 CloudScopeSummary(
                     provider=CloudProvider.AZURE,
@@ -1306,6 +1319,9 @@ class AzureInventoryService:
         token, auth_method = await self.get_access_token()
 
         if not token:
+            if not self.settings.allow_demo_fixtures:
+                logger.warning("azure_token_unavailable_failing_closed")
+                raise AzureAuthenticationRequired()
             logger.info("azure_token_unavailable_using_mock_fixture")
             return self._get_demo_fixture_analysis(
                 subscription_id or "f718c261-ab85-49fd-907e-99c022cc2aeb", assumptions
@@ -1351,7 +1367,7 @@ class AzureInventoryService:
             sub_id, token=token, resource_group=resource_group_filter
         )
 
-        if not raw_rgs and not raw_resources:
+        if not raw_rgs and not raw_resources and self.settings.allow_demo_fixtures:
             logger.info(
                 "arm_discovery_returned_no_resources_falling_back_to_fixture", sub_id=sub_id
             )

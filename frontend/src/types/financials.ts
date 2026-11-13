@@ -28,8 +28,8 @@ export interface FinancialFindingDetail {
   title: string;
   description: string;
   evidence: string;
-  current_monthly_spend: number;
-  potential_monthly_savings: number;
+  current_monthly_spend: number | null;
+  potential_monthly_savings: number | null;
   calculation_formula: string;
   pricing_source: string;
   confidence: "high" | "medium" | "low" | "provisional";
@@ -53,16 +53,16 @@ export interface CanonicalFinancialSummary {
   last_updated: string;
 
   // 1. Spend Metrics
-  estimated_monthly_spend: number;
+  estimated_monthly_spend: number | null; // null = source did not provide it (never 0)
   actual_billed_monthly_spend: number | null;
   spend_basis: "actual_billed" | "estimated_public_list" | "hybrid";
   spend_formula: string;
 
   // 2. Savings & Optimization Opportunities
-  potential_monthly_savings: number;
-  projected_annual_savings: number;
+  potential_monthly_savings: number | null;
+  projected_annual_savings: number | null;
   realized_monthly_savings: number; // Strictly 0.00 (Zero-Execution policy)
-  savings_percentage_of_spend: number;
+  savings_percentage_of_spend: number | null;
   findings_count: number;
   savings_formula: string;
 
@@ -73,8 +73,8 @@ export interface CanonicalFinancialSummary {
   findings: FinancialFindingDetail[];
 
   // 5. Inclusions, Exclusions, Assumptions & Limitations
-  included_resources_count: number;
-  unmonitored_or_unpriced_count: number;
+  included_resources_count: number | null;
+  unmonitored_or_unpriced_count: number | null;
   assumptions: string[];
   limitations: string[];
 }

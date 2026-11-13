@@ -274,6 +274,13 @@ class Settings(BaseSettings):
         default=False,
         description="Force service catalog into offline fixture mode without database queries.",
     )
+    allow_demo_fixtures: bool = Field(
+        default=False,
+        description=(
+            "Opt-in (tests/demos only): when Azure authentication is missing or expired, return "
+            "labelled mock_fixture inventory instead of failing closed with HTTP 401."
+        ),
+    )
     pricing_cache_ttl_hours: int = Field(default=24, ge=1, le=168)
 
     # File Ingestion Limits

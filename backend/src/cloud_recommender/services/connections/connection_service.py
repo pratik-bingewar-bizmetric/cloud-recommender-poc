@@ -81,8 +81,8 @@ class ConnectionService:
                     )
             except Exception as exc:
                 logger.warning("azure_list_connections_error", error=str(exc))
-        else:
-            # Fallback reference connection when unauthenticated
+        elif self.settings.allow_demo_fixtures:
+            # Explicit opt-in only: labelled reference connection when unauthenticated
             connections.append(
                 CloudConnection(
                     id="azure-ref-sub-prod",

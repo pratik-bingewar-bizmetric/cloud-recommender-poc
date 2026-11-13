@@ -22,7 +22,7 @@ import {
   CanonicalFinancialSummary,
   FinancialKpiType,
 } from "@/types/financials";
-import { formatFinancialCurrency } from "@/lib/financials";
+import { formatFinancialCurrency, percentOf } from "@/lib/financials";
 import { formatDeterministicTime } from "@/lib/dateTimeFormat";
 
 interface FinancialKpiDrawerProps {
@@ -109,8 +109,11 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
           `"${f.title}"`,
           f.category,
           f.severity,
-          f.potential_monthly_savings.toFixed(2),
-          `${((f.potential_monthly_savings / (financials.estimated_monthly_spend || 1)) * 100).toFixed(1)}%`,
+          f.potential_monthly_savings === null ? "" : f.potential_monthly_savings.toFixed(2),
+          (() => {
+            const pct = percentOf(f.potential_monthly_savings, financials.estimated_monthly_spend);
+            return pct === null ? "" : `${pct}%`;
+          })(),
           `"${f.calculation_formula}"`,
           `"${f.evidence}"`,
         ]);
@@ -246,7 +249,7 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
               <span className="text-xs text-slate-500 font-medium">
                 {kpiType === "annual_savings" ? "/year" : "/month"}
               </span>
-              {financials.estimated_monthly_spend > 0 &&
+              {financials.savings_percentage_of_spend !== null &&
                 (kpiType === "savings" || kpiType === "finding") && (
                   <span className="text-xs font-bold text-accent-emerald bg-emerald-100 px-1.5 py-0.5 rounded">
                     {financials.savings_percentage_of_spend}% of total spend
