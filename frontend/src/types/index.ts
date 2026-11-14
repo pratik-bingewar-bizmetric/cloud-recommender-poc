@@ -688,19 +688,32 @@ export interface LogSearchResponse {
   limitations: string[];
 }
 
+export interface MonitoringProbe {
+  name: string;
+  endpoint: string;
+  /** AVAILABLE | NO_DATA | ACCESS_DENIED | UNAVAILABLE | ERROR | NOT_PROBED */
+  status: string;
+  http_status: number | null;
+  record_count: number | null;
+  required_permission: string;
+  message: string | null;
+}
+
+export interface MonitoringSourceStatus {
+  status: string;
+  is_live: boolean;
+  capabilities: string[];
+  /** Never stated: the monitoring APIs do not report retention. */
+  retention_days: number | null;
+  probes?: MonitoringProbe[];
+  auth_method?: string;
+  last_checked?: string;
+  message?: string | null;
+}
+
 export interface MonitoringSourcesResponse {
-  azure_monitor: {
-    status: string;
-    is_live: boolean;
-    capabilities: string[];
-    retention_days: number;
-  };
-  gcp_monitoring: {
-    status: string;
-    is_live: boolean;
-    capabilities: string[];
-    retention_days: number;
-  };
+  azure_monitor: MonitoringSourceStatus;
+  gcp_monitoring: MonitoringSourceStatus;
   policy: string;
 }
 
@@ -922,7 +935,15 @@ export interface ScopeDiscoveryResponse {
   provider: CloudProvider | string;
   connection_id: string;
   tenant_or_org_id?: string | null;
-  status: "ready" | "permission_denied" | "unsupported" | "empty";
+  status:
+    | "ready"
+    | "permission_denied"
+    | "unsupported"
+    | "empty"
+    | "authentication_required"
+    | "error";
+  /** live = from the cloud API; demo_fixture = fabricated demo data; none = nothing retrieved. */
+  data_source?: "live" | "demo_fixture" | "none";
   status_message: string;
   last_discovered_at: string;
   tree: ScopeDiscoveryNode[];
@@ -1995,6 +2016,8 @@ export interface BillingUsageRecord {
   usage_date: string;
   usage_unit: string;
   usage_quantity: number;
+  /** Lossless decimal text of usage_quantity (source precision). */
+  usage_quantity_exact?: string;
   record_type: string;
   ingestion_date?: string | null;
   billing_origin_product?: string | null;
@@ -2005,14 +2028,27 @@ export interface BillingUsageRecord {
   effective_cost?: number | null;
   pricing_matched: boolean;
   currency?: string | null;
+  /** METERED_USAGE | LIST_PRICE_ESTIMATE | AZURE_INVOICED */
+  cost_basis?: string;
+  match_status?: string;
+  price_tier?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
 }
 
 export interface BillingPriceRecord {
   sku_name: string;
   cloud: string;
   currency_code: string;
-  price_per_unit: number;
+  account_id?: string | null;
+  usage_unit?: string;
+  price_default?: number | null;
+  price_promotional?: number | null;
+  price_effective_list?: number | null;
+  /** Selected list rate (effective_list, else default); null when the source gave neither. */
+  price_per_unit: number | null;
   pricing_unit: string;
+  price_tier?: string | null;
   price_start_time: string;
   price_end_time?: string | null;
 }
@@ -2063,7 +2099,16 @@ export interface BillingSummaryResponse {
   net_dbu: number;
   retraction_dbu: number;
   total_spend_verified?: number | null;
-  currency: string;
+  /** True only when every DBU row was priced; false = partial estimate. */
+  spend_complete?: boolean | null;
+  pricing_coverage_pct?: number | null;
+  /** METERED_USAGE | LIST_PRICE_ESTIMATE | AZURE_INVOICED */
+  cost_basis?: string;
+  currency: string | null;
+  /** Priced spend per currency; currencies are never merged or converted. */
+  spend_by_currency?: Array<{ currency: string; spend: number }>;
+  /** False when the last rate-card extract was incomplete; null if none ran. */
+  price_card_complete?: boolean | null;
   dbu_by_product: Array<Record<string, unknown>>;
   dbu_by_sku: Array<Record<string, unknown>>;
   daily_trend: Array<Record<string, unknown>>;
@@ -2083,10 +2128,15 @@ export interface BillingReconciliationResponse {
   gross_dbu: number;
   retraction_dbu: number;
   net_dbu: number;
-  gross_cost: number;
-  net_cost: number;
-  currency: string;
+  /** null when nothing is priced or when several currencies are present. */
+  gross_cost: number | null;
+  net_cost: number | null;
+  currency: string | null;
+  /** Per-currency totals; currencies are never merged or converted. */
+  cost_by_currency?: Array<{ currency: string; gross_cost: number; net_cost: number }>;
+  cost_basis?: string;
   reconciliation_status: string;
+  checks?: Array<{ name: string; passed: boolean; detail: string }>;
   audit_notes: string[];
 }
 

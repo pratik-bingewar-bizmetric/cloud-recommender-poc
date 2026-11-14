@@ -340,9 +340,14 @@ class DatabricksDiscoveryService:
         return status, msg
 
     def _collect_sdk_iterable(
-        self, raw_result: Any, source_api: str, max_items: int = 500
+        self, raw_result: Any, source_api: str, max_items: int = 10_000
     ) -> tuple[list[Any], bool]:
-        """Safely consume an SDK iterable, refusing to call unconfirmed None/dict responses NO_DATA."""
+        """Safely consume an SDK iterable, refusing to call unconfirmed None/dict responses NO_DATA.
+
+        SDK iterators follow the service's page tokens themselves, so every page is read until the
+        source ends. ``max_items`` is only a safety bound (never an intended sample size): hitting
+        it returns ``has_more=True`` and the category is reported as INCOMPLETE, not complete.
+        """
         if raw_result is None or isinstance(raw_result, (dict, str, bytes)):
             raise UnconfirmedEmptyResponseError(
                 f"{source_api} returned an empty or malformed response that did not confirm zero records."
@@ -1292,14 +1297,16 @@ class DatabricksDiscoveryService:
                     runs, runs_more = self._call_with_retry(
                         lambda: self._collect_sdk_iterable(
                             client.experiments.search_runs(
-                                experiment_ids=exp_ids[:10], max_results=50
+                                experiment_ids=exp_ids[:100], max_results=50
                             ),
                             "databricks-sdk/experiments.search_runs",
                             max_items=50,
                         ),
                         "databricks-sdk/experiments.search_runs",
                     )
-                    has_more = has_more or runs_more
+                    # Runs are a most-recent window; more experiments than the API accepts per
+                    # search_runs call (100) also means the run list is not exhaustive.
+                    has_more = has_more or runs_more or len(exp_ids) > 100
                     for idx, run in enumerate(runs):
                         info = getattr(run, "info", None)
                         run_id = _opt_str(getattr(info, "run_id", None)) if info else None

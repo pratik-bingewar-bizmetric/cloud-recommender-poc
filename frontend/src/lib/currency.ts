@@ -1,141 +1,55 @@
 /**
- * Bizmetric FinOps Platform - Currency & Exchange Rate Traceability Engine
- * 
- * Supports USD (base/billing), EUR, GBP, AUD, CAD, INR with explicit
- * central-bank referenced exchange rates and source attribution.
- * Part of Milestone 3J.5 / Part E.
+ * Bizmetric FinOps Platform - Currency display helpers.
+ *
+ * NO CONVERSION. Amounts are always shown in the currency they were reported in by their
+ * source (billing system table, pricing API). This module deliberately contains no exchange
+ * rates: a rate that is not retrieved from a live source would be a fabricated number, and
+ * combining or converting currencies silently misstates money.
  */
 
 export interface CurrencyMeta {
-  code: "USD" | "EUR" | "GBP" | "AUD" | "CAD" | "INR";
+  code: string;
   name: string;
   symbol: string;
-  rateToUsd: number; // 1 USD = X Target Currency
-  source: string;
-  asOf: string; // ISO date string
-  isSourceBillingCurrency: boolean;
-  notes: string;
 }
 
+/** Symbols for display only. Not a statement that any amount is available in these currencies. */
 export const SUPPORTED_CURRENCIES: CurrencyMeta[] = [
-  {
-    code: "USD",
-    name: "US Dollar",
-    symbol: "$",
-    rateToUsd: 1.0,
-    source: "Databricks & Cloud Provider Billing Primary Rate",
-    asOf: "2026-11-08",
-    isSourceBillingCurrency: true,
-    notes: "Direct native billing currency from Azure Databricks System Tables & Retail API",
-  },
-  {
-    code: "EUR",
-    name: "Euro",
-    symbol: "€",
-    rateToUsd: 0.922,
-    source: "European Central Bank (ECB) Reference Rate",
-    asOf: "2026-11-07",
-    isSourceBillingCurrency: false,
-    notes: "Converted from USD billing source via ECB official spot reference",
-  },
-  {
-    code: "GBP",
-    name: "British Pound",
-    symbol: "£",
-    rateToUsd: 0.7895,
-    source: "Bank of England (BoE) Daily Spot Rate",
-    asOf: "2026-11-07",
-    isSourceBillingCurrency: false,
-    notes: "Converted from USD billing source via BoE official spot rate",
-  },
-  {
-    code: "AUD",
-    name: "Australian Dollar",
-    symbol: "A$",
-    rateToUsd: 1.523,
-    source: "Reserve Bank of Australia (RBA) Reference Rate",
-    asOf: "2026-11-07",
-    isSourceBillingCurrency: false,
-    notes: "Converted from USD billing source via RBA reference rate",
-  },
-  {
-    code: "CAD",
-    name: "Canadian Dollar",
-    symbol: "C$",
-    rateToUsd: 1.358,
-    source: "Bank of Canada (BoC) Operational Reference",
-    asOf: "2026-11-07",
-    isSourceBillingCurrency: false,
-    notes: "Converted from USD billing source via BoC daily reference",
-  },
-  {
-    code: "INR",
-    name: "Indian Rupee",
-    symbol: "₹",
-    rateToUsd: 83.45,
-    source: "Reserve Bank of India (RBI) Reference Rate",
-    asOf: "2026-11-07",
-    isSourceBillingCurrency: false,
-    notes: "Converted from USD billing source via RBI reference rate",
-  },
+  { code: "USD", name: "US Dollar", symbol: "$" },
+  { code: "EUR", name: "Euro", symbol: "€" },
+  { code: "GBP", name: "British Pound", symbol: "£" },
+  { code: "AUD", name: "Australian Dollar", symbol: "A$" },
+  { code: "CAD", name: "Canadian Dollar", symbol: "C$" },
+  { code: "INR", name: "Indian Rupee", symbol: "₹" },
 ];
 
-export const CURRENCY_MAP: Record<string, CurrencyMeta> = SUPPORTED_CURRENCIES.reduce(
-  (acc, curr) => {
-    acc[curr.code] = curr;
-    return acc;
-  },
-  {} as Record<string, CurrencyMeta>
+export const CURRENCY_MAP: Record<string, CurrencyMeta> = Object.fromEntries(
+  SUPPORTED_CURRENCIES.map((c) => [c.code, c])
 );
 
+/** Metadata for a code; an unknown code is shown as its own code, never mapped to USD. */
 export function getCurrencyMeta(code: string): CurrencyMeta {
-  return CURRENCY_MAP[code.toUpperCase()] || CURRENCY_MAP["USD"];
+  const upper = code.toUpperCase();
+  return CURRENCY_MAP[upper] ?? { code: upper, name: upper, symbol: `${upper} ` };
 }
 
-/**
- * Format an amount in USD into the target display currency with symbol and localized separation.
- */
+/** Format an amount in ITS OWN currency (no conversion). */
 export function formatCost(
-  usdAmount: number,
-  currencyCode: string = "USD",
-  options: {
-    showCode?: boolean;
-    forceDecimals?: boolean;
-    maximumFractionDigits?: number;
-  } = {}
+  amount: number,
+  currencyCode: string,
+  options: { maximumFractionDigits?: number } = {}
 ): string {
-  if (isNaN(usdAmount) || !isFinite(usdAmount)) return "$0.00";
-
+  if (!Number.isFinite(amount)) return "-";
   const meta = getCurrencyMeta(currencyCode);
-  const converted = usdAmount * meta.rateToUsd;
-
-  const { showCode = false, forceDecimals = false, maximumFractionDigits } = options;
-
-  let formattedNum: string;
-  if (!forceDecimals && Math.abs(converted) >= 1000) {
-    formattedNum = converted.toLocaleString("en-US", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: maximumFractionDigits ?? 0,
-    });
-  } else {
-    formattedNum = converted.toLocaleString("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: maximumFractionDigits ?? 2,
-    });
-  }
-
-  const result = `${meta.symbol}${formattedNum}`;
-  return showCode ? `${result} ${meta.code}` : result;
+  const digits = options.maximumFractionDigits ?? 2;
+  const text = amount.toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  return `${meta.symbol}${text}`;
 }
 
-/**
- * Generates an audit string detailing the currency conversion trail.
- */
+/** Audit note: amounts are shown as reported, never converted. */
 export function getCurrencyTraceability(currencyCode: string): string {
-  const meta = getCurrencyMeta(currencyCode);
-  if (meta.isSourceBillingCurrency) {
-    return `Native Billing Source: All figures sourced directly in ${meta.code} without conversion.`;
-  }
-  return `Converted to ${meta.code} at 1 USD = ${meta.rateToUsd} (Source: ${meta.source}, as of ${meta.asOf}). Raw billing remains USD.`;
+  return `Shown in ${getCurrencyMeta(currencyCode).code} exactly as reported by the source. No conversion applied.`;
 }
-

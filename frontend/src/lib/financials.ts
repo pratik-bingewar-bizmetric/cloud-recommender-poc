@@ -11,8 +11,6 @@ import {
   FinancialFindingDetail,
 } from "@/types/financials";
 
-export const INR_EXCHANGE_RATE = 83.15;
-
 /** Text shown wherever a financial value is null / unknown. Never "0", never a fixture value. */
 export const NO_DATA_LABEL = "No data available";
 
@@ -101,17 +99,15 @@ export function toFiniteNumber(value: unknown): number | null {
  */
 export function formatFinancialCurrency(
   valUsd: number | null | undefined,
-  currency: "USD" | "INR" = "USD",
+  currency: "USD" = "USD",
   decimals: number = 2
 ): string {
   if (valUsd === null || valUsd === undefined || !Number.isFinite(valUsd)) return NO_DATA_LABEL;
-  const rate = currency === "INR" ? INR_EXCHANGE_RATE : 1;
-  const sym = currency === "INR" ? "₹" : "$";
-  const converted = valUsd * rate;
-
-  return `${sym}${converted.toLocaleString("en-US", {
-    minimumFractionDigits: currency === "INR" ? 0 : decimals,
-    maximumFractionDigits: currency === "INR" ? 0 : decimals,
+  // The pricing catalogs report USD. Amounts are shown as reported: no conversion, no FX rate.
+  void currency;
+  return `$${valUsd.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   })}`;
 }
 
@@ -150,7 +146,7 @@ export function buildCanonicalFinancialSummary(
   scopeId: string,
   scopeName: string,
   timeWindow: TimeWindowPreset = "30d",
-  currency: "USD" | "INR" = "USD",
+  currency: "USD" = "USD",
   overview?: MonitoringOverviewResponse | null,
   analysisData?: SubscriptionOrProjectAnalysis | null,
   greenfieldCost?: CostBreakdown | null
@@ -225,10 +221,9 @@ export function buildCanonicalFinancialSummary(
       reporting_period: `${timeWindow.toUpperCase()} Projected Monthly`,
       time_window: timeWindow,
       currency,
-      exchange_rate: currency === "INR" ? INR_EXCHANGE_RATE : 1,
       data_provenance: "verified_pricing_catalog",
       pricing_source: provider === "gcp" ? "GCP Cloud Billing Catalog" : "Azure Retail Prices API",
-      rate_effective_date: "October 2026",
+      rate_effective_date: null,
       last_updated: new Date().toISOString(),
       estimated_monthly_spend: rawSpend === null ? null : Number(rawSpend.toFixed(2)),
       actual_billed_monthly_spend: null,
@@ -350,10 +345,9 @@ export function buildCanonicalFinancialSummary(
       reporting_period: "Proposed Monthly Bill of Materials",
       time_window: timeWindow,
       currency,
-      exchange_rate: currency === "INR" ? INR_EXCHANGE_RATE : 1,
       data_provenance: "simulation_benchmark",
       pricing_source: "Azure Retail Prices API (Public Tier)",
-      rate_effective_date: "October 2026",
+      rate_effective_date: null,
       last_updated: new Date().toISOString(),
       estimated_monthly_spend: rawSpend,
       actual_billed_monthly_spend: null,

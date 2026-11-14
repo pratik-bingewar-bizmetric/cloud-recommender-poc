@@ -13,50 +13,24 @@ import {
   getCurrencyTraceability,
 } from "../src/lib/currency";
 
-test("Currency Engine: Sourced billing currency is USD with rate 1.0", () => {
-  const usd = CURRENCY_MAP["USD"];
-  assert.ok(usd, "USD must be defined");
-  assert.strictEqual(usd.rateToUsd, 1.0);
-  assert.strictEqual(usd.isSourceBillingCurrency, true);
-  assert.strictEqual(usd.symbol, "$");
+test("Currency helpers contain no exchange rates and never convert", () => {
+  const src = require("fs").readFileSync(require("path").resolve(__dirname, "../src/lib/currency.ts"), "utf8");
+  assert.ok(!/rateToUsd|exchange_rate|83\.|0\.922/.test(src), "no FX rates may be hardcoded");
+  for (const meta of SUPPORTED_CURRENCIES) assert.ok(!("rateToUsd" in meta));
 });
 
-test("Currency Engine: All 6 documented currencies are supported with official sources", () => {
-  const expectedCodes = ["USD", "EUR", "GBP", "AUD", "CAD", "INR"];
-  assert.strictEqual(SUPPORTED_CURRENCIES.length, 6);
-
-  for (const code of expectedCodes) {
-    const meta = getCurrencyMeta(code);
-    assert.strictEqual(meta.code, code);
-    assert.ok(meta.rateToUsd > 0, `${code} rate must be positive`);
-    assert.ok(meta.source.length > 5, `${code} must have named source`);
-    assert.ok(meta.asOf.length === 10, `${code} must have asOf date (YYYY-MM-DD)`);
-  }
+test("formatCost formats an amount in its own currency with no conversion", () => {
+  assert.strictEqual(formatCost(1000, "USD"), "$1,000.00");
+  assert.strictEqual(formatCost(1000, "EUR"), "€1,000.00"); // same number, not 922
+  assert.strictEqual(formatCost(1000, "INR"), "₹1,000.00"); // same number, not 83,450
+  assert.strictEqual(formatCost(5, "XYZ"), "XYZ 5.00"); // unknown code is never mapped to USD
+  assert.strictEqual(getCurrencyMeta("eur").code, "EUR");
 });
 
-test("Currency Engine: formatCost converts with explicit precision and formatting", () => {
-  // USD baseline
-  assert.strictEqual(formatCost(1000, "USD"), "$1,000");
-  assert.strictEqual(formatCost(12.5, "USD"), "$12.50");
-
-  // EUR conversion (1 USD = 0.922 EUR -> 1000 USD = 922 EUR, < 1000 so 2 decimals)
-  assert.strictEqual(formatCost(1000, "EUR"), "€922.00");
-  assert.strictEqual(formatCost(2000, "EUR"), "€1,844");
-
-  // INR conversion (1 USD = 83.45 INR -> 1000 USD = 83,450 INR)
-  assert.strictEqual(formatCost(1000, "INR"), "₹83,450");
-
-  // AUD conversion (1 USD = 1.523 AUD -> 1000 USD = 1,523 AUD)
-  assert.strictEqual(formatCost(1000, "AUD"), "A$1,523");
-});
-
-test("Currency Engine: Traceability note clearly identifies source USD data", () => {
-  const usdNote = getCurrencyTraceability("USD");
-  assert.ok(usdNote.includes("Native Billing Source"), "USD note must indicate native billing");
-
-  const eurNote = getCurrencyTraceability("EUR");
-  assert.ok(eurNote.includes("European Central Bank"), "EUR note must state ECB source");
-  assert.ok(eurNote.includes("Raw billing remains USD"), "Must indicate source remains USD");
+test("Traceability note states there is no conversion", () => {
+  const note = getCurrencyTraceability("EUR");
+  assert.ok(note.includes("No conversion applied"));
+  assert.ok(!note.includes("Reference Rate"));
 });
 
 test("Query Execution History: Duration bucket filtering logic works deterministically", () => {

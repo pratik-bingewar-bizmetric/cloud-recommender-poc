@@ -30,7 +30,11 @@ from cloud_recommender.services.azure.cost_management_service import (
 )
 from cloud_recommender.services.databricks.billing_ingestion_service import BillingIngestionService
 from cloud_recommender.services.databricks.finops_analytics_service import FinOpsAnalyticsService
-from tests.fixtures.billing_baseline import baseline_expectations, load_baseline_usage
+from tests.fixtures.billing_baseline import (
+    baseline_expectations,
+    load_baseline_prices,
+    load_baseline_usage,
+)
 from tests.fixtures.live_inventory import make_analytics_service
 
 
@@ -296,6 +300,7 @@ def test_repeated_ingestion_of_same_source_record() -> None:
 def test_negative_retractions_and_sla_adjustments() -> None:
     """Verify negative usage quantities (retractions) are preserved in ledger and correctly net out spend."""
     service = BillingIngestionService()
+    load_baseline_prices(service)
     initial_dbu = sum(r.usage_quantity for r in service._usage_store.values())
 
     retraction_rec = BillingUsageRecord(

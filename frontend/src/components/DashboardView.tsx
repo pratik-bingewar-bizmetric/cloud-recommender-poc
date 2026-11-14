@@ -44,7 +44,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   costBreakdown,
 }) => {
   const [timeRange, setTimeRange] = useState<TimeWindowPreset>("30d");
-  const [currency, setCurrency] = useState<"USD" | "INR">("USD");
+  // Pricing catalogs report USD; amounts are shown as reported (no conversion, no toggle).
+  const currency = "USD" as const;
 
   // Drill-down drawer state
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
@@ -147,31 +148,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ))}
           </div>
 
-          {/* Currency Toggle */}
-          <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs">
-            <button
-              type="button"
-              onClick={() => setCurrency("USD")}
-              className={`px-2.5 py-1 rounded-md font-mono transition ${
-                currency === "USD"
-                  ? "bg-white text-navy-900 shadow-2xs font-bold"
-                  : "text-navy-600 hover:text-navy-900"
-              }`}
-            >
-              $ USD
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrency("INR")}
-              className={`px-2.5 py-1 rounded-md font-mono transition ${
-                currency === "INR"
-                  ? "bg-white text-navy-900 shadow-2xs font-bold"
-                  : "text-navy-600 hover:text-navy-900"
-              }`}
-            >
-              ₹ INR
-            </button>
-          </div>
+          {/* Currency: pricing catalogs report USD. Shown as reported; there is no conversion. */}
+          <span
+            className="inline-flex items-center px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-100 text-xs font-mono text-navy-700"
+            title="Amounts are shown in the currency reported by the pricing source. No conversion is applied."
+          >
+            $ USD (as reported)
+          </span>
         </div>
       </div>
 

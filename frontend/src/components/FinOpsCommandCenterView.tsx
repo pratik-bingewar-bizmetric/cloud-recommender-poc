@@ -84,11 +84,12 @@ import {
   statusLabel,
 } from "@/lib/finopsProvenance";
 import {
-  formatCost as formatCostCurrency,
-  getCurrencyMeta,
-  getCurrencyTraceability,
-  SUPPORTED_CURRENCIES,
-} from "@/lib/currency";
+  currencyColumnName,
+  formatSourceMoney,
+  singleCurrency,
+  sourceCurrencyLabel,
+  sourceCurrencyOf,
+} from "@/lib/billing";
 import {
   formatDeterministicDateTime,
 } from "@/lib/dateTimeFormat";
@@ -134,7 +135,6 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   const [reportsData, setReportsData] = useState<ReportsAuditData | null>(null);
 
   // Interactive Drawers State
-  const [selectedCurrency, setSelectedCurrency] = useState<string>("USD");
   const [selectedKpiKey, setSelectedKpiKey] = useState<string | null>(null);
   const [selectedKpiMetric, setSelectedKpiMetric] = useState<FinOpsKpiMetric | null>(null);
   const [selectedDrawerResource, setSelectedDrawerResource] =
@@ -178,10 +178,6 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   const [exportReportType, setExportReportType] = useState<string>("Executive Cost Snapshot");
   const [exportFormat, setExportFormat] = useState<string>("CSV (Direct Download)");
 
-  // Currency Converter & Formatter (Traceable Central-Bank Rates)
-  const formatCost = (usdAmount: number): string => {
-    return formatCostCurrency(usdAmount, selectedCurrency);
-  };
 
   // Scenario Simulator
   const [computeSlider, setComputeSlider] = useState<number>(10);
@@ -201,10 +197,17 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   // Milestone 3H: Live Databricks Financial Ingestion & Warehouse Gate State
   const [ingestionStatus, setIngestionStatus] = useState<BillingIngestionStatusResponse | null>(null);
   const [billingSummary, setBillingSummary] = useState<BillingSummaryResponse | null>(null);
+  // Amounts are shown in the currency they were billed in. There is no conversion and no
+  // assumed USD: an unknown or mixed currency is shown as unavailable, never guessed.
+  const sourceCurrency = sourceCurrencyOf(billingSummary);
+  const formatCost = (amount: number): string => formatSourceMoney(amount, sourceCurrency);
   const [isIngestionModalOpen, setIsIngestionModalOpen] = useState<boolean>(false);
   const [ingestionModalTab, setIngestionModalTab] = useState<"overview" | "preview" | "reconciliation" | "diagnostics">("overview");
   const [previewRecords, setPreviewRecords] = useState<BillingUsageRecord[]>([]);
   const [reconciliationData, setReconciliationData] = useState<BillingReconciliationResponse | null>(null);
+  const reconCurrency = reconciliationData?.cost_by_currency && reconciliationData.cost_by_currency.length > 1
+    ? { code: null, mixed: true, codes: reconciliationData.cost_by_currency.map((c) => c.currency) }
+    : singleCurrency(reconciliationData?.currency);
   const [validationData, setValidationData] = useState<IngestionValidateResponse | null>(null);
   const [isApprovalChecked, setIsApprovalChecked] = useState<boolean>(false);
   const [runResult, setRunResult] = useState<BillingIngestionRunResponse | null>(null);
@@ -588,26 +591,13 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
           </div>
 
           <div className="flex items-center gap-1.5">
-            <select
-              value={selectedCurrency}
-              onChange={(e) => setSelectedCurrency(e.target.value)}
-              className="bg-white border border-[#e5eaf1] px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 shadow-2xs"
-              aria-label="Currency selection"
+            <span
+              className="inline-flex items-center bg-white border border-[#e5eaf1] px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-700 shadow-2xs"
+              aria-label="Billing currency"
+              title="Amounts are shown in the currency reported by the billing source. No conversion is applied."
             >
-              {SUPPORTED_CURRENCIES.map((c) => (
-                <option key={c.code} value={c.code}>
-                  Currency: {c.code} ({c.symbol})
-                </option>
-              ))}
-            </select>
-            {selectedCurrency !== "USD" && (
-              <span
-                className="hidden xl:inline-flex items-center text-[10px] text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-200"
-                title={getCurrencyTraceability(selectedCurrency)}
-              >
-                1 USD = {getCurrencyMeta(selectedCurrency).rateToUsd} {selectedCurrency} (Source: {getCurrencyMeta(selectedCurrency).source})
-              </span>
-            )}
+              {sourceCurrencyLabel(sourceCurrency)}
+            </span>
           </div>
 
           <ConnectionStatusIndicator
@@ -775,7 +765,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <h3 className="text-sm font-bold text-[#182230]">Spend trend and forecast</h3>
-                    <p className="text-[11px] text-[#667085]">Daily actuals, forecast and approved budget · USD</p>
+                    <p className="text-[11px] text-[#667085]">Daily actuals, forecast and approved budget · {currencyColumnName(sourceCurrency)}</p>
                   </div>
                   <span className="text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
                     Actuals · list-price basis
@@ -829,7 +819,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                     (overviewData?.spend_composition || []).map((s) => ({
                         name: s.family,
                         pct: Math.round(s.share * 100),
-                        cost: `$${s.amount.toLocaleString()}`,
+                        cost: formatCost(s.amount),
                         color: s.color || "#2563eb",
                       }))
                   ).map((s, idx) => (
@@ -1044,7 +1034,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   <p className="text-[11px] text-[#667085]">Usage rows ingested from system.billing.usage, priced at list rates, with allocation status from billing tags.</p>
                 </div>
                 <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
-                  USD · list-price basis
+                  {currencyColumnName(sourceCurrency)} · list-price basis
                 </span>
               </div>
               <div className="overflow-x-auto">
@@ -1183,7 +1173,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         {b.business_unit}
                       </span>
                       <span className="font-bold text-[#182230]">
-                        {fmtMoney(b.spend)}
+                        {fmtMoney(b.spend, formatCost)}
                         {typeof (b as { share?: number }).share === "number" && (
                           <span className="ml-2 text-slate-500 font-normal">
                             ({Math.round(((b as { share?: number }).share ?? 0) * 100)}%)
@@ -1302,7 +1292,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 text-slate-500">{fmtNumber(c.runtime_hrs, " h")}</td>
                         <td className="py-2.5 px-3">{c.cpu_utilization}</td>
                         <td className="py-2.5 px-3 text-right">{fmtNumber(c.dbu_mtd)}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(c.cost_mtd)}</td>
+                        <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(c.cost_mtd, formatCost)}</td>
                         <td className="py-2.5 px-3">
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
                             {c.state}
@@ -1350,7 +1340,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3">{w.uptime}</td>
                         <td className="py-2.5 px-3">{w.avg_utilization}</td>
                         <td className="py-2.5 px-3">{w.auto_stop_mins === null ? "-" : `${w.auto_stop_mins} min`}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(w.cost_mtd)}</td>
+                        <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(w.cost_mtd, formatCost)}</td>
                         <td className="py-2.5 px-3">
                           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
                             {w.state}
@@ -1525,7 +1515,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                           <td className="py-2.5 px-3">{ep.capacity_utilization}</td>
                           <td className="py-2.5 px-3">{ep.p95_latency}</td>
                           <td className="py-2.5 px-3 font-semibold text-slate-700">{ep.availability}</td>
-                          <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(ep.monthly_cost)}</td>
+                          <td className="py-2.5 px-3 text-right font-bold">{fmtMoney(ep.monthly_cost, formatCost)}</td>
                           <td className="py-2.5 px-3">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700">
                               {ep.action}
@@ -1559,7 +1549,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                           <td className="py-2.5 px-3 font-semibold text-[#182230]">{t.experiment_name}</td>
                           <td className="py-2.5 px-3">{t.runs}</td>
                           <td className="py-2.5 px-3 text-slate-500">{t.compute_hrs}</td>
-                          <td className="py-2.5 px-3">{fmtMoney(t.spend)}</td>
+                          <td className="py-2.5 px-3">{fmtMoney(t.spend, formatCost)}</td>
                           <td className="py-2.5 px-3 text-slate-500">{t.decision}</td>
                         </tr>
                       ))}
@@ -2018,9 +2008,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="py-2.5 px-3 font-semibold text-slate-800">{bc.budget_scope}</td>
                           <td className="py-2.5 px-3 text-[#667085]">{bc.owner}</td>
-                          <td className="py-2.5 px-3 font-bold">{fmtMoney(bc.budget)}</td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-700">{fmtMoney(bc.actual)}</td>
-                          <td className="py-2.5 px-3 font-bold text-blue-700">{fmtMoney(bc.forecast)}</td>
+                          <td className="py-2.5 px-3 font-bold">{fmtMoney(bc.budget, formatCost)}</td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-700">{fmtMoney(bc.actual, formatCost)}</td>
+                          <td className="py-2.5 px-3 font-bold text-blue-700">{fmtMoney(bc.forecast, formatCost)}</td>
                           <td className="py-2.5 px-3">{bc.burn_pct === null ? "-" : `${bc.burn_pct}%`}</td>
                           <td className="py-2.5 px-3">
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
@@ -2357,7 +2347,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3">{t.size}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{t.last_read}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{t.retention}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(t.monthly_cost)}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(t.monthly_cost, formatCost)}</td>
                         <td className="py-2.5 px-3 text-slate-500">{t.recommendation}</td>
                       </tr>
                     ))}
@@ -2409,7 +2399,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 font-mono text-blue-700">{c.resource}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{c.region}</td>
                         <td className="py-2.5 px-3 text-slate-600">{c.usage_driver}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(c.cost_mtd)}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(c.cost_mtd, formatCost)}</td>
                         <td className="py-2.5 px-3">{c.allocation}</td>
                         <td className="py-2.5 px-3 text-slate-500">{c.opportunity}</td>
                       </tr>
@@ -2537,8 +2527,8 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 font-semibold text-slate-800">{s.business_unit}</td>
                         <td className="py-2.5 px-3">${s.direct_compute.toLocaleString()}</td>
                         <td className="py-2.5 px-3">${s.ai_tokens.toLocaleString()}</td>
-                        <td className="py-2.5 px-3">{fmtMoney(s.storage)}</td>
-                        <td className="py-2.5 px-3">{fmtMoney(s.shared_allocation)}</td>
+                        <td className="py-2.5 px-3">{fmtMoney(s.storage, formatCost)}</td>
+                        <td className="py-2.5 px-3">{fmtMoney(s.shared_allocation, formatCost)}</td>
                         <td className="py-2.5 px-3 font-bold text-blue-700">${s.total.toLocaleString()}</td>
                         <td className="py-2.5 px-3 font-semibold text-slate-700">{s.budget_variance}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{s.trend}</td>
@@ -2591,7 +2581,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <td className="py-2.5 px-3 font-semibold text-slate-800">{w.workload}</td>
                         <td className="py-2.5 px-3 text-[#667085]">{w.workload_type}</td>
                         <td className="py-2.5 px-3 text-slate-600">{w.owner}</td>
-                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(w.monthly_spend)}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800">{fmtMoney(w.monthly_spend, formatCost)}</td>
                         <td className="py-2.5 px-3">{w.volume}</td>
                         <td className="py-2.5 px-3 font-mono font-medium text-blue-700">{w.unit_cost}</td>
                         <td className="py-2.5 px-3 text-slate-500">{w.sla_quality}</td>
@@ -2798,14 +2788,14 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   if (exportFormat === "CSV (Direct Download)" || exportFormat.includes("CSV")) {
                     const spendKnown = (ingestionStatus?.total_usage_records_ingested ?? 0) > 0;
                     const csvRows: Array<{ metric: string; value: string | number; unit: string }> = [
-                      { metric: "Total Spend (list-price basis)", value: spendKnown ? billingSummary?.total_spend_verified ?? "-" : "-", unit: spendKnown ? selectedCurrency : "n/a" },
+                      { metric: "Total Spend (list-price basis)", value: spendKnown ? billingSummary?.total_spend_verified ?? "-" : "-", unit: spendKnown ? sourceCurrency.code ?? (sourceCurrency.mixed ? "mixed" : "n/a") : "n/a" },
                       { metric: "Total DBU Ingested", value: spendKnown ? ingestionStatus?.total_dbu_consumed ?? "-" : "-", unit: "DBU" },
                       { metric: "Billing Rows Ingested", value: ingestionStatus?.total_usage_records_ingested ?? 0, unit: "Count" },
                       { metric: "Billing Source Status", value: spendKnown ? "INGESTED" : "BLOCKED_PENDING_APPROVAL", unit: "n/a" },
                     ];
                     const csvString = [
                       `# BIZMETRIC FINOPS COMMAND CENTER REPORT - ${exportReportType.toUpperCase()}`,
-                      `# Scope: ${activeScopeId} | Currency: ${selectedCurrency} | Generated: ${formatDeterministicDateTime(new Date())}`,
+                      `# Scope: ${activeScopeId} | ${sourceCurrencyLabel(sourceCurrency)} | Generated: ${formatDeterministicDateTime(new Date())}`,
                       `# Zero-Execution Guardrail: read-only; values not shown are unavailable, never estimated`,
                       "",
                       "Metric,Value,Unit",
@@ -2820,12 +2810,12 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       reportType: exportReportType,
                       scopeId: activeScopeId,
                       generatedAt: formatDeterministicDateTime(new Date()),
-                      currency: selectedCurrency,
+                      currency: sourceCurrency.code ?? (sourceCurrency.mixed ? "mixed" : "unknown"),
                       kpis: [
                         { label: "Total Spend (list-price basis)", value: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 && billingSummary?.total_spend_verified != null ? formatCost(billingSummary.total_spend_verified) : "-" },
                         { label: "Total DBU Ingested", value: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? `${(ingestionStatus?.total_dbu_consumed ?? 0).toLocaleString()} DBU` : "-" },
                         { label: "SQL Warehouse State", value: ingestionStatus?.warehouse_status || "UNKNOWN" },
-                        { label: "Currency Traceability", value: getCurrencyTraceability(selectedCurrency) },
+                        { label: "Currency", value: sourceCurrencyLabel(sourceCurrency) },
                       ],
                       summaryRows: [
                         ["Target Cloud Scope", activeScopeId],
@@ -2839,12 +2829,13 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                       report_type: exportReportType,
                       generated_at: formatDeterministicDateTime(new Date()),
                       scope_id: activeScopeId,
-                      currency: selectedCurrency,
-                      currency_traceability: getCurrencyTraceability(selectedCurrency),
+                      currency: sourceCurrency.code,
+                      currency_status: sourceCurrency.mixed ? "MIXED" : sourceCurrency.code ? "SINGLE" : "UNKNOWN",
+                      currency_traceability: sourceCurrencyLabel(sourceCurrency),
                       kpis: {
-                        total_spend: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? billingSummary?.total_spend_verified ?? null : null,
+                        total_spend: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 && !sourceCurrency.mixed ? billingSummary?.total_spend_verified ?? null : null,
                         total_dbu: (ingestionStatus?.total_usage_records_ingested ?? 0) > 0 ? ingestionStatus?.total_dbu_consumed ?? null : null,
-                        currency: selectedCurrency,
+                        currency: sourceCurrency.code,
                       },
                       compliance: "Read-only; no cloud mutations performed",
                     };
@@ -3081,7 +3072,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                         <th className="p-2.5 font-semibold">SKU Name</th>
                         <th className="p-2.5 font-semibold text-right">Quantity</th>
                         <th className="p-2.5 font-semibold">Unit</th>
-                        <th className="p-2.5 font-semibold text-right">Cost (USD)</th>
+                        <th className="p-2.5 font-semibold text-right">Cost ({currencyColumnName(sourceCurrency)})</th>
                         <th className="p-2.5 font-semibold text-center">Type</th>
                       </tr>
                     </thead>
@@ -3096,7 +3087,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                           </td>
                           <td className="p-2.5 font-mono text-[11px]">{r.usage_unit}</td>
                           <td className="p-2.5 text-right font-semibold text-slate-900">
-                            {r.effective_cost !== null && r.effective_cost !== undefined ? `$${r.effective_cost.toFixed(2)}` : "—"}
+                            {r.effective_cost !== null && r.effective_cost !== undefined ? formatSourceMoney(r.effective_cost, singleCurrency(r.currency)) : "—"}
                           </td>
                           <td className="p-2.5 text-center">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${r.record_type === "retraction" ? "bg-rose-50 text-rose-700 border border-rose-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}>
@@ -3118,16 +3109,16 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
                     <div className="text-[10px] uppercase font-bold text-slate-500">Gross Usage</div>
                     <div className="text-base font-bold text-[#182230] mt-0.5">{reconciliationData ? `${reconciliationData.gross_dbu.toLocaleString()} DBU` : "—"}</div>
-                    <div className="text-[11px] text-slate-500">Gross Cost: {reconciliationData ? `$${reconciliationData.gross_cost.toLocaleString()}` : "—"}</div>
+                    <div className="text-[11px] text-slate-500">Gross Cost: {reconciliationData && reconciliationData.gross_cost != null ? formatSourceMoney(reconciliationData.gross_cost, reconCurrency) : "—"}</div>
                   </div>
                   <div className="p-3 bg-rose-50 border border-rose-100 rounded-lg">
                     <div className="text-[10px] uppercase font-bold text-rose-600">Retractions</div>
                     <div className="text-base font-bold text-rose-700 mt-0.5">{reconciliationData ? `${reconciliationData.retraction_dbu.toLocaleString()} DBU` : "—"}</div>
-                    <div className="text-[11px] text-rose-600">Retracted Cost: {reconciliationData ? `-$${Math.abs(reconciliationData.gross_cost - reconciliationData.net_cost).toFixed(2)}` : "—"}</div>
+                    <div className="text-[11px] text-rose-600">Retracted Cost: {reconciliationData && reconciliationData.gross_cost != null && reconciliationData.net_cost != null ? formatSourceMoney(reconciliationData.gross_cost - reconciliationData.net_cost, reconCurrency) : "—"}</div>
                   </div>
                   <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg">
                     <div className="text-[10px] uppercase font-bold text-emerald-700">Net Verified Spend</div>
-                    <div className="text-base font-bold text-emerald-800 mt-0.5">{reconciliationData ? `$${reconciliationData.net_cost.toLocaleString()}` : "—"}</div>
+                    <div className="text-base font-bold text-emerald-800 mt-0.5">{reconciliationData && reconciliationData.net_cost != null ? formatSourceMoney(reconciliationData.net_cost, reconCurrency) : reconCurrency.mixed ? "n/a (mixed currencies)" : "—"}</div>
                     <div className="text-[11px] text-emerald-600">Net DBU: {reconciliationData ? `${reconciliationData.net_dbu.toLocaleString()} DBU` : "—"}</div>
                   </div>
                   <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">

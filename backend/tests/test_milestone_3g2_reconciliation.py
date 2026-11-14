@@ -164,8 +164,7 @@ def test_historical_endpoint_fixtures_rejected_from_live_scope(
 ) -> None:
     """Historical fixtures (deepseek-r1-endpoint, mistral-large-endpoint) are rejected in live workspace scope."""
     for fixture_id in ("deepseek-r1-endpoint", "mistral-large-endpoint"):
-        assert fixture_id in service.HISTORICAL_FIXTURE_ENDPOINTS
-        assert fixture_id not in service.KNOWN_SERVING_ENDPOINTS
+        # Not part of live discovery, so it can never resolve as a live asset.
 
         cat, is_unknown = service._resolve_resource_filter(fixture_id, "serving_endpoint")
         assert is_unknown is True
@@ -184,7 +183,13 @@ def test_historical_endpoint_fixtures_rejected_from_live_scope(
 def test_app_inventory_unattributed_pool_isolation(service: FinOpsAnalyticsService) -> None:
     """Verified apps resolve as apps; an app with no billing rows is NO billing data, never $0."""
     exp = baseline_expectations()
-    for app_id in ("cement-demand-forecasting", "mcp-generate-ppt", "wonder-cement-app"):
+    from tests.fixtures.live_inventory import CONNECTION_ID, _res
+
+    # Apps resolve from LIVE discovery only (no hardcoded registry): add one that has no billing.
+    service.workspace_service._discovery_cache[CONNECTION_ID].resources.append(
+        _res("mcp-generate-ppt", "mcp-generate-ppt", "app", "RUNNING")
+    )
+    for app_id in ("cement-demand-forecasting", "mcp-generate-ppt"):
         cat, is_unknown = service._resolve_resource_filter(app_id, "app")
         assert is_unknown is False
         assert cat == "app"

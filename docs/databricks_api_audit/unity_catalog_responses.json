@@ -1,0 +1,2487 @@
+[
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "list_catalogs",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/catalogs",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/catalogs",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:01.261130+00:00",
+    "duration_ms": 453.43,
+    "records_count": 4,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "catalogs": [
+        {
+          "name": "metrobank_poc",
+          "owner": "sudarshan.bhamare@bizmetric.com",
+          "storage_root": "abfss://raw@sametrobankpoc.dfs.core.windows.net/",
+          "enable_auto_maintenance": "INHERIT",
+          "enable_predictive_optimization": "INHERIT",
+          "catalog_type": "MANAGED_CATALOG",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "created_at": 1771312115629,
+          "created_by": "sudarshan.bhamare@bizmetric.com",
+          "updated_at": 1782032249052,
+          "updated_by": "sudarshan.bhamare@bizmetric.com",
+          "storage_location": "abfss://raw@sametrobankpoc.dfs.core.windows.net/__unitystorage/catalogs/e4b37cf5-6f12-4bb2-8a1f-777f6e5975f2",
+          "isolation_mode": "OPEN",
+          "accessible_in_current_workspace": true,
+          "effective_auto_maintenance_flag": {
+            "value": "ENABLE",
+            "inherited_from_type": "METASTORE",
+            "inherited_from_name": "bizindia"
+          },
+          "effective_predictive_optimization_flag": {
+            "value": "ENABLE",
+            "inherited_from_type": "METASTORE",
+            "inherited_from_name": "bizindia"
+          },
+          "browse_only": false,
+          "id": "e4b37cf5-6f12-4bb2-8a1f-777f6e5975f2",
+          "full_name": "metrobank_poc",
+          "securable_type": "CATALOG",
+          "securable_kind": "CATALOG_STANDARD",
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/catalogs/e4b37cf5-6f12-4bb2-8a1f-777f6e5975f2",
+          "metastore_version": -1,
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAZ7pZjDc"
+        },
+        {
+          "name": "deaccelerator",
+          "owner": "chetan.singh@bizmetric.com",
+          "storage_root": "abfss://ucmetastore@sadeacceleratordev.dfs.core.windows.net/meta",
+          "enable_auto_maintenance": "INHERIT",
+          "enable_predictive_optimization": "INHERIT",
+          "catalog_type": "MANAGED_CATALOG",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "created_at": 1737383661700,
+          "created_by": "chetan.singh@bizmetric.com",
+          "updated_at": 1784026507392,
+          "updated_by": "chetan.singh@bizmetric.com",
+          "storage_location": "abfss://ucmetastore@sadeacceleratordev.dfs.core.windows.net/meta/__unitystorage/catalogs/22f87b8e-0fbf-4dfa-ab5b-faf213c4973d",
+          "isolation_mode": "OPEN",
+          "accessible_in_current_workspace": true,
+          "effective_auto_maintenance_flag": {
+            "value": "ENABLE",
+            "inherited_from_type": "METASTORE",
+            "inherited_from_name": "bizindia"
+          },
+          "effective_predictive_optimization_flag": {
+            "value": "ENABLE",
+            "inherited_from_type": "METASTORE",
+            "inherited_from_name": "bizindia"
+          },
+          "browse_only": false,
+          "id": "22f87b8e-0fbf-4dfa-ab5b-faf213c4973d",
+          "full_name": "deaccelerator",
+          "securable_type": "CATALOG",
+          "securable_kind": "CATALOG_STANDARD",
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/catalogs/22f87b8e-0fbf-4dfa-ab5b-faf213c4973d",
+          "metastore_version": -1,
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAZ9gRCiA"
+        },
+        {
+          "name": "samples",
+          "owner": "System user",
+          "comment": "These sample datasets are made available by third party data providers as well as open data sources. You can learn more about each data set by clicking on each one.\n\nTo discover more instantly available, free data sets across a wide range of industry use cases, visit [Databricks Marketplace](/marketplace).\n\nPlease note that the third party data sets represent a reduced portion of the available data attributes, volume, and data types available from providers, and are intended for educational rather than production purposes.",
+          "enable_auto_maintenance": "DISABLE",
+          "enable_predictive_optimization": "DISABLE",
+          "catalog_type": "SYSTEM_CATALOG",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "created_at": 1736820819282,
+          "created_by": "System user",
+          "updated_at": 1792035063985,
+          "updated_by": "System user",
+          "isolation_mode": "OPEN",
+          "accessible_in_current_workspace": true,
+          "effective_auto_maintenance_flag": {
+            "value": "DISABLE"
+          },
+          "effective_predictive_optimization_flag": {
+            "value": "DISABLE"
+          },
+          "browse_only": false,
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "id": "c1d96463-4bcf-4c1a-ac02-33e16f0ffbb2",
+          "full_name": "samples",
+          "securable_type": "CATALOG",
+          "securable_kind": "CATALOG_SYSTEM",
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/catalogs/c1d96463-4bcf-4c1a-ac02-33e16f0ffbb2",
+          "delta_sharing_valid_through_timestamp": 1792035123934,
+          "metastore_version": -1,
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaE9nQix"
+        },
+        {
+          "name": "system",
+          "owner": "System user",
+          "comment": "System catalog (auto-created)",
+          "enable_auto_maintenance": "DISABLE",
+          "enable_predictive_optimization": "DISABLE",
+          "catalog_type": "SYSTEM_CATALOG",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "created_at": 1736820818670,
+          "created_by": "System user",
+          "updated_at": 1794396422623,
+          "updated_by": "System user",
+          "isolation_mode": "OPEN",
+          "accessible_in_current_workspace": true,
+          "effective_auto_maintenance_flag": {
+            "value": "DISABLE"
+          },
+          "effective_predictive_optimization_flag": {
+            "value": "DISABLE"
+          },
+          "browse_only": false,
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "id": "174834f1-d631-468b-935d-ef97532cad48",
+          "full_name": "system",
+          "securable_type": "CATALOG",
+          "securable_kind": "CATALOG_SYSTEM",
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/catalogs/174834f1-d631-468b-935d-ef97532cad48",
+          "delta_sharing_valid_through_timestamp": 1794396482570,
+          "metastore_version": -1,
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaHKXIHf"
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "get_catalog_details",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/catalogs/system",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/catalogs/system",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:01.712596+00:00",
+    "duration_ms": 126.25,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "name": "system",
+      "owner": "System user",
+      "comment": "System catalog (auto-created)",
+      "enable_auto_maintenance": "DISABLE",
+      "enable_predictive_optimization": "DISABLE",
+      "catalog_type": "SYSTEM_CATALOG",
+      "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+      "created_at": 1736820818670,
+      "created_by": "System user",
+      "updated_at": 1794396422623,
+      "updated_by": "System user",
+      "isolation_mode": "OPEN",
+      "effective_auto_maintenance_flag": {
+        "value": "DISABLE"
+      },
+      "effective_predictive_optimization_flag": {
+        "value": "DISABLE"
+      },
+      "browse_only": false,
+      "provisioning_info": {
+        "state": "ACTIVE"
+      },
+      "id": "174834f1-d631-468b-935d-ef97532cad48",
+      "full_name": "system",
+      "securable_type": "CATALOG",
+      "securable_kind": "CATALOG_SYSTEM",
+      "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/catalogs/174834f1-d631-468b-935d-ef97532cad48",
+      "delta_sharing_valid_through_timestamp": 1794396482570,
+      "metastore_version": 1449,
+      "cache_version_info": {
+        "metastore_version": 1449
+      },
+      "etag": "CAESCAAAAaHKXIHf"
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "list_schemas",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/schemas",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/schemas",
+    "query_parameters": {
+      "catalog_name": "system"
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:01.846621+00:00",
+    "duration_ms": 153.24,
+    "records_count": 15,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "schemas": [
+        {
+          "name": "__internal_logging",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.__internal_logging",
+          "created_at": 1771841287846,
+          "created_by": "System user",
+          "updated_at": 1779349481320,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "6fdc7516-1b04-4cb3-96eb-3a5acf9a48db",
+          "delta_sharing_valid_through_timestamp": 1779349541278,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas___internal_logging_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAZ5Jfmdo"
+        },
+        {
+          "name": "access",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.access",
+          "created_at": 1745402249092,
+          "created_by": "System user",
+          "updated_at": 1793954693948,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "a12e0fa3-7092-413a-91ea-13a5308c8233",
+          "delta_sharing_valid_through_timestamp": 1793954753909,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_access_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaGwCEM8"
+        },
+        {
+          "name": "ai",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.ai",
+          "created_at": 1736820836160,
+          "created_by": "System user",
+          "updated_at": 1794395202828,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "370ef3ec-3f5b-4a9a-aecc-16a9a52a7d3e",
+          "delta_sharing_valid_through_timestamp": 1794395262793,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_ai_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaHKSeUM"
+        },
+        {
+          "name": "ai_gateway",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.ai_gateway",
+          "created_at": 1770885145732,
+          "created_by": "System user",
+          "updated_at": 1793954693590,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "51b5de44-7a15-408b-b968-d05201e75a7c",
+          "delta_sharing_valid_through_timestamp": 1793954753559,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_ai_gateway_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaGwCEHW"
+        },
+        {
+          "name": "billing",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.billing",
+          "created_at": 1736820838267,
+          "created_by": "System user",
+          "updated_at": 1794396410438,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "c9475c21-9629-4602-b72a-02dd64c80d5c",
+          "delta_sharing_valid_through_timestamp": 1794396470406,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_billing_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaHKXFJG"
+        },
+        {
+          "name": "compute",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.compute",
+          "created_at": 1740768283883,
+          "created_by": "System user",
+          "updated_at": 1793954693503,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "22a4e7bc-df00-4af9-b02f-de7cf7bbb25d",
+          "delta_sharing_valid_through_timestamp": 1793954753470,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_compute_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaGwCEF/"
+        },
+        {
+          "name": "data_classification",
+          "catalog_name": "system",
+          "owner": "9eb59375-349b-4858-b50d-afa3bc3b766d",
+          "storage_root": "abfss://unitycatalog@prdhfgcga0mv8gxmhzqrfzii.dfs.core.windows.net/uc/71c1893d-14e0-4107-8fb4-9f0bb8655555/446e746c-6679-4f43-9422-62d5615c1dde/__system_storage/data_classification",
+          "enable_auto_maintenance": "DISABLE",
+          "enable_predictive_optimization": "DISABLE",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.data_classification",
+          "created_at": 1772420308647,
+          "created_by": "System user",
+          "updated_at": 1772420310261,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "storage_location": "abfss://unitycatalog@prdhfgcga0mv8gxmhzqrfzii.dfs.core.windows.net/uc/71c1893d-14e0-4107-8fb4-9f0bb8655555/446e746c-6679-4f43-9422-62d5615c1dde/__system_storage/data_classification/__unitystorage/schemas/85f57aba-824d-4375-97ad-ac2e2994135d",
+          "effective_auto_maintenance_flag": {
+            "value": "DISABLE"
+          },
+          "effective_predictive_optimization_flag": {
+            "value": "DISABLE"
+          },
+          "schema_id": "85f57aba-824d-4375-97ad-ac2e2994135d",
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_DB_STORAGE",
+          "browse_only": false,
+          "metastore_version": -1,
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAZyse6T1"
+        },
+        {
+          "name": "data_quality_monitoring",
+          "catalog_name": "system",
+          "owner": "e0bf87a2-77e7-49ae-b640-bdb6fe05ae6e",
+          "storage_root": "abfss://unitycatalog@prdhfgcga0mv8gxmhzqrfzii.dfs.core.windows.net/uc/71c1893d-14e0-4107-8fb4-9f0bb8655555/446e746c-6679-4f43-9422-62d5615c1dde/__system_storage/data_quality_monitoring",
+          "enable_auto_maintenance": "DISABLE",
+          "enable_predictive_optimization": "DISABLE",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.data_quality_monitoring",
+          "created_at": 1771902625589,
+          "created_by": "System user",
+          "updated_at": 1771902627986,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "storage_location": "abfss://unitycatalog@prdhfgcga0mv8gxmhzqrfzii.dfs.core.windows.net/uc/71c1893d-14e0-4107-8fb4-9f0bb8655555/446e746c-6679-4f43-9422-62d5615c1dde/__system_storage/data_quality_monitoring/__unitystorage/schemas/9742a47b-90c1-432a-b126-86401687beab",
+          "effective_auto_maintenance_flag": {
+            "value": "DISABLE"
+          },
+          "effective_predictive_optimization_flag": {
+            "value": "DISABLE"
+          },
+          "schema_id": "9742a47b-90c1-432a-b126-86401687beab",
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_DB_STORAGE",
+          "browse_only": false,
+          "metastore_version": -1,
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAZyNoHCS"
+        },
+        {
+          "name": "information_schema",
+          "catalog_name": "system",
+          "owner": "System user",
+          "comment": "Information schema (auto-created)",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.information_schema",
+          "created_at": 1736820818680,
+          "created_by": "System user",
+          "updated_at": 1736820818680,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "schema_id": "7247f6c6-d729-4ef7-a071-63a82dde8285",
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM",
+          "browse_only": false,
+          "metastore_version": -1,
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAZRiloL4"
+        },
+        {
+          "name": "lakeflow",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.lakeflow",
+          "created_at": 1741737153404,
+          "created_by": "System user",
+          "updated_at": 1793954693978,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "6f82adfa-25f9-42de-b126-50716eebc497",
+          "delta_sharing_valid_through_timestamp": 1793954753926,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_lakeflow_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaGwCENa"
+        },
+        {
+          "name": "mlflow",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.mlflow",
+          "created_at": 1757127995118,
+          "created_by": "System user",
+          "updated_at": 1773110987867,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "95bdccf3-3d6a-4158-b39e-d951f472a793",
+          "delta_sharing_valid_through_timestamp": 1773111047816,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_mlflow_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAZzVpoxb"
+        },
+        {
+          "name": "query",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.query",
+          "created_at": 1748996646351,
+          "created_by": "System user",
+          "updated_at": 1793954693963,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "5e04953f-6057-48b6-af72-b8494e75876b",
+          "delta_sharing_valid_through_timestamp": 1793954753913,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_query_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaGwCENL"
+        },
+        {
+          "name": "serving",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.serving",
+          "created_at": 1743049409636,
+          "created_by": "System user",
+          "updated_at": 1793954694116,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "8302ed9e-6b8c-4054-ae15-bec3d1bdadf7",
+          "delta_sharing_valid_through_timestamp": 1793954754074,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_serving_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaGwCEPk"
+        },
+        {
+          "name": "sharing",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.sharing",
+          "created_at": 1790107843647,
+          "created_by": "System user",
+          "updated_at": 1790107851588,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "schema_id": "eea4028f-148b-463b-9862-2c72a3605415",
+          "delta_sharing_valid_through_timestamp": 1790107911526,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_sharing_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaDKvhtE"
+        },
+        {
+          "name": "storage",
+          "catalog_name": "system",
+          "owner": "System user",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.storage",
+          "created_at": 1743309757370,
+          "created_by": "System user",
+          "updated_at": 1793954693723,
+          "updated_by": "System user",
+          "catalog_type": "SYSTEM_CATALOG",
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "schema_id": "8868a371-a669-417a-a84e-9a4e5a41cc8a",
+          "delta_sharing_valid_through_timestamp": 1793954753686,
+          "securable_type": "SCHEMA",
+          "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+          "browse_only": false,
+          "metastore_version": -1,
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "share_name": "system_schemas_storage_share",
+          "related_entity_hints": {
+            "tag": {
+              "exists": false
+            },
+            "policy": {
+              "exists": false
+            }
+          },
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaGwCEJb"
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "get_schema_details",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/schemas/system.billing",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/schemas/system.billing",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:01.996042+00:00",
+    "duration_ms": 75.5,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "name": "billing",
+      "catalog_name": "system",
+      "owner": "System user",
+      "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+      "full_name": "system.billing",
+      "created_at": 1736820838267,
+      "created_by": "System user",
+      "updated_at": 1794396410438,
+      "updated_by": "System user",
+      "catalog_type": "SYSTEM_CATALOG",
+      "provisioning_info": {
+        "state": "ACTIVE"
+      },
+      "schema_id": "c9475c21-9629-4602-b72a-02dd64c80d5c",
+      "delta_sharing_valid_through_timestamp": 1794396470406,
+      "securable_type": "SCHEMA",
+      "securable_kind": "SCHEMA_SYSTEM_DELTASHARING",
+      "browse_only": false,
+      "metastore_version": 138,
+      "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+      "share_name": "system_schemas_billing_share",
+      "related_entity_hints": {
+        "tag": {
+          "exists": false
+        },
+        "policy": {
+          "exists": false
+        }
+      },
+      "cache_version_info": {
+        "metastore_version": 138
+      },
+      "etag": "CAESCAAAAaHKXFJG"
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "list_tables",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/tables",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/tables",
+    "query_parameters": {
+      "catalog_name": "system",
+      "schema_name": "billing"
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:02.079585+00:00",
+    "duration_ms": 108.08,
+    "records_count": 3,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "tables": [
+        {
+          "name": "attributed_usage",
+          "catalog_name": "system",
+          "schema_name": "billing",
+          "table_type": "MANAGED",
+          "data_source_format": "DELTASHARING",
+          "columns": [
+            {
+              "name": "record_id",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 0,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"record_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Unique ID for this attributed usage record (for DBSQL queries, formatted as cpq_<statement_id>)\"}}",
+              "comment": "Unique ID for this attributed usage record (for DBSQL queries, formatted as cpq_<statement_id>)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_metadata",
+              "type_text": "struct<dbsql_statement_id:string,warehouse_id:string,client_application:string>",
+              "type_name": "STRUCT",
+              "position": 1,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_metadata\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"dbsql_statement_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The ID that uniquely identifies the execution of the statement. You can use this ID to find the statement execution in the Query History UI.\"}},{\"name\":\"warehouse_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"client_application\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"System-provided metadata about the attributed usage, including IDs for compute resources and jobs. Expected to be sparse (many fields are null), but at least one field will not be null.\"}}",
+              "comment": "System-provided metadata about the attributed usage, including IDs for compute resources and jobs. Expected to be sparse (many fields are null), but at least one field will not be null.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "identity_metadata",
+              "type_text": "struct<executed_by:string>",
+              "type_name": "STRUCT",
+              "position": 2,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"identity_metadata\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"executed_by\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"System-provided metadata about the identities involved in the attributed usage\"}}",
+              "comment": "System-provided metadata about the identities involved in the attributed usage",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "start_time",
+              "type_text": "timestamp",
+              "type_name": "TIMESTAMP",
+              "position": 3,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"start_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The start time relevant to this attributed usage record (e.g., DBSQL query start time)\"}}",
+              "comment": "The start time relevant to this attributed usage record (e.g., DBSQL query start time)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "end_time",
+              "type_text": "timestamp",
+              "type_name": "TIMESTAMP",
+              "position": 4,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"end_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The end time relevant to this attributed usage record (e.g., DBSQL query end time)\"}}",
+              "comment": "The end time relevant to this attributed usage record (e.g., DBSQL query end time)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_date",
+              "type_text": "date",
+              "type_name": "DATE",
+              "position": 5,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_date\",\"type\":\"date\",\"nullable\":true,\"metadata\":{\"comment\":\"Date of the attributed usage record (derived from end_time). This field can be used for faster aggregation by date.\"}}",
+              "comment": "Date of the attributed usage record (derived from end_time). This field can be used for faster aggregation by date.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_unit",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 6,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_unit\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Unit this usage is measured in (e.g., DBU)\"}}",
+              "comment": "Unit this usage is measured in (e.g., DBU)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "active_usage_quantity",
+              "type_text": "decimal(38,18)",
+              "type_name": "DECIMAL",
+              "position": 7,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"active_usage_quantity\",\"type\":\"decimal(38,18)\",\"nullable\":true,\"metadata\":{\"comment\":\"Estimated number of units consumed for this record (for DBSQL, only active warehouse usage)\"}}",
+              "comment": "Estimated number of units consumed for this record (for DBSQL, only active warehouse usage)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "granular_tags",
+              "type_text": "struct<query_tags:map<string,string>>",
+              "type_name": "STRUCT",
+              "position": 8,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"granular_tags\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"query_tags\",\"type\":{\"type\":\"map\",\"keyType\":\"string\",\"valueType\":\"string\",\"valueContainsNull\":true},\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"Tags that are applied on the attributed usage level (e.g., Query Tags)\"}}",
+              "comment": "Tags that are applied on the attributed usage level (e.g., Query Tags)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_record_ids",
+              "type_text": "array<string>",
+              "type_name": "ARRAY",
+              "position": 9,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_record_ids\",\"type\":{\"type\":\"array\",\"elementType\":\"string\",\"containsNull\":true},\"nullable\":true,\"metadata\":{\"comment\":\"Record IDs from system.billing.usage that this attributed usage record is associated with\"}}",
+              "comment": "Record IDs from system.billing.usage that this attributed usage record is associated with",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "account_id",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 10,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"account_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"ID of the account this report was generated for\"}}",
+              "comment": "ID of the account this report was generated for",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "workspace_id",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 11,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"workspace_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"ID of the workspace this usage was associated with\"}}",
+              "comment": "ID of the workspace this usage was associated with",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "sku_name",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 12,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"sku_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Name of the SKU (e.g., ENTERPRISE_SERVERLESS_SQL_COMPUTE_US_WEST_OREGON)\"}}",
+              "comment": "Name of the SKU (e.g., ENTERPRISE_SERVERLESS_SQL_COMPUTE_US_WEST_OREGON)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "cloud",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 13,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"cloud\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Cloud associated with this usage. Possible values are AWS, AZURE, and GCP.\"}}",
+              "comment": "Cloud associated with this usage. Possible values are AWS, AZURE, and GCP.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "billing_origin_product",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 14,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"billing_origin_product\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The product that originated the usage (e.g., SQL, JOBS)\"}}",
+              "comment": "The product that originated the usage (e.g., SQL, JOBS)",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "custom_tags",
+              "type_text": "map<string,string>",
+              "type_name": "MAP",
+              "position": 15,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"custom_tags\",\"type\":{\"type\":\"map\",\"keyType\":\"string\",\"valueType\":\"string\",\"valueContainsNull\":true},\"nullable\":true,\"metadata\":{\"comment\":\"Custom tags associated with the usage record\"}}",
+              "comment": "Custom tags associated with the usage record",
+              "nullable": true,
+              "column_masks": {}
+            }
+          ],
+          "storage_location": "uc-deltasharing://system.billing.attributed_usage#system.billing.attributed_usage",
+          "owner": "System user",
+          "comment": "The [attributed usage table](https://docs.google.com/document/d/1QAAo2MgBOI4ZRvZt01xQJWGkOCdMFXJrsts9Ta4RYeU) gives you access to account-wide estimated usage data at the sub-billing level. The preview data is limited to estimated attributed usage of DBSQL queries.",
+          "properties": {
+            "delta.lastCommitTimestamp": "1781193910000",
+            "delta.parquet.compression.codec": "zstd",
+            "delta.lastUpdateVersion": "1849",
+            "delta.minWriterVersion": "7",
+            "delta.feature.appendOnly": "supported",
+            "delta.autoOptimize.autoCompact": "auto",
+            "delta.enableDeletionVectors": "true",
+            "delta.minReaderVersion": "3",
+            "delta.feature.deletionVectors": "supported",
+            "delta.autoOptimize.optimizeWrite": "true",
+            "delta.tuneFileSizesForRewrites": "true",
+            "delta.feature.invariants": "supported"
+          },
+          "securable_kind": "TABLE_DELTASHARING",
+          "properties_pairs": {
+            "properties": {
+              "delta.lastCommitTimestamp": "1781193910000",
+              "delta.parquet.compression.codec": "zstd",
+              "delta.lastUpdateVersion": "1849",
+              "delta.minWriterVersion": "7",
+              "delta.feature.appendOnly": "supported",
+              "delta.autoOptimize.autoCompact": "auto",
+              "delta.enableDeletionVectors": "true",
+              "delta.minReaderVersion": "3",
+              "delta.feature.deletionVectors": "supported",
+              "delta.autoOptimize.optimizeWrite": "true",
+              "delta.tuneFileSizesForRewrites": "true",
+              "delta.feature.invariants": "supported"
+            }
+          },
+          "generation": 4,
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.billing.attributed_usage",
+          "data_access_configuration_id": "00000000-0000-0000-0000-000000000000",
+          "created_at": 1778830659524,
+          "created_by": "System user",
+          "updated_at": 1794396413134,
+          "updated_by": "122a41fa-2ad8-44da-bea7-18bb96eae67a",
+          "table_id": "a6035541-58fe-448e-824f-874da47a4f84",
+          "delta_runtime_properties_kvpairs": {},
+          "securable_type": "TABLE",
+          "browse_only": false,
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "delta_sharing_type": {},
+          "delta_sharing_valid_through_timestamp": 1794396473105,
+          "metastore_version": -1,
+          "share_name": "system_schemas_billing_share",
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "schema_id": "c9475c21-9629-4602-b72a-02dd64c80d5c",
+          "catalog_id": "174834f1-d631-468b-935d-ef97532cad48",
+          "row_filters": {},
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaHKXFzO"
+        },
+        {
+          "name": "list_prices",
+          "catalog_name": "system",
+          "schema_name": "billing",
+          "table_type": "MANAGED",
+          "data_source_format": "DELTASHARING",
+          "columns": [
+            {
+              "name": "account_id",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 0,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"account_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"ID of the account this report was generated for\",\"data_label\":\"DATA_LABEL_ACCOUNT_ID\"}}",
+              "comment": "ID of the account this report was generated for",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "price_start_time",
+              "type_text": "timestamp",
+              "type_name": "TIMESTAMP",
+              "position": 1,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"price_start_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The time this price became effective in UTC\",\"data_label\":\"DATA_LABEL_SYSTEM_MEASUREMENT\"}}",
+              "comment": "The time this price became effective in UTC",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "price_end_time",
+              "type_text": "timestamp",
+              "type_name": "TIMESTAMP",
+              "position": 2,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"price_end_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The time this price stopped being effective in UTC\",\"data_label\":\"DATA_LABEL_SYSTEM_MEASUREMENT\"}}",
+              "comment": "The time this price stopped being effective in UTC",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "sku_name",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 3,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"sku_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Name of the SKU\",\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}",
+              "comment": "Name of the SKU",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "cloud",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 4,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"cloud\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Name of the Cloud this price is applicable to. Possible values are AWS, AZURE, and GCP.\",\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}",
+              "comment": "Name of the Cloud this price is applicable to. Possible values are AWS, AZURE, and GCP.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "currency_code",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 5,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"currency_code\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The currency this price is expressed in\",\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}",
+              "comment": "The currency this price is expressed in",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_unit",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 6,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_unit\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The unit of measurement that is monetized.\",\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}",
+              "comment": "The unit of measurement that is monetized.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "pricing",
+              "type_text": "struct<default:decimal(38,18),promotional:struct<default:decimal(38,18)>,effective_list:struct<default:decimal(38,18)>>",
+              "type_name": "STRUCT",
+              "position": 7,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"pricing\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"default\",\"type\":\"decimal(38,18)\",\"nullable\":true,\"metadata\":{}},{\"name\":\"promotional\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"default\",\"type\":\"decimal(38,18)\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"effective_list\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"default\",\"type\":\"decimal(38,18)\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"A structured data field that includes pricing info at the published list price rate. The key default will always return a single price that can be used for simple long-term estimates. The key promotional represents a temporary promotional price that all customers get which could be used for cost estimation during the temporary period. The key effective_list resolves list and promotional price, and contains the effective list price used for calculating the cost.\"}}",
+              "comment": "A structured data field that includes pricing info at the published list price rate. The key default will always return a single price that can be used for simple long-term estimates. The key promotional represents a temporary promotional price that all customers get which could be used for cost estimation during the temporary period. The key effective_list resolves list and promotional price, and contains the effective list price used for calculating the cost.",
+              "nullable": true,
+              "column_masks": {}
+            }
+          ],
+          "storage_location": "uc-deltasharing://system.billing.list_prices#system.billing.list_prices",
+          "owner": "System user",
+          "comment": "The [pricing table](https://docs.databricks.com/admin/system-tables/pricing.html) gives you access to a historical log of SKU pricing. A record gets added each time there is a change to a SKU price.",
+          "properties": {
+            "delta.lastCommitTimestamp": "1793971411000",
+            "delta.lastUpdateVersion": "36465",
+            "delta.minWriterVersion": "7",
+            "delta.feature.appendOnly": "supported",
+            "delta.deletedFileRetentionDuration": "interval 21 days",
+            "delta.autoOptimize.autoCompact": "auto",
+            "delta.enableDeletionVectors": "true",
+            "delta.minReaderVersion": "3",
+            "delta.feature.deletionVectors": "supported",
+            "delta.autoOptimize.optimizeWrite": "true",
+            "delta.feature.invariants": "supported"
+          },
+          "securable_kind": "TABLE_SYSTEM_DELTASHARING",
+          "properties_pairs": {
+            "properties": {
+              "delta.lastCommitTimestamp": "1793971411000",
+              "delta.lastUpdateVersion": "36465",
+              "delta.minWriterVersion": "7",
+              "delta.feature.appendOnly": "supported",
+              "delta.deletedFileRetentionDuration": "interval 21 days",
+              "delta.autoOptimize.autoCompact": "auto",
+              "delta.enableDeletionVectors": "true",
+              "delta.minReaderVersion": "3",
+              "delta.feature.deletionVectors": "supported",
+              "delta.autoOptimize.optimizeWrite": "true",
+              "delta.feature.invariants": "supported"
+            }
+          },
+          "generation": 92,
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.billing.list_prices",
+          "data_access_configuration_id": "00000000-0000-0000-0000-000000000000",
+          "created_at": 1736820838279,
+          "created_by": "System user",
+          "updated_at": 1794396413111,
+          "updated_by": "122a41fa-2ad8-44da-bea7-18bb96eae67a",
+          "table_id": "b3dad6a0-4af0-4281-9194-f476f3629129",
+          "delta_runtime_properties_kvpairs": {},
+          "securable_type": "TABLE",
+          "browse_only": false,
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "delta_sharing_type": {},
+          "delta_sharing_valid_through_timestamp": 1794396473083,
+          "metastore_version": -1,
+          "share_name": "system_schemas_billing_share",
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "schema_id": "c9475c21-9629-4602-b72a-02dd64c80d5c",
+          "catalog_id": "174834f1-d631-468b-935d-ef97532cad48",
+          "row_filters": {},
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaHKXFy3"
+        },
+        {
+          "name": "usage",
+          "catalog_name": "system",
+          "schema_name": "billing",
+          "table_type": "MANAGED",
+          "data_source_format": "DELTASHARING",
+          "columns": [
+            {
+              "name": "account_id",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 0,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"account_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"ID of the account this report was generated for\"}}",
+              "comment": "ID of the account this report was generated for",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "workspace_id",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 1,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"workspace_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"ID of the Workspace this usage was associated with\"}}",
+              "comment": "ID of the Workspace this usage was associated with",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "record_id",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 2,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"record_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Unique ID for this usage record\"}}",
+              "comment": "Unique ID for this usage record",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "sku_name",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 3,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"sku_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Name of the SKU\"}}",
+              "comment": "Name of the SKU",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "cloud",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 4,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"cloud\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Cloud this usage is relevant for. Possible values are AWS, AZURE, and GCP.\"}}",
+              "comment": "Cloud this usage is relevant for. Possible values are AWS, AZURE, and GCP.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_start_time",
+              "type_text": "timestamp",
+              "type_name": "TIMESTAMP",
+              "position": 5,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_start_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The start time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.\"}}",
+              "comment": "The start time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_end_time",
+              "type_text": "timestamp",
+              "type_name": "TIMESTAMP",
+              "position": 6,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_end_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The end time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.\"}}",
+              "comment": "The end time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_date",
+              "type_text": "date",
+              "type_name": "DATE",
+              "position": 7,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_date\",\"type\":\"date\",\"nullable\":true,\"metadata\":{\"comment\":\"Date of the usage record, this field can be used for faster aggregation by date\"}}",
+              "comment": "Date of the usage record, this field can be used for faster aggregation by date",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "custom_tags",
+              "type_text": "map<string,string>",
+              "type_name": "MAP",
+              "position": 8,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"custom_tags\",\"type\":{\"type\":\"map\",\"keyType\":\"string\",\"valueType\":\"string\",\"valueContainsNull\":true},\"nullable\":true,\"metadata\":{\"comment\":\"Tags applied by the users to this usage. Includes compute resource tags and jobs tags.\"}}",
+              "comment": "Tags applied by the users to this usage. Includes compute resource tags and jobs tags.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_unit",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 9,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_unit\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Unit this usage is measured in. Possible values include DBUs and Gbps-hours.\"}}",
+              "comment": "Unit this usage is measured in. Possible values include DBUs and Gbps-hours.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_quantity",
+              "type_text": "decimal(38,18)",
+              "type_name": "DECIMAL",
+              "position": 10,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_quantity\",\"type\":\"decimal(38,18)\",\"nullable\":true,\"metadata\":{\"comment\":\"Number of units consumed for this record.\"}}",
+              "comment": "Number of units consumed for this record.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_metadata",
+              "type_text": "struct<cluster_id:string,job_id:string,warehouse_id:string,instance_pool_id:string,node_type:string,job_run_id:string,notebook_id:string,dlt_pipeline_id:string,endpoint_name:string,endpoint_id:string,dlt_update_id:string,dlt_maintenance_id:string,run_name:string,job_name:string,notebook_path:string,central_clean_room_id:string,source_region:string,destination_region:string,app_id:string,app_name:string,metastore_id:string,private_endpoint_name:string,storage_api_type:string,budget_policy_id:string,ai_runtime_pool_id:string,ai_runtime_workload_id:string,uc_table_catalog:string,uc_table_schema:string,uc_table_name:string,database_instance_id:string,sharing_materialization_id:string,schema_id:string,usage_policy_id:string,base_environment_id:string,agent_bricks_id:string,index_id:string,catalog_id:string,project_id:string,branch_id:string,table_id:string,supervisor_agent_id:string,networking_client:string,associated_product:string,recipient_id:string,interactive_source:string,snapshot_id:string,ai_gateway:struct<endpoint_name:string,endpoint_id:string,destination_id:string,destination_model:string>,genie:struct<surface:string,channel:string,agent_id:string>,data_source:string,operation:string,serverless_compute_id:string,entity_full_name:string,failover_group_name:string,private_network_gateway_id:string,monitor_type:string,compute_policy_id:string,catalog_services:struct<feature_type:string>>",
+              "type_name": "STRUCT",
+              "position": 11,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_metadata\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"cluster_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"job_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"warehouse_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"instance_pool_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"node_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"job_run_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"notebook_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_pipeline_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"endpoint_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"endpoint_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_update_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_maintenance_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"run_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"job_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"notebook_path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"central_clean_room_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"source_region\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"destination_region\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"app_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"app_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"metastore_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"private_endpoint_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"storage_api_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"budget_policy_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_runtime_pool_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_runtime_workload_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"uc_table_catalog\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"uc_table_schema\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"uc_table_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"database_instance_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"sharing_materialization_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"schema_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"usage_policy_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"base_environment_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"agent_bricks_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"index_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"catalog_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"project_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"branch_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"table_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"supervisor_agent_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"networking_client\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"associated_product\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"recipient_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"interactive_source\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"snapshot_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_gateway\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"endpoint_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_USER_ASSET_DESCRIPTION\"}},{\"name\":\"endpoint_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_WORKSPACE_COMPONENT_ID\"}},{\"name\":\"destination_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_GENERIC_OBJECT_ID\"}},{\"name\":\"destination_model\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_WORKSPACE_CUSTOMER_PROVIDED_COMPONENT_NAME\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"genie\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"surface\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"channel\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"agent_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"data_source\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"operation\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"serverless_compute_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"entity_full_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"failover_group_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"private_network_gateway_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"monitor_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"compute_policy_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"catalog_services\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"feature_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"System-provided metadata about the usage, including IDs for compute resources and jobs (if applicable). See [Analyze usage metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#usage-metadata).\"}}",
+              "comment": "System-provided metadata about the usage, including IDs for compute resources and jobs (if applicable). See [Analyze usage metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#usage-metadata).",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "identity_metadata",
+              "type_text": "struct<run_as:string,created_by:string,owned_by:string,run_by:string>",
+              "type_name": "STRUCT",
+              "position": 12,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"identity_metadata\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"run_as\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"created_by\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"owned_by\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"run_by\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"System-provided metadata about the identities involved in the usage. See [Analyze identity metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#identity-metadata).\"}}",
+              "comment": "System-provided metadata about the identities involved in the usage. See [Analyze identity metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#identity-metadata).",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "record_type",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 13,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"record_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Whether the record is original, a retraction, or a restatement. The value is ORIGINAL unless the record is related to a correction. See [Analyze correction records](https://docs.databricks.com/en/admin/system-tables/billing.html#record-type).\"}}",
+              "comment": "Whether the record is original, a retraction, or a restatement. The value is ORIGINAL unless the record is related to a correction. See [Analyze correction records](https://docs.databricks.com/en/admin/system-tables/billing.html#record-type).",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "ingestion_date",
+              "type_text": "date",
+              "type_name": "DATE",
+              "position": 14,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"ingestion_date\",\"type\":\"date\",\"nullable\":true,\"metadata\":{\"comment\":\"Date the record was ingested into the usage table.\"}}",
+              "comment": "Date the record was ingested into the usage table.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "billing_origin_product",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 15,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"billing_origin_product\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The product that originated the usage. Some products can be billed as different SKUs. For possible values, see [View information about the product associated with the usage](https://docs.databricks.com/en/admin/system-tables/billing.html#features).\"}}",
+              "comment": "The product that originated the usage. Some products can be billed as different SKUs. For possible values, see [View information about the product associated with the usage](https://docs.databricks.com/en/admin/system-tables/billing.html#features).",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "product_features",
+              "type_text": "struct<jobs_tier:string,sql_tier:string,dlt_tier:string,is_serverless:boolean,is_photon:boolean,serving_type:string,networking:struct<connectivity_type:string,connection_method:string>,ai_runtime:struct<compute_type:string>,model_serving:struct<offering_type:string,reservation_term:string>,ai_gateway:struct<feature_type:string>,serverless_gpu:struct<workload_type:string>,agent_bricks:struct<problem_type:string,workload_type:string>,performance_target:string,ai_functions:struct<ai_function:string>,apps:struct<compute_size:string>,lakeflow_connect:struct<task_type:string,zerobus_request_type:string>,lakebase:struct<storage_type:string,compute_type:string>,ai_bi_genie:struct<capability_type:string,offering_type:string>,genie:struct<offering_type:string>>",
+              "type_name": "STRUCT",
+              "position": 16,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"product_features\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"jobs_tier\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"sql_tier\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_tier\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"is_serverless\",\"type\":\"boolean\",\"nullable\":true,\"metadata\":{}},{\"name\":\"is_photon\",\"type\":\"boolean\",\"nullable\":true,\"metadata\":{}},{\"name\":\"serving_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"networking\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"connectivity_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"connection_method\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_runtime\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"compute_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"model_serving\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"offering_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"reservation_term\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_gateway\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"feature_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"serverless_gpu\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"workload_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"agent_bricks\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"problem_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}},{\"name\":\"workload_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"performance_target\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_functions\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"ai_function\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"apps\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"compute_size\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"lakeflow_connect\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"task_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}},{\"name\":\"zerobus_request_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"lakebase\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"storage_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"compute_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_bi_genie\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"capability_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}},{\"name\":\"offering_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"genie\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"offering_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"Details about the specific product features used.\"}}",
+              "comment": "Details about the specific product features used.",
+              "nullable": true,
+              "column_masks": {}
+            },
+            {
+              "name": "usage_type",
+              "type_text": "string",
+              "type_name": "STRING",
+              "position": 17,
+              "type_precision": 0,
+              "type_scale": 0,
+              "type_json": "{\"name\":\"usage_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The type of usage attributed to the product or workload for billing purposes. Possible values are COMPUTE_TIME, STORAGE_SPACE, NETWORK_BYTES, NETWORK_BANDWIDTH, API_CALLS, TOKEN, or GPU_TIME.\"}}",
+              "comment": "The type of usage attributed to the product or workload for billing purposes. Possible values are COMPUTE_TIME, STORAGE_SPACE, NETWORK_BYTES, NETWORK_BANDWIDTH, API_CALLS, TOKEN, or GPU_TIME.",
+              "nullable": true,
+              "column_masks": {}
+            }
+          ],
+          "storage_location": "uc-deltasharing://system.billing.usage#system.billing.usage",
+          "owner": "System user",
+          "comment": "The [usage table](https://docs.databricks.com/admin/system-tables/billing.html) gives you access to account-wide billable usage data. The data is centralized and routed to all the regions.",
+          "properties": {
+            "delta.lastCommitTimestamp": "1794294394000",
+            "delta.lastUpdateVersion": "185698",
+            "delta.minWriterVersion": "7",
+            "delta.feature.generatedColumns": "supported",
+            "delta.feature.appendOnly": "supported",
+            "delta.enableChangeDataFeed": "true",
+            "delta.deletedFileRetentionDuration": "interval 21 days",
+            "delta.workloadBasedColumns.deltaFileStatistics": "`usage_metadata`.`sharing_materialization_id`,`billing_origin_product`",
+            "delta.autoOptimize.autoCompact": "auto",
+            "delta.enableDeletionVectors": "true",
+            "delta.minReaderVersion": "3",
+            "delta.feature.changeDataFeed": "supported",
+            "delta.feature.checkConstraints": "supported",
+            "delta.feature.deletionVectors": "supported",
+            "delta.autoOptimize.optimizeWrite": "true",
+            "delta.feature.invariants": "supported"
+          },
+          "securable_kind": "TABLE_SYSTEM_DELTASHARING",
+          "properties_pairs": {
+            "properties": {
+              "delta.lastCommitTimestamp": "1794294394000",
+              "delta.lastUpdateVersion": "185698",
+              "delta.minWriterVersion": "7",
+              "delta.feature.generatedColumns": "supported",
+              "delta.feature.appendOnly": "supported",
+              "delta.enableChangeDataFeed": "true",
+              "delta.deletedFileRetentionDuration": "interval 21 days",
+              "delta.workloadBasedColumns.deltaFileStatistics": "`usage_metadata`.`sharing_materialization_id`,`billing_origin_product`",
+              "delta.autoOptimize.autoCompact": "auto",
+              "delta.enableDeletionVectors": "true",
+              "delta.minReaderVersion": "3",
+              "delta.feature.changeDataFeed": "supported",
+              "delta.feature.checkConstraints": "supported",
+              "delta.feature.deletionVectors": "supported",
+              "delta.autoOptimize.optimizeWrite": "true",
+              "delta.feature.invariants": "supported"
+            }
+          },
+          "generation": 289,
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "full_name": "system.billing.usage",
+          "data_access_configuration_id": "00000000-0000-0000-0000-000000000000",
+          "created_at": 1736820838271,
+          "created_by": "System user",
+          "updated_at": 1794396491392,
+          "updated_by": "122a41fa-2ad8-44da-bea7-18bb96eae67a",
+          "table_id": "ef26367e-87e0-4080-ac5e-23ae62bdbcb1",
+          "delta_runtime_properties_kvpairs": {},
+          "securable_type": "TABLE",
+          "browse_only": false,
+          "provisioning_info": {
+            "state": "ACTIVE"
+          },
+          "delta_sharing_type": {},
+          "delta_sharing_valid_through_timestamp": 1794396551356,
+          "metastore_version": -1,
+          "share_name": "system_schemas_billing_share",
+          "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+          "schema_id": "c9475c21-9629-4602-b72a-02dd64c80d5c",
+          "catalog_id": "174834f1-d631-468b-935d-ef97532cad48",
+          "row_filters": {},
+          "cache_version_info": {
+            "metastore_version": -1
+          },
+          "etag": "CAESCAAAAaHKXY6A"
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "get_table_details",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/tables/system.billing.usage",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/tables/system.billing.usage",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:02.189800+00:00",
+    "duration_ms": 60.05,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "name": "usage",
+      "catalog_name": "system",
+      "schema_name": "billing",
+      "table_type": "MANAGED",
+      "data_source_format": "DELTASHARING",
+      "columns": [
+        {
+          "name": "account_id",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 0,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"account_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"ID of the account this report was generated for\"}}",
+          "comment": "ID of the account this report was generated for",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "workspace_id",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 1,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"workspace_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"ID of the Workspace this usage was associated with\"}}",
+          "comment": "ID of the Workspace this usage was associated with",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "record_id",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 2,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"record_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Unique ID for this usage record\"}}",
+          "comment": "Unique ID for this usage record",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "sku_name",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 3,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"sku_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Name of the SKU\"}}",
+          "comment": "Name of the SKU",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "cloud",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 4,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"cloud\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Cloud this usage is relevant for. Possible values are AWS, AZURE, and GCP.\"}}",
+          "comment": "Cloud this usage is relevant for. Possible values are AWS, AZURE, and GCP.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "usage_start_time",
+          "type_text": "timestamp",
+          "type_name": "TIMESTAMP",
+          "position": 5,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"usage_start_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The start time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.\"}}",
+          "comment": "The start time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "usage_end_time",
+          "type_text": "timestamp",
+          "type_name": "TIMESTAMP",
+          "position": 6,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"usage_end_time\",\"type\":\"timestamp\",\"nullable\":true,\"metadata\":{\"comment\":\"The end time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.\"}}",
+          "comment": "The end time relevant to this usage record. Timezone information is recorded at the end of the value with +00:00 representing UTC timezone.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "usage_date",
+          "type_text": "date",
+          "type_name": "DATE",
+          "position": 7,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"usage_date\",\"type\":\"date\",\"nullable\":true,\"metadata\":{\"comment\":\"Date of the usage record, this field can be used for faster aggregation by date\"}}",
+          "comment": "Date of the usage record, this field can be used for faster aggregation by date",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "custom_tags",
+          "type_text": "map<string,string>",
+          "type_name": "MAP",
+          "position": 8,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"custom_tags\",\"type\":{\"type\":\"map\",\"keyType\":\"string\",\"valueType\":\"string\",\"valueContainsNull\":true},\"nullable\":true,\"metadata\":{\"comment\":\"Tags applied by the users to this usage. Includes compute resource tags and jobs tags.\"}}",
+          "comment": "Tags applied by the users to this usage. Includes compute resource tags and jobs tags.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "usage_unit",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 9,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"usage_unit\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Unit this usage is measured in. Possible values include DBUs and Gbps-hours.\"}}",
+          "comment": "Unit this usage is measured in. Possible values include DBUs and Gbps-hours.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "usage_quantity",
+          "type_text": "decimal(38,18)",
+          "type_name": "DECIMAL",
+          "position": 10,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"usage_quantity\",\"type\":\"decimal(38,18)\",\"nullable\":true,\"metadata\":{\"comment\":\"Number of units consumed for this record.\"}}",
+          "comment": "Number of units consumed for this record.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "usage_metadata",
+          "type_text": "struct<cluster_id:string,job_id:string,warehouse_id:string,instance_pool_id:string,node_type:string,job_run_id:string,notebook_id:string,dlt_pipeline_id:string,endpoint_name:string,endpoint_id:string,dlt_update_id:string,dlt_maintenance_id:string,run_name:string,job_name:string,notebook_path:string,central_clean_room_id:string,source_region:string,destination_region:string,app_id:string,app_name:string,metastore_id:string,private_endpoint_name:string,storage_api_type:string,budget_policy_id:string,ai_runtime_pool_id:string,ai_runtime_workload_id:string,uc_table_catalog:string,uc_table_schema:string,uc_table_name:string,database_instance_id:string,sharing_materialization_id:string,schema_id:string,usage_policy_id:string,base_environment_id:string,agent_bricks_id:string,index_id:string,catalog_id:string,project_id:string,branch_id:string,table_id:string,supervisor_agent_id:string,networking_client:string,associated_product:string,recipient_id:string,interactive_source:string,snapshot_id:string,ai_gateway:struct<endpoint_name:string,endpoint_id:string,destination_id:string,destination_model:string>,genie:struct<surface:string,channel:string,agent_id:string>,data_source:string,operation:string,serverless_compute_id:string,entity_full_name:string,failover_group_name:string,private_network_gateway_id:string,monitor_type:string,compute_policy_id:string,catalog_services:struct<feature_type:string>>",
+          "type_name": "STRUCT",
+          "position": 11,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"usage_metadata\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"cluster_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"job_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"warehouse_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"instance_pool_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"node_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"job_run_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"notebook_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_pipeline_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"endpoint_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"endpoint_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_update_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_maintenance_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"run_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"job_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"notebook_path\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"central_clean_room_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"source_region\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"destination_region\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"app_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"app_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"metastore_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"private_endpoint_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"storage_api_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"budget_policy_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_runtime_pool_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_runtime_workload_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"uc_table_catalog\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"uc_table_schema\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"uc_table_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"database_instance_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"sharing_materialization_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"schema_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"usage_policy_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"base_environment_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"agent_bricks_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"index_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"catalog_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"project_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"branch_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"table_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"supervisor_agent_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"networking_client\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"associated_product\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"recipient_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"interactive_source\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"snapshot_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_gateway\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"endpoint_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_USER_ASSET_DESCRIPTION\"}},{\"name\":\"endpoint_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_WORKSPACE_COMPONENT_ID\"}},{\"name\":\"destination_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_GENERIC_OBJECT_ID\"}},{\"name\":\"destination_model\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_WORKSPACE_CUSTOMER_PROVIDED_COMPONENT_NAME\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"genie\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"surface\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"channel\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"agent_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"data_source\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"operation\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"serverless_compute_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"entity_full_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"failover_group_name\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"private_network_gateway_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"monitor_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"compute_policy_id\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"catalog_services\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"feature_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"System-provided metadata about the usage, including IDs for compute resources and jobs (if applicable). See [Analyze usage metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#usage-metadata).\"}}",
+          "comment": "System-provided metadata about the usage, including IDs for compute resources and jobs (if applicable). See [Analyze usage metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#usage-metadata).",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "identity_metadata",
+          "type_text": "struct<run_as:string,created_by:string,owned_by:string,run_by:string>",
+          "type_name": "STRUCT",
+          "position": 12,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"identity_metadata\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"run_as\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"created_by\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"owned_by\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"run_by\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"System-provided metadata about the identities involved in the usage. See [Analyze identity metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#identity-metadata).\"}}",
+          "comment": "System-provided metadata about the identities involved in the usage. See [Analyze identity metadata](https://docs.databricks.com/en/admin/system-tables/billing.html#identity-metadata).",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "record_type",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 13,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"record_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"Whether the record is original, a retraction, or a restatement. The value is ORIGINAL unless the record is related to a correction. See [Analyze correction records](https://docs.databricks.com/en/admin/system-tables/billing.html#record-type).\"}}",
+          "comment": "Whether the record is original, a retraction, or a restatement. The value is ORIGINAL unless the record is related to a correction. See [Analyze correction records](https://docs.databricks.com/en/admin/system-tables/billing.html#record-type).",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "ingestion_date",
+          "type_text": "date",
+          "type_name": "DATE",
+          "position": 14,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"ingestion_date\",\"type\":\"date\",\"nullable\":true,\"metadata\":{\"comment\":\"Date the record was ingested into the usage table.\"}}",
+          "comment": "Date the record was ingested into the usage table.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "billing_origin_product",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 15,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"billing_origin_product\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The product that originated the usage. Some products can be billed as different SKUs. For possible values, see [View information about the product associated with the usage](https://docs.databricks.com/en/admin/system-tables/billing.html#features).\"}}",
+          "comment": "The product that originated the usage. Some products can be billed as different SKUs. For possible values, see [View information about the product associated with the usage](https://docs.databricks.com/en/admin/system-tables/billing.html#features).",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "product_features",
+          "type_text": "struct<jobs_tier:string,sql_tier:string,dlt_tier:string,is_serverless:boolean,is_photon:boolean,serving_type:string,networking:struct<connectivity_type:string,connection_method:string>,ai_runtime:struct<compute_type:string>,model_serving:struct<offering_type:string,reservation_term:string>,ai_gateway:struct<feature_type:string>,serverless_gpu:struct<workload_type:string>,agent_bricks:struct<problem_type:string,workload_type:string>,performance_target:string,ai_functions:struct<ai_function:string>,apps:struct<compute_size:string>,lakeflow_connect:struct<task_type:string,zerobus_request_type:string>,lakebase:struct<storage_type:string,compute_type:string>,ai_bi_genie:struct<capability_type:string,offering_type:string>,genie:struct<offering_type:string>>",
+          "type_name": "STRUCT",
+          "position": 16,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"product_features\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"jobs_tier\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"sql_tier\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"dlt_tier\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"is_serverless\",\"type\":\"boolean\",\"nullable\":true,\"metadata\":{}},{\"name\":\"is_photon\",\"type\":\"boolean\",\"nullable\":true,\"metadata\":{}},{\"name\":\"serving_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"networking\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"connectivity_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"connection_method\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_runtime\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"compute_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"model_serving\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"offering_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"reservation_term\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_gateway\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"feature_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"serverless_gpu\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"workload_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"agent_bricks\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"problem_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}},{\"name\":\"workload_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"performance_target\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_functions\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"ai_function\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"apps\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"compute_size\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"lakeflow_connect\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"task_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}},{\"name\":\"zerobus_request_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"lakebase\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"storage_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}},{\"name\":\"compute_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"ai_bi_genie\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"capability_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}},{\"name\":\"offering_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"data_label\":\"DATA_LABEL_SYSTEM_ENUM\"}}]},\"nullable\":true,\"metadata\":{}},{\"name\":\"genie\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"offering_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{}}]},\"nullable\":true,\"metadata\":{\"comment\":\"Details about the specific product features used.\"}}",
+          "comment": "Details about the specific product features used.",
+          "nullable": true,
+          "column_masks": {}
+        },
+        {
+          "name": "usage_type",
+          "type_text": "string",
+          "type_name": "STRING",
+          "position": 17,
+          "type_precision": 0,
+          "type_scale": 0,
+          "type_json": "{\"name\":\"usage_type\",\"type\":\"string\",\"nullable\":true,\"metadata\":{\"comment\":\"The type of usage attributed to the product or workload for billing purposes. Possible values are COMPUTE_TIME, STORAGE_SPACE, NETWORK_BYTES, NETWORK_BANDWIDTH, API_CALLS, TOKEN, or GPU_TIME.\"}}",
+          "comment": "The type of usage attributed to the product or workload for billing purposes. Possible values are COMPUTE_TIME, STORAGE_SPACE, NETWORK_BYTES, NETWORK_BANDWIDTH, API_CALLS, TOKEN, or GPU_TIME.",
+          "nullable": true,
+          "column_masks": {}
+        }
+      ],
+      "storage_location": "uc-deltasharing://system.billing.usage#system.billing.usage",
+      "owner": "System user",
+      "comment": "The [usage table](https://docs.databricks.com/admin/system-tables/billing.html) gives you access to account-wide billable usage data. The data is centralized and routed to all the regions.",
+      "properties": {
+        "delta.lastCommitTimestamp": "1794294394000",
+        "view.query.out.col.11": "usage_metadata",
+        "delta.lastUpdateVersion": "185698",
+        "delta.minWriterVersion": "7",
+        "delta.feature.generatedColumns": "supported",
+        "delta.feature.appendOnly": "supported",
+        "view.query.out.col.9": "usage_unit",
+        "delta.enableChangeDataFeed": "true",
+        "view.query.out.col.3": "sku_name",
+        "delta.deletedFileRetentionDuration": "interval 21 days",
+        "delta.workloadBasedColumns.deltaFileStatistics": "`usage_metadata`.`sharing_materialization_id`,`billing_origin_product`",
+        "delta.autoOptimize.autoCompact": "auto",
+        "view.query.out.col.12": "identity_metadata",
+        "view.query.out.col.17": "usage_type",
+        "view.query.out.col.0": "account_id",
+        "delta.enableDeletionVectors": "true",
+        "delta.minReaderVersion": "3",
+        "view.query.out.numCols": "18",
+        "view.query.out.col.4": "cloud",
+        "view.query.out.col.8": "custom_tags",
+        "delta.feature.changeDataFeed": "supported",
+        "delta.feature.checkConstraints": "supported",
+        "view.query.out.col.13": "record_type",
+        "view.query.out.col.1": "workspace_id",
+        "view.query.out.col.5": "usage_start_time",
+        "view.query.out.col.7": "usage_date",
+        "delta.feature.deletionVectors": "supported",
+        "view.query.out.col.16": "product_features",
+        "delta.autoOptimize.optimizeWrite": "true",
+        "view.query.out.col.14": "ingestion_date",
+        "view.query.out.col.6": "usage_end_time",
+        "delta.feature.invariants": "supported",
+        "view.query.out.col.2": "record_id",
+        "view.query.out.col.15": "billing_origin_product",
+        "view.query.out.col.10": "usage_quantity"
+      },
+      "securable_kind": "TABLE_SYSTEM_DELTASHARING",
+      "properties_pairs": {
+        "properties": {
+          "delta.lastCommitTimestamp": "1794294394000",
+          "view.query.out.col.11": "usage_metadata",
+          "delta.lastUpdateVersion": "185698",
+          "delta.minWriterVersion": "7",
+          "delta.feature.generatedColumns": "supported",
+          "delta.feature.appendOnly": "supported",
+          "view.query.out.col.9": "usage_unit",
+          "delta.enableChangeDataFeed": "true",
+          "view.query.out.col.3": "sku_name",
+          "delta.deletedFileRetentionDuration": "interval 21 days",
+          "delta.workloadBasedColumns.deltaFileStatistics": "`usage_metadata`.`sharing_materialization_id`,`billing_origin_product`",
+          "delta.autoOptimize.autoCompact": "auto",
+          "view.query.out.col.12": "identity_metadata",
+          "view.query.out.col.17": "usage_type",
+          "view.query.out.col.0": "account_id",
+          "delta.enableDeletionVectors": "true",
+          "delta.minReaderVersion": "3",
+          "view.query.out.numCols": "18",
+          "view.query.out.col.4": "cloud",
+          "view.query.out.col.8": "custom_tags",
+          "delta.feature.changeDataFeed": "supported",
+          "delta.feature.checkConstraints": "supported",
+          "view.query.out.col.13": "record_type",
+          "view.query.out.col.1": "workspace_id",
+          "view.query.out.col.5": "usage_start_time",
+          "view.query.out.col.7": "usage_date",
+          "delta.feature.deletionVectors": "supported",
+          "view.query.out.col.16": "product_features",
+          "delta.autoOptimize.optimizeWrite": "true",
+          "view.query.out.col.14": "ingestion_date",
+          "view.query.out.col.6": "usage_end_time",
+          "delta.feature.invariants": "supported",
+          "view.query.out.col.2": "record_id",
+          "view.query.out.col.15": "billing_origin_product",
+          "view.query.out.col.10": "usage_quantity"
+        }
+      },
+      "generation": 289,
+      "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+      "full_name": "system.billing.usage",
+      "data_access_configuration_id": "00000000-0000-0000-0000-000000000000",
+      "created_at": 1736820838271,
+      "created_by": "System user",
+      "updated_at": 1794396491392,
+      "updated_by": "122a41fa-2ad8-44da-bea7-18bb96eae67a",
+      "table_id": "ef26367e-87e0-4080-ac5e-23ae62bdbcb1",
+      "delta_runtime_properties_kvpairs": {},
+      "securable_type": "TABLE",
+      "browse_only": false,
+      "provisioning_info": {
+        "state": "ACTIVE"
+      },
+      "delta_sharing_type": {
+        "is_cross_account": true
+      },
+      "delta_sharing_valid_through_timestamp": 1794396551356,
+      "metastore_version": 262,
+      "share_name": "system_schemas_billing_share",
+      "provider_id": "0d169fe6-b827-450c-9425-943b129b60f1",
+      "schema_id": "c9475c21-9629-4602-b72a-02dd64c80d5c",
+      "catalog_id": "174834f1-d631-468b-935d-ef97532cad48",
+      "row_filters": {},
+      "related_entity_hints": {
+        "tag": {
+          "exists": false
+        },
+        "policy": {
+          "exists": false
+        }
+      },
+      "cache_version_info": {
+        "metastore_version": 262
+      },
+      "etag": "CAESCAAAAaHKXY6A",
+      "storage_mode": "CUSTOMER_HOSTED"
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "list_table_summaries",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/table-summaries",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/table-summaries",
+    "query_parameters": {
+      "catalog_name": "system"
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:02.245915+00:00",
+    "duration_ms": 227.87,
+    "records_count": 93,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "tables": [
+        {
+          "full_name": "system.compute.instance_pools",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.data_classification.__catalog_impact_latest",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.storage.table_metrics_history",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.access.inbound_network",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.sharing.materialization_history",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.table_share_usage",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.volume_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.external_location_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.lakeflow.jobs",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.mlflow.run_metrics_history",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.routine_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.share_recipient_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.mlflow.runs_latest",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.tables",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.views",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.lakeflow.job_task_run_timeline",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.columns",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.information_schema_catalog_name",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.compute.clusters",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.connection_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.access.audit",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.access.column_lineage",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.lakeflow.zerobus_ingest",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.storage.auto_upgrade_operations_history",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.constraint_table_usage",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.volumes",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.lakeflow.zerobus_stream",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.data_classification.results",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.column_masks",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.compute.instance_events",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.external_locations",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.metastore_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.key_column_usage",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.schema_share_usage",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.referential_constraints",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.row_filters",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.data_classification.__class_tag_applications",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.routine_columns",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.recipient_allowed_ip_ranges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.volume_tags",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.table_tags",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.access.workspaces_latest",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.abac_policy_definitions",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.compute.warehouse_events",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.storage_credentials",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.lakeflow.pipeline_update_timeline",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.lakeflow.pipelines",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.schemata",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.ai_gateway.usage",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.connections",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.data_quality_monitoring.table_results",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.shares",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.data_classification.__table_statuses",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.catalog_tags",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.recipients",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.credential_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.catalogs",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.compute.node_timeline",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.check_constraints",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.storage_credential_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.table_constraints",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.compute.warehouses",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.query.history",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.billing.attributed_usage",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.access.table_lineage",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.access.clean_room_events",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.lakeflow.job_tasks",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.access.outbound_traffic",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.credentials",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.billing.list_prices",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.compute.node_types",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.storage.predictive_optimization_operations_history",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.serving.endpoint_usage",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.column_tags",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.parameters",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.catalog_provider_share_usage",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.metastores",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.schema_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.serving.served_entities",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.lakeflow.job_run_timeline",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.__internal_logging.payload_logs",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.mlflow.experiments_latest",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.recipient_tokens",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.providers",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.billing.usage",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.table_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.constraint_column_usage",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.ai_gateway.external_model_spend",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.information_schema.catalog_privileges",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.schema_tags",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.information_schema.routines",
+          "table_type": "EXTERNAL"
+        },
+        {
+          "full_name": "system.access.outbound_network",
+          "table_type": "MANAGED"
+        },
+        {
+          "full_name": "system.access.assistant_events",
+          "table_type": "MANAGED"
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "get_object_permissions",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/permissions/table/system.billing.usage",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/permissions/table/system.billing.usage",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:02.477744+00:00",
+    "duration_ms": 46.8,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "SUCCESS_EMPTY",
+    "error_message": null,
+    "response_body": {}
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "list_external_locations",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/external-locations",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/external-locations",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:02.527176+00:00",
+    "duration_ms": 64.76,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "external_locations": [
+        {
+          "name": "__databricks_managed_storage_location",
+          "url": "abfss://unitycatalog@prdhfgcga0mv8gxmhzqrfzii.dfs.core.windows.net/uc/71c1893d-14e0-4107-8fb4-9f0bb8655555/446e746c-6679-4f43-9422-62d5615c1dde",
+          "credential_name": "[REDACTED_CONFIDENTIAL]",
+          "read_only": false,
+          "comment": "Databricks managed storage location (auto-created)",
+          "owner": "System user",
+          "encryption_details": {
+            "dmk_encryption_details": {}
+          },
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "credential_id": "[REDACTED_CONFIDENTIAL]",
+          "created_at": 1771902625444,
+          "created_by": "System user",
+          "updated_at": 1771902625444,
+          "updated_by": "System user",
+          "full_name": "__databricks_managed_storage_location",
+          "securable_type": "EXTERNAL_LOCATION",
+          "securable_kind": "EXTERNAL_LOCATION_DB_STORAGE",
+          "id": "f89b416a-3a82-4142-ba3b-314b01a52a0e",
+          "isolation_mode": "ISOLATION_MODE_OPEN",
+          "accessible_in_current_workspace": true,
+          "fallback": false,
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/external-locations/f89b416a-3a82-4142-ba3b-314b01a52a0e",
+          "etag": "CAESCAAAAZyNoGak",
+          "effective_enable_file_events": false
+        },
+        {
+          "name": "ext_loc_dqr_container",
+          "url": "abfss://data-quality-rule@sadeacceleratordev.dfs.core.windows.net/",
+          "credential_name": "[REDACTED_CONFIDENTIAL]",
+          "read_only": false,
+          "comment": "External location to read the data quality rule file",
+          "owner": "chetan.singh@bizmetric.com",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "credential_id": "[REDACTED_CONFIDENTIAL]",
+          "created_at": 1739963668231,
+          "created_by": "chetan.singh@bizmetric.com",
+          "updated_at": 1739963668231,
+          "updated_by": "chetan.singh@bizmetric.com",
+          "full_name": "ext_loc_dqr_container",
+          "securable_type": "EXTERNAL_LOCATION",
+          "securable_kind": "EXTERNAL_LOCATION_STANDARD",
+          "id": "3213c948-444a-4bb4-896c-b9d5442f7fb9",
+          "isolation_mode": "ISOLATION_MODE_OPEN",
+          "accessible_in_current_workspace": true,
+          "fallback": false,
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/external-locations/3213c948-444a-4bb4-896c-b9d5442f7fb9",
+          "etag": "CAESCAAAAZUd6pcH",
+          "effective_enable_file_events": false
+        },
+        {
+          "name": "ext_loc_gld_container",
+          "url": "abfss://gold@sadeacceleratordev.dfs.core.windows.net/",
+          "credential_name": "[REDACTED_CONFIDENTIAL]",
+          "read_only": false,
+          "owner": "chetan.singh@bizmetric.com",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "credential_id": "[REDACTED_CONFIDENTIAL]",
+          "created_at": 1743156493284,
+          "created_by": "chetan.singh@bizmetric.com",
+          "updated_at": 1743156493284,
+          "updated_by": "chetan.singh@bizmetric.com",
+          "full_name": "ext_loc_gld_container",
+          "securable_type": "EXTERNAL_LOCATION",
+          "securable_kind": "EXTERNAL_LOCATION_STANDARD",
+          "id": "460b9217-c43c-46c0-83ce-f0d72d3abfc3",
+          "isolation_mode": "ISOLATION_MODE_OPEN",
+          "accessible_in_current_workspace": true,
+          "fallback": false,
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/external-locations/460b9217-c43c-46c0-83ce-f0d72d3abfc3",
+          "etag": "CAESCAAAAZXcOTvk",
+          "effective_enable_file_events": false
+        },
+        {
+          "name": "ext_loc_slv_container",
+          "url": "abfss://silver@sadeacceleratordev.dfs.core.windows.net/",
+          "credential_name": "[REDACTED_CONFIDENTIAL]",
+          "read_only": false,
+          "owner": "chetan.singh@bizmetric.com",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "credential_id": "[REDACTED_CONFIDENTIAL]",
+          "created_at": 1738306091557,
+          "created_by": "chetan.singh@bizmetric.com",
+          "updated_at": 1738306091557,
+          "updated_by": "chetan.singh@bizmetric.com",
+          "full_name": "ext_loc_slv_container",
+          "securable_type": "EXTERNAL_LOCATION",
+          "securable_kind": "EXTERNAL_LOCATION_STANDARD",
+          "id": "4049a22c-06bf-409c-aa4e-5cb5bd6e8ef8",
+          "isolation_mode": "ISOLATION_MODE_OPEN",
+          "accessible_in_current_workspace": true,
+          "fallback": false,
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/external-locations/4049a22c-06bf-409c-aa4e-5cb5bd6e8ef8",
+          "etag": "CAESCAAAAZS7Hfol",
+          "effective_enable_file_events": false
+        },
+        {
+          "name": "ext_loc_src_container",
+          "url": "abfss://source@sadeacceleratordev.dfs.core.windows.net/",
+          "credential_name": "[REDACTED_CONFIDENTIAL]",
+          "read_only": false,
+          "owner": "chetan.singh@bizmetric.com",
+          "metastore_id": "446e746c-6679-4f43-9422-62d5615c1dde",
+          "credential_id": "[REDACTED_CONFIDENTIAL]",
+          "created_at": 1739514952871,
+          "created_by": "chetan.singh@bizmetric.com",
+          "updated_at": 1739514952871,
+          "updated_by": "chetan.singh@bizmetric.com",
+          "full_name": "ext_loc_src_container",
+          "securable_type": "EXTERNAL_LOCATION",
+          "securable_kind": "EXTERNAL_LOCATION_STANDARD",
+          "id": "baa1d9ae-b177-45b5-9547-2ddbc971f7b6",
+          "isolation_mode": "ISOLATION_MODE_OPEN",
+          "accessible_in_current_workspace": true,
+          "fallback": false,
+          "resource_name": "/metastores/446e746c-6679-4f43-9422-62d5615c1dde/external-locations/baa1d9ae-b177-45b5-9547-2ddbc971f7b6",
+          "etag": "CAESCAAAAZUDK7yn",
+          "effective_enable_file_events": false
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "unity_catalog",
+    "operation_name": "list_storage_credentials",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.1/unity-catalog/storage-credentials",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.1/unity-catalog/storage-credentials",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:02.594918+00:00",
+    "duration_ms": 52.38,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "SUCCESS_EMPTY",
+    "error_message": null,
+    "response_body": {}
+  }
+]

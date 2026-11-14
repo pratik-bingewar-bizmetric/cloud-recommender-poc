@@ -15,6 +15,7 @@ Tests:
 import json
 import time
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -770,14 +771,17 @@ def test_m1_sql_client_ignores_llm_mock_and_classifies_warehouse_errors() -> Non
     assert res_stopped.warehouse_state == "STOPPED"
     assert res_stopped.warehouse_id == "wh-custom-prod-03"
     stopped_client.warehouses.get.assert_called_with(id="wh-custom-prod-03")
+    # Execution requires a bounded statement whose LIMIT is covered by the token's signed max_rows.
+    stopped_sql = "SELECT * FROM system.billing.usage LIMIT 100"
     stopped_token = svc_stopped.issue_approval_token(
-        query="SELECT * FROM system.billing.usage",
+        query=stopped_sql,
         warehouse_id="wh-custom-prod-03",
         approver_roles=["FinOpsAdministrator"],
+        max_rows=100,
     )
     with pytest.raises(WarehouseStoppedError):
         svc_stopped.execute_read_only_statement(
-            "SELECT * FROM system.billing.usage",
+            stopped_sql,
             is_approved=True,
             approval_token=stopped_token,
         )
@@ -789,7 +793,17 @@ def test_m1_sql_client_ignores_llm_mock_and_classifies_warehouse_errors() -> Non
     running_wh.name = "Prod Active WH"
     running_wh.state.value = "RUNNING"
     running_client.warehouses.get.return_value = running_wh
-    running_client.statement_execution.execute_statement.return_value = MagicMock(result=None)
+    running_client.statement_execution.execute_statement.return_value = SimpleNamespace(
+        statement_id="s1",
+        status=SimpleNamespace(state="SUCCEEDED", error=None),
+        manifest=SimpleNamespace(
+            schema=SimpleNamespace(columns=[]),
+            truncated=False,
+            total_row_count=0,
+            total_chunk_count=0,
+        ),
+        result=None,
+    )
 
     svc_running = DatabricksSqlService(
         settings=oauth_with_mock_llm,
@@ -805,6 +819,7 @@ def test_m1_sql_client_ignores_llm_mock_and_classifies_warehouse_errors() -> Non
         query="SELECT * FROM system.billing.usage LIMIT 1",
         warehouse_id="wh-prod-override-99",
         approver_roles=["FinOpsAdministrator"],
+        max_rows=1,
     )
     svc_running.execute_read_only_statement(
         "SELECT * FROM system.billing.usage LIMIT 1",

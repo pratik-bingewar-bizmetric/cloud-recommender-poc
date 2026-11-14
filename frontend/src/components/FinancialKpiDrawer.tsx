@@ -481,7 +481,7 @@ export const FinancialKpiDrawer: React.FC<FinancialKpiDrawerProps> = ({
               </div>
               <div>
                 <span className="text-slate-400 block">Rate Effective:</span>
-                <strong className="text-navy-900">{financials.rate_effective_date}</strong>
+                <strong className="text-navy-900">{financials.rate_effective_date ?? "Not reported by the pricing source"}</strong>
               </div>
               <div>
                 <span className="text-slate-400 block">Data Provenance:</span>

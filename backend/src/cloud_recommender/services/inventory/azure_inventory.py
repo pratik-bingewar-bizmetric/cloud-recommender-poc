@@ -78,6 +78,8 @@ class AzureInventoryService:
         self._explicit_settings = settings is not None
         self.settings = settings or get_settings()
         self.pricing_engine = pricing_engine or AzurePricingEngine(settings=self.settings)
+        # Outcome of every paginated ARM read (pages, records, completeness, exact error).
+        self.pagination_log: list[dict[str, Any]] = []
 
     async def verify_sp_access_token(self) -> tuple[str | None, int | None, str]:
         """Acquire an Azure ARM token strictly via Service Principal OAuth2 (no CLI fallback).
@@ -219,10 +221,20 @@ class AzureInventoryService:
             access_limitations=limitations,
         )
 
+    # Pagination safety: bounded pages, bounded retries, loop detection.
+    _ARM_MAX_PAGES = 500
+    _ARM_MAX_RETRIES = 3
+    _ARM_RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
     async def _arm_get_all(
         self, url: str, token: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Query read-only ARM endpoint handling nextLink pagination."""
+        """Query a read-only ARM endpoint following every ``nextLink`` until the source ends.
+
+        Never reports partial data as complete: the outcome of every call (pages, records,
+        completeness, exact HTTP status and error) is appended to ``self.pagination_log`` so the
+        API layer can show INCOMPLETE / ACCESS_DENIED instead of a silently short list.
+        """
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -230,11 +242,43 @@ class AzureInventoryService:
         all_items: list[dict[str, Any]] = []
         current_url: str | None = url
         current_params = params
+        seen: set[str] = set()
+        pages = 0
+        entry: dict[str, Any] = {
+            "url": url.split("?", 1)[0],
+            "pages": 0,
+            "records": 0,
+            "complete": True,
+            "http_status": 200,
+            "error": None,
+        }
+
+        async def _get(client: httpx.AsyncClient, target: str, prm: Any) -> httpx.Response:
+            attempt = 0
+            while True:
+                resp = await client.get(target, headers=headers, params=prm)
+                if resp.status_code not in self._ARM_RETRYABLE or attempt >= self._ARM_MAX_RETRIES:
+                    return resp
+                attempt += 1
+                try:
+                    delay = (
+                        float(resp.headers.get("Retry-After", "")) if resp.status_code == 429 else 0
+                    )
+                except ValueError:
+                    delay = 0
+                await asyncio.sleep(min(max(delay, 0.5 * 2**attempt), 20.0))
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 while current_url:
-                    resp = await client.get(current_url, headers=headers, params=current_params)
+                    if current_url in seen or pages >= self._ARM_MAX_PAGES:
+                        entry.update(
+                            complete=False,
+                            error="Pagination stopped: repeated nextLink or page limit reached.",
+                        )
+                        break
+                    seen.add(current_url)
+                    resp = await _get(client, current_url, current_params)
                     current_params = None  # Params are encoded into nextLink URL
                     if resp.status_code != 200:
                         logger.warning(
@@ -243,15 +287,25 @@ class AzureInventoryService:
                             status_code=resp.status_code,
                             detail=resp.text[:300],
                         )
+                        entry.update(
+                            complete=False,
+                            http_status=resp.status_code,
+                            error=resp.text[:300],
+                        )
                         break
                     data = resp.json()
                     items = data.get("value", [])
                     if isinstance(items, list):
                         all_items.extend(items)
+                    pages += 1
                     current_url = data.get("nextLink")
         except (httpx.TimeoutException, httpx.RequestError) as err:
             logger.warning("arm_network_error", url=current_url, error=str(err))
+            entry.update(complete=False, http_status=None, error=f"{type(err).__name__}: {err}")
 
+        entry.update(pages=pages, records=len(all_items))
+        self.pagination_log.append(entry)
+        del self.pagination_log[:-200]  # bounded
         return all_items
 
     async def list_subscriptions(self, token: str | None = None) -> list[CloudScopeSummary]:

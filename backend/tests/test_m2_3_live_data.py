@@ -23,7 +23,7 @@ from cloud_recommender.schemas.databricks import (
 from cloud_recommender.schemas.finops import KpiStatus
 from cloud_recommender.services.databricks.billing_ingestion_service import BillingIngestionService
 from cloud_recommender.services.databricks.finops_analytics_service import FinOpsAnalyticsService
-from tests.fixtures.billing_baseline import add_synthetic_history
+from tests.fixtures.billing_baseline import add_synthetic_history, load_baseline_prices
 from tests.fixtures.live_inventory import (
     fixture_resources,
     make_analytics_service,
@@ -108,7 +108,7 @@ def test_runtime_billing_store_is_empty_until_ingestion() -> None:
     svc = BillingIngestionService()
     assert svc._usage_store == {}
     assert svc._runs_store == []
-    assert len(svc._price_store) > 0  # rate card is configuration, kept separate from usage
+    assert svc._price_store == []  # no hardcoded rate card (M7.1 D1)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +158,7 @@ def test_row_mapping_rejects_malformed_rows() -> None:
 def test_approved_ingestion_run_populates_store_and_is_idempotent() -> None:
     """An approved run (SQL stubbed offline) maps rows, prices them and never double counts."""
     svc = BillingIngestionService()
+    load_baseline_prices(svc)  # TEST-ONLY rate card via the real mapper
     rows = [
         _raw_row(),
         _raw_row(record_id="r-2", usage_quantity="-2.5", record_type="RETRACTION"),
@@ -197,6 +198,7 @@ def test_approved_ingestion_run_populates_store_and_is_idempotent() -> None:
 
 def test_allocation_keeps_untagged_spend_unallocated_and_never_distributes_it() -> None:
     svc = make_analytics_service(with_billing=False)
+    load_baseline_prices(svc.billing_service)
     svc.billing_service.ingest_records(
         [
             BillingUsageRecord(
@@ -247,6 +249,7 @@ def test_allocation_keeps_untagged_spend_unallocated_and_never_distributes_it() 
 
 def test_retractions_reduce_spend_and_are_not_dropped() -> None:
     svc = make_analytics_service(with_billing=False)
+    load_baseline_prices(svc.billing_service)
     svc.billing_service.ingest_records(
         [
             BillingUsageRecord(

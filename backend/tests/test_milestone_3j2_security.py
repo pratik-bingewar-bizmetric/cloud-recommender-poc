@@ -266,15 +266,17 @@ def test_warehouse_startup_decoupled_from_ingestion(sql_service: DatabricksSqlSe
     ingestion_service = BillingIngestionService(sql_service=sql_service)
 
     # Issue a valid approval token
-    valid_query = (
-        "SELECT * FROM system.billing.usage "
-        "WHERE workspace_id = '642006393507276' AND usage_date >= '2026-10-01' "
-        "AND usage_date <= '2026-11-04' LIMIT 10"
-    )
+    # The token must be bound to the exact query the service will run (M7.1 D8 builder).
+    from cloud_recommender.services.databricks.billing_sql import build_usage_query
+
+    valid_query = build_usage_query("642006393507276", "2026-10-01", "2026-11-04", 10)
     token = sql_service.issue_approval_token(
         query=valid_query,
         warehouse_id=sql_service.warehouse_id,
         approver_roles=["FinOpsAdministrator"],
+        max_rows=10,
+        start_date="2026-10-01",
+        end_date="2026-11-04",
     )
 
     request = IngestionRunCreateRequest(

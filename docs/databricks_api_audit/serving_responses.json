@@ -1,0 +1,1719 @@
+[
+  {
+    "module_name": "serving",
+    "operation_name": "list_serving_endpoints",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/serving-endpoints",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/serving-endpoints",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:03.201146+00:00",
+    "duration_ms": 102.2,
+    "records_count": 27,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "endpoints": [
+        {
+          "name": "databricks-claude-opus-5-5",
+          "creation_timestamp": 1790035200000,
+          "last_updated_timestamp": 1790035200000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-opus-5-5",
+                "entity_name": "system.ai.databricks-claude-opus-5-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-opus-5-5",
+                  "display_name": "Claude Opus 5.5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-5-5",
+                  "description": "Claude Opus 5.5 is Anthropic's most intelligent model for complex reasoning, coding, and agentic workflows. It uses adaptive thinking to dynamically allocate reasoning effort and supports large-context tasks such as deep document analysis and multi-step tool use. This model is hosted by Databricks.",
+                  "price": "285.7142857",
+                  "input_price": "57.14285714",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 43.7,
+                    "cost": 10.0,
+                    "quality": 46.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": true,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-fable-5",
+          "creation_timestamp": 1780963200000,
+          "last_updated_timestamp": 1780963200000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-fable-5",
+                "entity_name": "system.ai.databricks-claude-fable-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-fable-5",
+                  "display_name": "Claude Fable 5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-fable-5",
+                  "description": "Claude Fable 5 via Bedrock. Anthropic is a limited subprocessor for this model. See https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/supported-models#-anthropic-claude-fable-5. This model is subject to 30-days data retention for trust and safety review by the model provider.",
+                  "price": "714.286",
+                  "input_price": "142.858",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 43.7,
+                    "cost": 10.0,
+                    "quality": 46.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": true,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-fable-5-1",
+          "creation_timestamp": 1788220800000,
+          "last_updated_timestamp": 1788220800000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-fable-5-1",
+                "entity_name": "system.ai.databricks-claude-fable-5-1",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-fable-5-1",
+                  "display_name": "Claude Fable 5.1",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-fable-5-1",
+                  "description": "Claude Fable 5.1 via Bedrock. Anthropic is a limited subprocessor for this model. This model is subject to 30-days data retention for trust and safety review by the model provider.",
+                  "price": "714.28571",
+                  "input_price": "142.85714",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 43.7,
+                    "cost": 10.0,
+                    "quality": 46.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": true,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-opus-4-7",
+          "creation_timestamp": 1776297600000,
+          "last_updated_timestamp": 1776297600000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-opus-4-7",
+                "entity_name": "system.ai.databricks-claude-opus-4-7",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-opus-4-7",
+                  "display_name": "Claude Opus 4.7",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-4-7",
+                  "description": "Claude Opus 4.7 is Anthropic's most capable hybrid reasoning model, advancing the Opus series with improved accuracy, efficiency, and enhanced vision capabilities. This model delivers stronger performance on complex extraction and agentic reasoning tasks while using fewer output tokens than its predecessor. Claude Opus 4.7 features a 1 million token context window and increased image resolution support, making it ideal for enterprise applications that require deep analysis, document understanding, and sophisticated multi-step workflows. This model is hosted by Databricks.",
+                  "price": "357.143",
+                  "input_price": "71.429",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 43.7,
+                    "cost": 10.0,
+                    "quality": 46.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-opus-4-8",
+          "creation_timestamp": 1779926400000,
+          "last_updated_timestamp": 1779926400000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-opus-4-8",
+                "entity_name": "system.ai.databricks-claude-opus-4-8",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-opus-4-8",
+                  "display_name": "Claude Opus 4.8",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-4-8",
+                  "description": "Claude Opus 4.8 is Anthropic's next-generation Opus model, hosted by Databricks.",
+                  "price": "357.143",
+                  "input_price": "71.429",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 43.7,
+                    "cost": 10.0,
+                    "quality": 46.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-opus-5",
+          "creation_timestamp": 1784851200000,
+          "last_updated_timestamp": 1784851200000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-opus-5",
+                "entity_name": "system.ai.databricks-claude-opus-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-opus-5",
+                  "display_name": "Claude Opus 5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-5",
+                  "description": "Claude Opus 5 is Anthropic's latest Opus-class model, delivering frontier intelligence for complex reasoning, coding, and agentic workflows at Opus-tier pricing. It features an adjustable effort control to trade off thoroughness against latency and cost, and supports large-context tasks such as deep document analysis and multi-step tool use. This model is hosted by Databricks.",
+                  "price": "357.142857",
+                  "input_price": "71.428571",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 43.7,
+                    "cost": 10.0,
+                    "quality": 46.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-opus-4-6",
+          "creation_timestamp": 1770336000000,
+          "last_updated_timestamp": 1770336000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-opus-4-6",
+                "entity_name": "system.ai.databricks-claude-opus-4-6",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-opus-4-6",
+                  "display_name": "Claude Opus 4.6",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-4-6",
+                  "description": "Claude Opus 4.6 is Anthropic's most capable hybrid reasoning model with adaptive thinking capabilities. This model introduces a new max effort level for the most demanding tasks, with high effort set as the default for optimal performance. Claude Opus 4.6 excels at complex reasoning, deep analysis, code generation, research, and sophisticated multi-step workflows. It features a 1 million token context window, making it ideal for enterprise applications that require both extensive analysis and comprehensive outputs. This endpoint is hosted by Databricks.",
+                  "price": "357.143",
+                  "input_price": "71.429",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 43.7,
+                    "cost": 10.0,
+                    "quality": 46.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": true,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-gpt-oss-120b",
+          "creation_timestamp": 1754179200000,
+          "last_updated_timestamp": 1754179200000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-gpt-oss-120b",
+                "entity_name": "system.ai.gpt-oss-120b",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.gpt-oss-120b",
+                  "display_name": "GPT OSS 120B",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#openai-gpt-120b",
+                  "description": "GPT OSS 120B is a state-of-the-art, reasoning model with chain-of-thought and adjustable reasoning effort levels built and trained by OpenAI. It is OpenAI's flagship open-weight model that features a 128K token context window. The model is built for high-quality reasoning tasks.",
+                  "price": "8.571",
+                  "input_price": "2.143",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "gpt-oss",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 266.5,
+                    "cost": 0.26,
+                    "quality": 33.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": true,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-sonnet-5",
+          "creation_timestamp": 1782777600000,
+          "last_updated_timestamp": 1782777600000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-sonnet-5",
+                "entity_name": "system.ai.databricks-claude-sonnet-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-sonnet-5",
+                  "display_name": "Claude Sonnet 5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-sonnet-5",
+                  "description": "Claude Sonnet 5 is Anthropic's most capable Sonnet-class model yet, with frontier performance across coding, agents, and professional work. It excels at iterative development, complex codebase navigation, end-to-end project management with memory, polished document creation, and confident computer use for web QA and workflow automation. This endpoint is hosted by Databricks.",
+                  "price": "142.857",
+                  "input_price": "28.5714",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 44.2,
+                    "cost": 6.0,
+                    "quality": 44.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-sonnet-5-5",
+          "creation_timestamp": 1790553600000,
+          "last_updated_timestamp": 1790553600000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-sonnet-5-5",
+                "entity_name": "system.ai.databricks-claude-sonnet-5-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-sonnet-5-5",
+                  "display_name": "Claude Sonnet 5.5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-sonnet-5-5",
+                  "description": "Claude Sonnet 5.5 is Anthropic's model for building features, fixing bugs, and creating documents. It supports a 1 million token context window and up to 128,000 output tokens. This endpoint is hosted by Databricks.",
+                  "price": "142.8571429",
+                  "input_price": "28.57142857",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-sonnet-4-6",
+          "creation_timestamp": 1771200000000,
+          "last_updated_timestamp": 1771200000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-sonnet-4-6",
+                "entity_name": "system.ai.databricks-claude-sonnet-4-6",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-sonnet-4-6",
+                  "display_name": "Claude Sonnet 4.6",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-sonnet-4-6",
+                  "description": "Claude Sonnet 4.6 is Anthropic's most capable Sonnet-class model yet, with frontier performance across coding, agents, and professional work. It excels at iterative development, complex codebase navigation, end-to-end project management with memory, polished document creation, and confident computer use for web QA and workflow automation. This endpoint is hosted by Databricks.",
+                  "price": "214.286",
+                  "input_price": "42.857",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 44.2,
+                    "cost": 6.0,
+                    "quality": 44.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": true,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-sonnet-4-5",
+          "creation_timestamp": 1759449600000,
+          "last_updated_timestamp": 1759449600000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-sonnet-4-5",
+                "entity_name": "system.ai.databricks-claude-sonnet-4-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-sonnet-4-5",
+                  "display_name": "Claude Sonnet 4.5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-sonnet-4-5",
+                  "description": "Claude Sonnet 4.5 is Anthropic's most advanced hybrid reasoning model. It offers two modes: near-instant responses and extended thinking for deeper reasoning based on the complexity of the task. Claude Sonnet 4.5 specializes in application that require a balance of practical throughput and advanced thinking such as customer-facing agents, production coding workflows, and content generation at scale. This endpoint is hosted by Databricks",
+                  "price": "214.286",
+                  "input_price": "42.857",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 41.7,
+                    "cost": 6.0,
+                    "quality": 37.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": true,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-haiku-5-5",
+          "creation_timestamp": 1791331200000,
+          "last_updated_timestamp": 1791331200000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-haiku-5-5",
+                "entity_name": "system.ai.databricks-claude-haiku-5-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-haiku-5-5",
+                  "display_name": "Claude Haiku 5.5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-haiku-5-5",
+                  "description": "Claude Haiku 5.5 is Anthropic's fastest model in the Claude 5.5 family, optimized for high-volume, speed-sensitive workloads. This endpoint is hosted by Databricks.",
+                  "price": "7.142857",
+                  "input_price": "1.428571",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": true,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-haiku-4-5",
+          "creation_timestamp": 1766102400000,
+          "last_updated_timestamp": 1766102400000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-haiku-4-5",
+                "entity_name": "system.ai.databricks-claude-haiku-4-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-haiku-4-5",
+                  "display_name": "Claude Haiku 4.5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-haiku-4-5",
+                  "description": "Claude Haiku 4.5 is Anthropic's fastest and most cost efficient hybrid reasoning model, optimized for real-time use and high-volume workloads. It features two modes: quick responses for time-sensitive interactions and extended reasoning for complex problem-solving. Haiku 4.5 excels in environments like coding assistance, automated agent workflows, and enterprise-scale analysis. This endpoint is hosted by Databricks.",
+                  "price": "71.429",
+                  "input_price": "14.286",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 96.0,
+                    "cost": 2.0,
+                    "quality": 31.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-gpt-oss-20b",
+          "creation_timestamp": 1754179200000,
+          "last_updated_timestamp": 1754179200000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-gpt-oss-20b",
+                "entity_name": "system.ai.gpt-oss-20b",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.gpt-oss-20b",
+                  "display_name": "GPT OSS 20B",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#openai-gpt-20b",
+                  "description": "GPT OSS 20B is a state-of-the-art, lightweight reasoning model built and trained by OpenAI. This model also has a 128K token context window and excels at real-time copilots and batch inference tasks.",
+                  "price": "4.286",
+                  "input_price": "1.0",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "gpt-oss",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 263.7,
+                    "cost": 0.09,
+                    "quality": 24.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": true,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-qwen3-next-80b-a3b-instruct",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-qwen3-next-80b-a3b-instruct",
+                "entity_name": "system.ai.qwen3-next-80b-a3b-instruct",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.qwen3-next-80b-a3b-instruct",
+                  "display_name": "Qwen3 Next Instruct",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#qwen3-next-80b-a3b-instruct",
+                  "description": "Qwen3-Next-80B-A3B-Instruct is a highly efficient large language model optimized for instruction-following tasks built and trained by Alibaba Cloud. This model is designed to handle ultra-long contexts and excels at multi-step workflows, retrieval-augmented generation, and enterprise applications that require deterministic outputs at high throughput. This endpoint is hosted by Databricks.",
+                  "price": "17.143",
+                  "input_price": "2.143",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "qwen",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 152.0,
+                    "cost": 0.88,
+                    "quality": 20.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-qwen35-122b-a10b",
+          "creation_timestamp": 1776902400000,
+          "last_updated_timestamp": 1776902400000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-qwen35-122b-a10b",
+                "entity_name": "system.ai.databricks-qwen35-122b-a10b",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-qwen35-122b-a10b",
+                  "display_name": "Qwen3.5 122B A10B",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#qwen35-122b-a10b",
+                  "description": "",
+                  "price": "31.4285",
+                  "input_price": "3.14285",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "qwen",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 150.0,
+                    "cost": 1.1,
+                    "quality": 42.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": true,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": true
+          }
+        },
+        {
+          "name": "databricks-gemma-3-12b",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-gemma-3-12b",
+                "entity_name": "system.ai.gemma-3-12b-it",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.gemma-3-12b-it",
+                  "display_name": "Gemma 3 12B",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#google-gemma-3-12b",
+                  "description": "Gemma 3 12B is a state-of-the-art multimodal language model built and trained by Google. The model supports a context length of 128K tokens and can analyze images and text. With support for over 140 languages and optimized for dialogue use cases, Gemma 3 12B is aligned with human preferences for helpfulness and safety. This endpoint is hosted by Databricks.",
+                  "price": "7.143",
+                  "input_price": "2.143",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "gemma-3",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 29.2,
+                    "cost": 0.0,
+                    "quality": 9.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-gte-large-en",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-gte-large-en",
+                "entity_name": "system.ai.gte_large_en_v1_5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.gte_large_en_v1_5",
+                  "display_name": "GTE Large (En)",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#gte-large",
+                  "description": "General text embeddings (GTE) can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. And it also can be used in vector databases for LLMs.",
+                  "price": "1.857",
+                  "input_price": "1.857",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "gte",
+                  "api_types": [
+                    "mlflow/v1/embeddings"
+                  ],
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/embeddings",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": false,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-bge-large-en",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-bge-large-en",
+                "entity_name": "system.ai.bge_large_en_v1_5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.bge_large_en_v1_5",
+                  "display_name": "BGE Large (En)",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#bge-large",
+                  "description": "BAAI general embedding (BGE) can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. And it also can be used in vector databases for LLMs.",
+                  "price": "1.429",
+                  "input_price": "1.429",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "gte",
+                  "api_types": [
+                    "mlflow/v1/embeddings"
+                  ],
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/embeddings",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": false,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-meta-llama-3-1-8b-instruct",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-meta-llama-3-1-8b-instruct",
+                "entity_name": "system.ai.meta_llama_v3_1_8b_instruct",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.meta_llama_v3_1_8b_instruct",
+                  "display_name": "Meta Llama 3.1 8B Instruct",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#meta-llama-3-8b-instruct",
+                  "description": "Llama 3.1 is a state-of-the-art 8B parameter dense language model trained and released by Meta, distributed by AzureML via the AzureML Model Catalog. The model supports a context length of 128K tokens. The model is optimized for multilingual dialogue use cases and aligned with human preferences for helpfulness and safety. It is not intended for use in languages other than English. Meta Llama 3.1 is licensed under the Meta Llama 3.1 Community License, Copyright \u00a9 Meta Platforms, Inc. All Rights Reserved. Customers are responsible for ensuring compliance with applicable model licenses.",
+                  "price": "6.429",
+                  "input_price": "2.143",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "llama",
+                  "api_types": [
+                    "mlflow/v1/chat/completions"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 156.4,
+                    "cost": 0.1,
+                    "quality": 12.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": false,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-meta-llama-3-3-70b-instruct",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-meta-llama-3-3-70b-instruct",
+                "entity_name": "system.ai.llama_v3_3_70b_instruct",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.llama_v3_3_70b_instruct",
+                  "display_name": "Meta Llama 3.3 70B Instruct",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#meta-llama-33-70b-instruct",
+                  "description": "Llama 3.3 is a state-of-the-art 70B parameter dense language model trained and released by Meta, distributed by AzureML via the AzureML Model Catalog. The model supports a context length of 128K tokens. The model is optimized for multilingual dialogue use cases and aligned with human preferences for helpfulness and safety. It is not intended for use in languages other than English. Meta Llama 3.3 is licensed under the Meta Llama 3.3 Community License, Copyright \u00a9 Meta Platforms, Inc. All Rights Reserved. Customers are responsible for ensuring compliance with applicable model licenses.",
+                  "price": "21.429",
+                  "input_price": "7.143",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "llama",
+                  "api_types": [
+                    "mlflow/v1/chat/completions"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 86.0,
+                    "cost": 0.64,
+                    "quality": 14.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-opus-4-5",
+          "creation_timestamp": 1763942400000,
+          "last_updated_timestamp": 1763942400000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-opus-4-5",
+                "entity_name": "system.ai.databricks-claude-opus-4-5",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-opus-4-5",
+                  "display_name": "Claude Opus 4.5",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-4-5",
+                  "description": "Claude Opus 4.5 is a large language model built and trained by Anthropic for production software engineering and sophisticated multi-tool agents. It supports text and image input with a 200K token context window. The model is designed for professional tasks requiring complex reasoning across multiple systems, including code generation, document creation, spreadsheets, presentations, and multi-step agent workflows. It features advanced tool use capabilities including tool search and programmatic tool calling for agents working with large tool libraries. This endpoint is hosted by Databricks.",
+                  "price": "357.143",
+                  "input_price": "71.429",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 48.7,
+                    "cost": 10.0,
+                    "quality": 43.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-claude-opus-4-1",
+          "creation_timestamp": 1756944000000,
+          "last_updated_timestamp": 1756944000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-claude-opus-4-1",
+                "entity_name": "system.ai.databricks-claude-opus-4-1",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-claude-opus-4-1",
+                  "display_name": "Claude Opus 4.1",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-4-1",
+                  "description": "Claude Opus 4.1 is a state-of-the-art, hybrid reasoning model built and trained by Anthropic. This general purpose large language model is designed for both complex reasoning and real-world applications at enterprise scale. It supports text and image input, with a 200K token context window and 32K output token capabilities. This model excels at tasks like code generation, research and content creation, and multi-step agents workflows without constant human intervention. This endpoint is hosted by Databricks.",
+                  "price": "1071.42",
+                  "input_price": "214.286",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "claude",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "anthropic/v1/messages",
+                    "cursor/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 31.5,
+                    "cost": 30.0,
+                    "quality": 36.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-qwen3-embedding-0-6b",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-qwen3-embedding-0-6b",
+                "entity_name": "system.ai.qwen3-embedding-0-6b",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.qwen3-embedding-0-6b",
+                  "display_name": "Qwen3 Embedding 0.6B",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#qwen3-embedding-0-6b",
+                  "description": "Qwen3 Embedding is a multilingual text embedding model that can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. This endpoint is hosted by Databricks.",
+                  "price": "0.286",
+                  "input_price": "0.286",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "qwen",
+                  "api_types": [
+                    "mlflow/v1/embeddings"
+                  ],
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/embeddings",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": false,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-openjev-qwen35-4b",
+          "creation_timestamp": 1790812800000,
+          "last_updated_timestamp": 1790812800000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-openjev-qwen35-4b",
+                "entity_name": "system.ai.databricks-openjev-qwen35-4b",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.databricks-openjev-qwen35-4b",
+                  "display_name": "OpenJev (Qwen 3.5 4B)",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#openjev-qwen35-4b",
+                  "description": "OpenJev (Qwen 3.5 4B) evaluates yes/no, choice, and scoring questions about text or structured data, returning structured answers and probabilities without generating text.",
+                  "input_price": "0.6",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "qwen",
+                  "api_types": [
+                    "typesafe/v1/systemone"
+                  ],
+                  "ai_gateway_v2_supported": false
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/systemone",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": false,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": false,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        },
+        {
+          "name": "databricks-llama-4-maverick",
+          "creation_timestamp": 1699610000000,
+          "last_updated_timestamp": 1699610000000,
+          "state": {
+            "ready": "READY",
+            "config_update": "NOT_UPDATING"
+          },
+          "config": {
+            "served_entities": [
+              {
+                "name": "databricks-llama-4-maverick",
+                "entity_name": "system.ai.llama-4-maverick",
+                "type": "FOUNDATION_MODEL",
+                "foundation_model": {
+                  "name": "system.ai.llama-4-maverick",
+                  "display_name": "Llama 4 Maverick",
+                  "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#meta-llama-4-maverick",
+                  "description": "Llama 4 Maverick is a state-of-the-art mixture of experts (MoE) language model trained and released by Meta, distributed by AzureML via the AzureML Model Catalog. The model has 17B active parameters, 128 experts, and 400 billion total parameters. The model supports a context length of 128K tokens. The model is optimized for multilingual dialogue use cases, supporting 12 languages, and is aligned with human preferences for helpfulness and safety. It is not intended for use in languages other than English. Llama 4 is licensed under the Meta Llama 4 Community License, Copyright \u00a9 Meta Platforms, Inc. All Rights Reserved. Customers are responsible for ensuring compliance with applicable model licenses.",
+                  "price": "21.429",
+                  "input_price": "7.143",
+                  "price_unit": "DBUs per 1M tokens",
+                  "pricing_model": "Pay-per-token",
+                  "model_class": "llama",
+                  "api_types": [
+                    "mlflow/v1/chat/completions",
+                    "mlflow/v1/responses"
+                  ],
+                  "ai_gateway_model_profile": {
+                    "speed": 123.5,
+                    "cost": 0.49,
+                    "quality": 18.0
+                  },
+                  "ai_gateway_v2_supported": true
+                }
+              }
+            ]
+          },
+          "task": "llm/v1/chat",
+          "endpoint_type": "FOUNDATION_MODEL_API",
+          "permission_level": "CAN_QUERY",
+          "capabilities": {
+            "function_calling": true,
+            "openai_reasoning": false,
+            "anthropic_reasoning": false,
+            "image_input": true,
+            "long_context": false,
+            "video_input_translation": false,
+            "audio_input_translation": false,
+            "image_output": false,
+            "priority_processing": false
+          }
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "serving",
+    "operation_name": "get_serving_endpoint",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/serving-endpoints/databricks-claude-opus-5-5",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/serving-endpoints/databricks-claude-opus-5-5",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:03.305656+00:00",
+    "duration_ms": 142.27,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "name": "databricks-claude-opus-5-5",
+      "creation_timestamp": 1790035200000,
+      "last_updated_timestamp": 1790035200000,
+      "state": {
+        "ready": "READY",
+        "config_update": "NOT_UPDATING"
+      },
+      "config": {
+        "served_entities": [
+          {
+            "name": "databricks-claude-opus-5-5",
+            "type": "FOUNDATION_MODEL",
+            "foundation_model": {
+              "name": "system.ai.databricks-claude-opus-5-5",
+              "display_name": "Claude Opus 5.5",
+              "docs": "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/foundation-models/supported-models#claude-opus-5-5",
+              "description": "Claude Opus 5.5 is Anthropic's most intelligent model for complex reasoning, coding, and agentic workflows. It uses adaptive thinking to dynamically allocate reasoning effort and supports large-context tasks such as deep document analysis and multi-step tool use. This model is hosted by Databricks.",
+              "price": "285.7142857",
+              "input_price": "57.14285714",
+              "price_unit": "DBUs per 1M tokens",
+              "pricing_model": "Pay-per-token",
+              "model_class": "claude",
+              "api_types": [
+                "mlflow/v1/chat/completions",
+                "anthropic/v1/messages",
+                "cursor/v1/chat/completions",
+                "mlflow/v1/responses"
+              ],
+              "ai_gateway_model_profile": {
+                "speed": 43.7,
+                "cost": 10.0,
+                "quality": 46.0
+              },
+              "ai_gateway_v2_supported": true
+            }
+          }
+        ],
+        "config_version": 1
+      },
+      "permission_level": "CAN_QUERY",
+      "task": "llm/v1/chat",
+      "route_optimized": false,
+      "endpoint_type": "FOUNDATION_MODEL_API",
+      "ai_gateway": {
+        "usage_tracking_config": {
+          "enabled": true
+        }
+      },
+      "resource_credential_strategy": "[REDACTED_CONFIDENTIAL]",
+      "capabilities": {
+        "function_calling": true,
+        "openai_reasoning": false,
+        "anthropic_reasoning": false,
+        "image_input": true,
+        "long_context": true,
+        "video_input_translation": false,
+        "audio_input_translation": false,
+        "image_output": false,
+        "priority_processing": false
+      },
+      "description": ""
+    }
+  },
+  {
+    "module_name": "serving",
+    "operation_name": "get_endpoint_metrics",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/serving-endpoints/databricks-claude-opus-5-5/metrics",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/serving-endpoints/databricks-claude-opus-5-5/metrics",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 404,
+    "response_timestamp_utc": "2026-11-11T11:32:03.445326+00:00",
+    "duration_ms": 69.87,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "NOT_FOUND_404",
+    "error_message": "Endpoint with name databricks-claude-opus-5-5 does not exist.",
+    "response_body": {
+      "error": "NotFound",
+      "detail": "Endpoint with name databricks-claude-opus-5-5 does not exist."
+    }
+  },
+  {
+    "module_name": "serving",
+    "operation_name": "get_endpoint_openapi",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/serving-endpoints/databricks-claude-opus-5-5/openapi",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/serving-endpoints/databricks-claude-opus-5-5/openapi",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:03.511939+00:00",
+    "duration_ms": 55.3,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "openapi": "3.1.0",
+      "info": {
+        "title": "databricks-claude-opus-5-5",
+        "version": "1"
+      },
+      "servers": [
+        {
+          "url": "https://adb-642006393507276.16.azuredatabricks.net/serving-endpoints/databricks-claude-opus-5-5"
+        }
+      ],
+      "paths": {
+        "/served-models/databricks-claude-opus-5-5/invocations": {
+          "post": {
+            "requestBody": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "messages": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "user",
+                                "assistant"
+                              ]
+                            },
+                            "content": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "n": {
+                        "type": "integer",
+                        "nullable": true
+                      },
+                      "max_tokens": "[REDACTED_CONFIDENTIAL]",
+                      "top_p": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                      },
+                      "reasoning_effort": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "max"
+                        ],
+                        "nullable": true
+                      },
+                      "temperature": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                      },
+                      "stop": {
+                        "oneOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        ],
+                        "nullable": true
+                      },
+                      "stream": {
+                        "type": "boolean",
+                        "nullable": true
+                      },
+                      "top_k": {
+                        "type": "integer",
+                        "nullable": true
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "responses": {
+              "200": {
+                "description": "Successful operation",
+                "content": {
+                  "application/json": {
+                    "schema": {
+                      "type": "object",
+                      "properties": {
+                        "model": {
+                          "type": "string"
+                        },
+                        "choices": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "index": {
+                                "type": "integer"
+                              },
+                              "message": {
+                                "type": "object",
+                                "properties": {
+                                  "role": {
+                                    "type": "string",
+                                    "enum": [
+                                      "user",
+                                      "assistant"
+                                    ]
+                                  },
+                                  "content": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "finish_reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "usage": {
+                          "type": "object",
+                          "properties": {
+                            "prompt_tokens": "[REDACTED_CONFIDENTIAL]",
+                            "completion_tokens": "[REDACTED_CONFIDENTIAL]",
+                            "total_tokens": "[REDACTED_CONFIDENTIAL]"
+                          },
+                          "nullable": true
+                        },
+                        "object": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "created": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+]

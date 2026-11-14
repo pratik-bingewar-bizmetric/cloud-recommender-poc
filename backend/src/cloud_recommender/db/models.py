@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -570,10 +571,22 @@ class BillingUsageRecordModel(Base):
 
     __tablename__ = "billing_usage_records"
 
-    record_id: Mapped[str] = mapped_column(
-        String(100),
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID,
         primary_key=True,
-        doc="Unique billing event ID serving as strict idempotency key.",
+        default=uuid.uuid4,
+        doc="Surrogate key (M7.1): record_id alone is NOT assumed unique across corrections.",
+    )
+    record_id: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        index=True,
+        doc="Source billing event ID. Corrections may share it; see source_row_hash.",
+    )
+    source_row_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        doc="sha256 of the PROVISIONAL row identity (workspace, record_id, sku, record_type, window, unit, quantity).",
     )
     workspace_id: Mapped[str] = mapped_column(
         String(100),
@@ -621,9 +634,9 @@ class BillingUsageRecordModel(Base):
         doc="Usage measurement unit (DBU, BYTE_HOURS). Strict unit separation.",
     )
     usage_quantity: Mapped[Decimal] = mapped_column(
-        Numeric(18, 4),
+        Numeric(38, 18),
         nullable=False,
-        doc="Metered quantity; negative values indicate retractions.",
+        doc="Metered quantity at source precision decimal(38,18); negative = retraction.",
     )
     record_type: Mapped[str] = mapped_column(
         String(50),
@@ -660,10 +673,25 @@ class BillingUsageRecordModel(Base):
         doc="FinOps tags attached to compute resource.",
     )
     effective_cost: Mapped[Decimal | None] = mapped_column(
-        Numeric(18, 4),
+        Numeric(38, 18),
         nullable=True,
-        doc="Effective cost computed from exact price match; null if unmatched.",
+        doc="LIST_PRICE_ESTIMATE (quantity x list rate, full precision); null if unmatched.",
     )
+    cost_basis: Mapped[str] = mapped_column(
+        String(32),
+        default="METERED_USAGE",
+        nullable=False,
+        doc="METERED_USAGE | LIST_PRICE_ESTIMATE | AZURE_INVOICED (reserved).",
+    )
+    match_status: Mapped[str] = mapped_column(
+        String(32),
+        default="NO_PRICE",
+        nullable=False,
+        doc="MATCHED | NO_PRICE | UNIT_MISMATCH | AMBIGUOUS.",
+    )
+    price_tier: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resource_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     pricing_matched: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -672,9 +700,8 @@ class BillingUsageRecordModel(Base):
     )
     currency: Mapped[str | None] = mapped_column(
         String(10),
-        default="USD",
         nullable=True,
-        doc="Currency of matched pricing.",
+        doc="Currency of matched pricing (null when unpriced).",
     )
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -686,6 +713,8 @@ class BillingUsageRecordModel(Base):
     __table_args__ = (
         Index("ix_billing_usage_ws_date", "workspace_id", "usage_date"),
         Index("ix_billing_usage_sku_unit", "sku_name", "usage_unit"),
+        Index("ix_billing_usage_ws_resource", "workspace_id", "resource_type", "resource_id"),
+        UniqueConstraint("workspace_id", "source_row_hash", name="uq_billing_usage_row_identity"),
     )
 
 
@@ -717,16 +746,27 @@ class BillingPriceRecordModel(Base):
         nullable=False,
         doc="Currency code (USD, EUR, GBP).",
     )
-    price_per_unit: Mapped[Decimal] = mapped_column(
-        Numeric(18, 6),
-        nullable=False,
-        doc="Published list price per unit.",
+    account_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    price_default: Mapped[Decimal | None] = mapped_column(
+        Numeric(38, 18),
+        nullable=True,
+        doc="pricing.default from system.billing.list_prices.",
     )
-    pricing_unit: Mapped[str] = mapped_column(
+    price_promotional: Mapped[Decimal | None] = mapped_column(
+        Numeric(38, 18),
+        nullable=True,
+        doc="pricing.promotional.default.",
+    )
+    price_effective_list: Mapped[Decimal | None] = mapped_column(
+        Numeric(38, 18),
+        nullable=True,
+        doc="pricing.effective_list.default.",
+    )
+    usage_unit: Mapped[str] = mapped_column(
         String(50),
         default="DBU",
         nullable=False,
-        doc="Unit of pricing (DBU, gigabyte_month).",
+        doc="Unit of measurement that is monetised (source column usage_unit).",
     )
     price_start_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -745,7 +785,21 @@ class BillingPriceRecordModel(Base):
         nullable=False,
     )
 
-    __table_args__ = (Index("ix_billing_price_sku_cloud", "sku_name", "cloud", "currency_code"),)
+    __table_args__ = (
+        Index("ix_billing_price_sku_cloud", "sku_name", "cloud", "currency_code"),
+        # Functional unique index: a NULL account_id must not defeat uniqueness (PostgreSQL
+        # treats NULLs as distinct in a plain UNIQUE constraint).
+        Index(
+            "uq_billing_price_identity",
+            text("COALESCE(account_id, '')"),
+            "sku_name",
+            "cloud",
+            "currency_code",
+            "usage_unit",
+            "price_start_time",
+            unique=True,
+        ),
+    )
 
 
 class BillingIngestionRunModel(Base):
@@ -796,12 +850,16 @@ class BillingIngestionRunModel(Base):
         default="pending",
         nullable=False,
         index=True,
-        doc="Run status: pending, running, completed, failed, approval_required.",
+        doc="Run status: pending, running, completed, incomplete, failed, approval_required.",
     )
     extracted_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     inserted_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     duplicate_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     retraction_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    shared_record_id_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_complete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     approval_token: Mapped[str | None] = mapped_column(String(256), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

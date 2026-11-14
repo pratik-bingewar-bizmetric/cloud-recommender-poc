@@ -1,4 +1,5 @@
 import { globalLoadingManager } from "./loadingManager";
+import { normalizePricePage, normalizeUsagePage } from "./billing";
 
 import {
   ApiErrorDetail,
@@ -1110,11 +1111,13 @@ export async function getFinOpsBillingUsage(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (recordType) params.append("record_type", recordType);
+  params.append("envelope", "true");
   const res = await appFetch(`${API_BASE_URL}/finops/billing/usage?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
-  return handleResponse<{ total: number; offset: number; limit: number; records: import("@/types").BillingUsageRecord[] }>(res);
+  // Tolerates both the paginated envelope and a legacy bare list.
+  return normalizeUsagePage(await handleResponse<unknown>(res), offset, limit);
 }
 
 export async function getFinOpsBillingPricing(
@@ -1124,11 +1127,12 @@ export async function getFinOpsBillingPricing(
 ): Promise<{ total: number; records: import("@/types").BillingPriceRecord[] }> {
   const params = new URLSearchParams({ connection_id: connectionId, limit: String(limit) });
   if (skuName) params.append("sku_name", skuName);
+  params.append("envelope", "true");
   const res = await appFetch(`${API_BASE_URL}/finops/billing/pricing?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
-  return handleResponse<{ total: number; records: import("@/types").BillingPriceRecord[] }>(res);
+  return normalizePricePage(await handleResponse<unknown>(res));
 }
 
 export async function getFinOpsBillingReconciliation(

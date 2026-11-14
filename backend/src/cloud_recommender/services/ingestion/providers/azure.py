@@ -82,8 +82,19 @@ class AzureProviderIngestor(BaseProviderIngestor):
         if len(parts) >= 8 and parts[5] == "providers":
             res_type = f"{parts[6]}/{parts[7]}"
 
-        # Deterministic simulation fallback for unauthenticated test environments
         if not token or auth_method == "none":
+            if not self.settings.allow_demo_fixtures:
+                # Never fabricate extraction results for an unauthenticated run.
+                return ResourceExtractionResult(
+                    resource_id=resource_id,
+                    resource_type=res_type or None,
+                    status=ResourceIngestionStatus.FAILED,
+                    error_message=(
+                        "Azure authentication required: no valid Azure identity. "
+                        "Run 'az login' or configure a service principal."
+                    ),
+                )
+            # Explicit DEMO fixture (ALLOW_DEMO_FIXTURES=true only): clearly labelled.
             is_workspace = "microsoft.databricks" in resource_id.lower()
             return ResourceExtractionResult(
                 resource_id=resource_id,
@@ -103,8 +114,7 @@ class AzureProviderIngestor(BaseProviderIngestor):
                     "id": resource_id,
                     "name": res_name,
                     "type": res_type,
-                    "provisioningState": "Succeeded",
-                    "tags": {"Environment": "Production", "Workload": "FinOps"},
+                    "data_source": "demo_fixture",
                 },
                 cost_records=[
                     {
@@ -124,36 +134,26 @@ class AzureProviderIngestor(BaseProviderIngestor):
                 ],
             )
 
-        # Live ARM extraction
-        inv_payload: dict[str, Any] = {"id": resource_id, "name": res_name, "type": res_type}
-        cost_records: list[dict[str, Any]] = [
-            {
-                "resource_id": resource_id,
-                "date": "2026-11-05",
-                "cost_in_usd": 14.20,
-                "currency": "USD",
-                "source": "azure_retail_rates",
-            }
-        ]
-        metric_records: list[dict[str, Any]] = [
-            {
-                "resource_id": resource_id,
-                "metric_name": "Percentage CPU",
-                "average": 38.0,
-                "unit": "Percent",
-            }
-        ]
-
+        # Live run: only what the ARM resource id itself proves. Cost and metrics are NOT
+        # invented here; they are retrieved by the Cost Management / Monitor modules, so
+        # this ingestion step reports them as not extracted.
+        inv_payload: dict[str, Any] = {
+            "id": resource_id,
+            "name": res_name,
+            "type": res_type,
+            "data_source": "live_authenticated",
+        }
         return ResourceExtractionResult(
             resource_id=resource_id,
             resource_type=res_type,
-            region="eastus",
+            region=None,
             status=ResourceIngestionStatus.SUCCESS,
             inventory_extracted=True,
-            cost_extracted=True,
-            metrics_extracted=True,
-            extracted_records_count=len(cost_records) + len(metric_records),
+            cost_extracted=False,
+            metrics_extracted=False,
+            extracted_records_count=1,
             inventory_payload=inv_payload,
-            cost_records=cost_records,
-            metric_records=metric_records,
+            error_message=(
+                "Inventory identifiers only. Cost and metrics were not extracted by this step."
+            ),
         )

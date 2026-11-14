@@ -10,12 +10,17 @@ Implements Milestone 3H Phase B requirements:
 6. Secret redaction on all error messages.
 """
 
+import asyncio
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 from databricks.sdk import WorkspaceClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.services.databricks.auth import (
@@ -54,6 +59,91 @@ class MutationProhibitedError(Exception):
     pass
 
 
+class ApprovalLedgerError(Exception):
+    """Raised when the durable approval-token ledger cannot be read or written (fail closed)."""
+
+
+class StatementIncompleteError(Exception):
+    """A statement failed, timed out, or returned only part of its result.
+
+    Never swallowed into an empty/short row list: callers must treat the run as failed.
+    ``code`` is one of STATEMENT_FAILED, STATEMENT_TIMEOUT, RESULT_TRUNCATED,
+    RESULT_INCOMPLETE.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.reason = message
+
+
+def _state_name(value: Any) -> str:
+    """Upper-case name of a StatementState enum/str (``StatementState.X`` -> ``X``)."""
+    raw = getattr(value, "value", value)
+    return str(raw).rsplit(".", 1)[-1].upper()
+
+
+def statement_row_limit(sql_statement: str) -> int | None:
+    """The literal ``LIMIT n`` of the outermost SELECT, or ``None`` when unbounded."""
+    import sqlglot
+    from sqlglot import exp
+
+    try:
+        tree = sqlglot.parse_one(sql_statement, read="databricks")
+    except sqlglot.errors.SqlglotError:
+        return None
+    limit = tree.args.get("limit")
+    if not isinstance(limit, exp.Limit):
+        return None
+    node = limit.args.get("expression")
+    if isinstance(node, exp.Literal) and not node.is_string:
+        try:
+            return int(node.name)
+        except ValueError:
+            return None
+    return None
+
+
+_LEDGER_TIMEOUT_SECONDS = 15.0
+# The Statement Execution API accepts a synchronous wait of 0 or 5-50 s; anything longer
+# is polled until the configured query timeout.
+_STATEMENT_MAX_SYNC_WAIT_SECONDS = 50
+_STATEMENT_POLL_SECONDS = 2.0
+
+
+@dataclass
+class LedgerHandle:
+    """An AsyncSession plus the event loop that owns it.
+
+    Token methods are synchronous and run in worker threads (sync FastAPI routes). A handle lets
+    them execute ledger work on the owning loop without blocking it:
+    ``asyncio.run_coroutine_threadsafe(session.run_sync(fn), loop)``.
+    """
+
+    session: AsyncSession
+    loop: asyncio.AbstractEventLoop
+
+
+def _ledger_call[T](handle: Any, fn: Callable[[Any], T]) -> T:
+    """Run ``fn(sync_session)`` against a sync Session or a LedgerHandle-wrapped AsyncSession.
+
+    A raw AsyncSession is rejected: calling its coroutine API synchronously silently does
+    nothing, which is how the ledger was previously bypassed.
+    """
+    if isinstance(handle, LedgerHandle):
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is handle.loop:
+            raise ApprovalLedgerError("Ledger call attempted on the event loop thread.")
+        future = asyncio.run_coroutine_threadsafe(handle.session.run_sync(fn), handle.loop)
+        return future.result(timeout=_LEDGER_TIMEOUT_SECONDS)
+    if isinstance(handle, AsyncSession):
+        raise ApprovalLedgerError("AsyncSession must be wrapped in a LedgerHandle.")
+    return fn(handle)
+
+
 @dataclass
 class WarehouseHealthResult:
     """Structured result of warehouse connection and status diagnostic."""
@@ -66,6 +156,8 @@ class WarehouseHealthResult:
     authenticated_user: str | None = None
     message: str = ""
     last_checked: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    auto_stop_mins: int | None = None  # observed from warehouse metadata; None = not observed
+    cluster_size: str | None = None
 
 
 class DatabricksSqlService:
@@ -103,6 +195,8 @@ class DatabricksSqlService:
         self.client_id = client_id or self.settings.databricks_client_id
         self.client_secret = client_secret or self.settings.databricks_client_secret
         self._consumed_tokens: set[str] = set()
+        self._inflight_tokens: set[str] = set()
+        self._token_lock = threading.Lock()
 
     def __repr__(self) -> str:
         secret_mask = "[REDACTED]" if self.client_secret else "None"
@@ -179,6 +273,14 @@ class DatabricksSqlService:
                 wh_name = wh_info.name or default_name
                 state_val = getattr(wh_info.state, "value", None) or str(wh_info.state or "")
                 state_str = str(state_val).upper()
+                raw_auto_stop = getattr(wh_info, "auto_stop_mins", None)
+                observed_auto_stop = (
+                    raw_auto_stop
+                    if isinstance(raw_auto_stop, int) and not isinstance(raw_auto_stop, bool)
+                    else None
+                )
+                raw_size = getattr(wh_info, "cluster_size", None)
+                observed_size = raw_size if isinstance(raw_size, str) else None
 
                 if "STOPPED" in state_str:
                     return WarehouseHealthResult(
@@ -187,6 +289,8 @@ class DatabricksSqlService:
                         warehouse_name=wh_name,
                         warehouse_state="STOPPED",
                         can_execute=False,
+                        auto_stop_mins=observed_auto_stop,
+                        cluster_size=observed_size,
                         authenticated_user=username,
                         message=(
                             f"Warehouse '{wh_name}' ({warehouse_id}) is STOPPED. "
@@ -200,6 +304,8 @@ class DatabricksSqlService:
                         warehouse_name=wh_name,
                         warehouse_state="RUNNING",
                         can_execute=True,
+                        auto_stop_mins=observed_auto_stop,
+                        cluster_size=observed_size,
                         authenticated_user=username,
                         message=f"Warehouse '{wh_name}' is active and ready for read-only queries.",
                     )
@@ -259,10 +365,23 @@ class DatabricksSqlService:
         sql_statement: str,
         system_tables: list[str],
         execution_purpose: str = "Ingest verified billing usage and price records into FinOps Command Center",
-        estimated_scope: str = "Workspace 642006393507276, MTD period",
+        estimated_scope: str = "Not specified",
     ) -> dict[str, Any]:
-        """Generate the structured 8-point approval request for live SQL execution."""
+        """Generate the structured 8-point approval request for live SQL execution.
+
+        Every operational figure shown to the approver is *observed* warehouse metadata or an
+        explicit "not estimated"; nothing here is a hardcoded guess.
+        """
         wh_health = self.check_warehouse_status()
+        if wh_health.auto_stop_mins is None:
+            auto_stop_text = "Auto-stop setting not observed (warehouse metadata unavailable)"
+        elif wh_health.auto_stop_mins == 0:
+            auto_stop_text = "Auto-stop is DISABLED on the target warehouse"
+        else:
+            auto_stop_text = (
+                f"{wh_health.auto_stop_mins}-minute auto-stop observed on the target warehouse"
+            )
+        size_text = wh_health.cluster_size or "size not observed"
         return {
             "warehouse_name": wh_health.warehouse_name,
             "warehouse_id": wh_health.warehouse_id,
@@ -274,17 +393,19 @@ class DatabricksSqlService:
             "estimated_scope_and_window": estimated_scope,
             "warehouse_startup_necessary": wh_health.warehouse_state == "STOPPED",
             "expected_compute_charges": (
-                "Standard serverless compute charges (~$0.15-$0.35 for single query window; "
-                "auto-stops after 10-15 minutes of inactivity)."
+                "Not estimated: depends on warehouse size and runtime "
+                f"({size_text}; {auto_stop_text})."
             ),
+            "observed_auto_stop_mins": wh_health.auto_stop_mins,
+            "observed_cluster_size": wh_health.cluster_size,
             "approval_status": "APPROVAL_REQUIRED",
             "timestamp": datetime.now(UTC).isoformat(),
             "explicit_approval_required": {
                 "action": "Read-only SELECT query against system tables",
                 "target_compute": f"Databricks SQL Warehouse {wh_health.warehouse_name} ({wh_health.warehouse_id})",
                 "state_transition": "Warehouse state will transition from STOPPED to RUNNING",
-                "auto_stop_configured": "10-minute auto-termination is configured on the target warehouse",
-                "estimated_cost": "Estimated serverless charge is ~$0.15 - $0.35 DBU burst",
+                "auto_stop_configured": auto_stop_text,
+                "estimated_cost": "Not estimated: depends on warehouse size and runtime",
                 "data_mutation": "Zero mutations permitted: query strictly restricted to read-only projection",
                 "rollback_procedure": "Warehouse compute is stopped immediately upon ingestion completion",
                 "local_fixture_fallback": "Deterministic offline fixtures remain active if execution is unapproved",
@@ -410,37 +531,46 @@ class DatabricksSqlService:
         )
         token = f"v2:{active_kid}:{b64_payload}:{sig}"
 
-        # 5. Durable persistence in PostgreSQL if session is provided
+        # 5. Durable persistence in PostgreSQL if a ledger session is provided.
+        # Fail closed: a token that cannot be recorded is never returned.
         if session is not None:
-            try:
-                from cloud_recommender.db.models import BillingApprovalTokenModel
+            from cloud_recommender.db.models import BillingApprovalTokenModel
 
-                token_model = BillingApprovalTokenModel(
-                    token_id=token_id,
-                    kid=active_kid,
-                    approver_sub=approver_sub,
-                    approver_roles=roles,
-                    workspace_id=self.workspace_id,
-                    warehouse_id=warehouse_id,
-                    query_hash=qhash,
-                    date_start=start_date or None,
-                    date_end=end_date or None,
-                    allowed_tables=sorted(self.ALLOWED_SYSTEM_TABLES),
-                    requested_operation="READ_ONLY_SYSTEM_TABLES_SELECT",
-                    max_rows=max_rows,
-                    nonce=nonce,
-                    issued_at=datetime.fromtimestamp(issued_ts, UTC),
-                    expires_at=datetime.fromtimestamp(expiry_ts, UTC),
-                    is_consumed=False,
-                    approval_purpose=approval_purpose,
+            def _persist(sync_session: Any) -> None:
+                sync_session.add(
+                    BillingApprovalTokenModel(
+                        token_id=token_id,
+                        kid=active_kid,
+                        approver_sub=approver_sub,
+                        approver_roles=roles,
+                        workspace_id=self.workspace_id,
+                        warehouse_id=warehouse_id,
+                        query_hash=qhash,
+                        date_start=start_date or None,
+                        date_end=end_date or None,
+                        allowed_tables=sorted(self.ALLOWED_SYSTEM_TABLES),
+                        requested_operation="READ_ONLY_SYSTEM_TABLES_SELECT",
+                        max_rows=max_rows,
+                        nonce=nonce,
+                        issued_at=datetime.fromtimestamp(issued_ts, UTC),
+                        expires_at=datetime.fromtimestamp(expiry_ts, UTC),
+                        is_consumed=False,
+                        approval_purpose=approval_purpose,
+                    )
                 )
-                session.add(token_model)
-                if hasattr(session, "commit"):
-                    session.commit()
+                try:
+                    sync_session.commit()
+                except Exception:
+                    sync_session.rollback()
+                    raise
+
+            try:
+                _ledger_call(session, _persist)
             except Exception as e:
-                logger.warning("approval_token_persistence_failed", error=str(e))
-                if hasattr(session, "rollback"):
-                    session.rollback()
+                logger.warning("approval_token_persistence_failed", error=type(e).__name__)
+                raise ApprovalLedgerError(
+                    "Approval token could not be recorded in the durable ledger; token not issued."
+                ) from e
 
         return token
 
@@ -453,8 +583,15 @@ class DatabricksSqlService:
         max_rows: int | None = None,
         date_start: str | None = None,
         date_end: str | None = None,
+        enforce_scope: bool = False,
     ) -> bool:
-        """Verify that the approval token is valid, unexpired, unconsumed, and matches query and warehouse."""
+        """Verify that the approval token is valid, unexpired, unconsumed, and matches query and warehouse.
+
+        With ``enforce_scope`` (used for execution) the signed scope must match exactly: the
+        statement's row limit may not exceed the token's ``max_rows`` (and must exist), the
+        signed date window must equal the requested one, and un-scoped legacy tokens are not
+        accepted outside offline/test mode.
+        """
         if not token:
             return False
 
@@ -527,39 +664,51 @@ class DatabricksSqlService:
             except Exception:
                 return False
 
-            if max_rows is not None:
-                token_max = payload.get("max_rows", 1000)
-                if max_rows > token_max:
+            if enforce_scope:
+                token_rows = payload.get("max_rows")
+                if (
+                    max_rows is None
+                    or isinstance(token_rows, bool)
+                    or not isinstance(token_rows, int)
+                    or max_rows > token_rows
+                ):
                     logger.warning("approval_token_max_rows_exceeded")
                     return False
-
-            if date_start and payload.get("date_start") and date_start != payload.get("date_start"):
-                logger.warning("approval_token_date_start_mismatch")
-                return False
-            if date_end and payload.get("date_end") and date_end != payload.get("date_end"):
-                logger.warning("approval_token_date_end_mismatch")
-                return False
+                if (date_start or None) != payload.get("date_start"):
+                    logger.warning("approval_token_date_start_mismatch")
+                    return False
+                if (date_end or None) != payload.get("date_end"):
+                    logger.warning("approval_token_date_end_mismatch")
+                    return False
+            else:
+                if max_rows is not None:
+                    token_max = payload.get("max_rows", 1000)
+                    if max_rows > token_max:
+                        logger.warning("approval_token_max_rows_exceeded")
+                        return False
+                if (
+                    date_start
+                    and payload.get("date_start")
+                    and date_start != payload.get("date_start")
+                ):
+                    logger.warning("approval_token_date_start_mismatch")
+                    return False
+                if date_end and payload.get("date_end") and date_end != payload.get("date_end"):
+                    logger.warning("approval_token_date_end_mismatch")
+                    return False
 
             token_id = payload.get("token_id")
             if session is not None and token_id:
-                try:
-                    from sqlalchemy import select
-
-                    from cloud_recommender.db.models import BillingApprovalTokenModel
-
-                    stmt = select(BillingApprovalTokenModel).where(
-                        BillingApprovalTokenModel.token_id == token_id
-                    )
-                    rec = session.execute(stmt).scalar_one_or_none()
-                    if rec is not None and rec.is_consumed:
-                        logger.warning("approval_token_db_replay_rejected", token_id=token_id)
-                        return False
-                except Exception as e:
-                    logger.warning("approval_token_db_check_failed", error=str(e))
+                if not self._ledger_allows(session, token_id):
+                    return False
 
             return True
 
-        # Backward compatibility with legacy 7-part token and 4-part token
+        # Backward compatibility with legacy 7-part token and 4-part token. Legacy tokens carry
+        # no signed row limit or date window, so they cannot satisfy scope enforcement.
+        if enforce_scope and not (self.auth_type == "mock" or self.settings.app_env == "testing"):
+            logger.warning("approval_token_legacy_format_rejected_for_execution")
+            return False
         parts = token.split(":")
         if len(parts) == 7:
             t_wh, t_qhash, _, _, nonce_part, t_exp_str, t_sig = parts
@@ -598,21 +747,36 @@ class DatabricksSqlService:
             return False
 
         if session is not None and token_id:
-            try:
-                from sqlalchemy import select
+            if not self._ledger_allows(session, token_id):
+                return False
 
-                from cloud_recommender.db.models import BillingApprovalTokenModel
+        return True
 
-                stmt = select(BillingApprovalTokenModel).where(
+    def _ledger_allows(self, session: Any, token_id: str) -> bool:
+        """True when the durable ledger shows the token as not consumed.
+
+        Fail closed: if the ledger cannot be read the token is NOT accepted.
+        """
+        from sqlalchemy import select
+
+        from cloud_recommender.db.models import BillingApprovalTokenModel
+
+        def _lookup(sync_session: Any) -> bool:
+            rec = sync_session.execute(
+                select(BillingApprovalTokenModel).where(
                     BillingApprovalTokenModel.token_id == token_id
                 )
-                rec = session.execute(stmt).scalar_one_or_none()
-                if rec is not None and rec.is_consumed:
-                    logger.warning("approval_token_db_replay_rejected", token_id=token_id)
-                    return False
-            except Exception as e:
-                logger.warning("approval_token_db_check_failed", error=str(e))
+            ).scalar_one_or_none()
+            return bool(rec is not None and rec.is_consumed)
 
+        try:
+            consumed = _ledger_call(session, _lookup)
+        except Exception as e:
+            logger.warning("approval_token_db_check_failed", error=type(e).__name__)
+            return False
+        if consumed:
+            logger.warning("approval_token_db_replay_rejected", token_id=token_id)
+            return False
         return True
 
     def consume_approval_token(
@@ -620,13 +784,30 @@ class DatabricksSqlService:
         token: str,
         session: Any | None = None,
     ) -> bool:
-        """Mark approval token as consumed atomically in database and in memory to enforce single-use."""
+        """Mark approval token as consumed atomically in database and in memory to enforce single-use.
+
+        The durable atomic UPDATE is authoritative. The in-memory set is only marked after a
+        successful consume, so a ledger outage does not burn a token that never ran; an
+        in-flight set under a lock stops two threads racing through the check.
+        """
         if not token or token == "TEST-APPROVED-TOKEN":
             return True
-        if token in self._consumed_tokens:
-            return False
-        self._consumed_tokens.add(token)
+        with self._token_lock:
+            if token in self._consumed_tokens or token in self._inflight_tokens:
+                return False
+            self._inflight_tokens.add(token)
+        won = False
+        try:
+            won = self._consume_durable(token, session)
+        finally:
+            with self._token_lock:
+                self._inflight_tokens.discard(token)
+                if won:
+                    self._consumed_tokens.add(token)
+        return won
 
+    def _consume_durable(self, token: str, session: Any | None) -> bool:
+        """Atomically consume ``token`` in the durable ledger (when one is supplied)."""
         if session is not None:
             token_id = None
             if token.startswith("v2:"):
@@ -650,42 +831,41 @@ class DatabricksSqlService:
                     token_id = f"tok-{nonce_part}-{t_sig[:16]}"
 
             if token_id:
-                try:
-                    from sqlalchemy import update
+                from sqlalchemy import update
 
-                    from cloud_recommender.db.models import BillingApprovalTokenModel
+                from cloud_recommender.db.models import BillingApprovalTokenModel
 
+                def _consume(sync_session: Any) -> bool:
                     stmt = (
                         update(BillingApprovalTokenModel)
                         .where(
                             BillingApprovalTokenModel.token_id == token_id,
                             BillingApprovalTokenModel.is_consumed == False,  # noqa: E712
                         )
-                        .values(
-                            is_consumed=True,
-                            consumed_at=datetime.now(UTC),
-                        )
+                        .values(is_consumed=True, consumed_at=datetime.now(UTC))
                         .returning(BillingApprovalTokenModel.id)
                     )
-                    res = session.execute(stmt)
-                    updated_row = res.scalar_one_or_none()
+                    updated_row = sync_session.execute(stmt).scalar_one_or_none()
                     if updated_row is None:
-                        logger.warning(
-                            "approval_token_atomic_consume_failed_already_consumed",
-                            token_id=token_id,
-                        )
-                        if hasattr(session, "rollback"):
-                            session.rollback()
+                        sync_session.rollback()
                         return False
-
-                    if hasattr(session, "commit"):
-                        session.commit()
+                    sync_session.commit()
                     return True
+
+                try:
+                    won = _ledger_call(session, _consume)
                 except Exception as e:
-                    logger.warning("approval_token_consume_db_failed", error=str(e))
-                    if hasattr(session, "rollback"):
-                        session.rollback()
+                    logger.warning("approval_token_consume_db_failed", error=type(e).__name__)
                     return False
+                if not won:
+                    logger.warning(
+                        "approval_token_atomic_consume_failed_already_consumed",
+                        token_id=token_id,
+                    )
+                return won
+            # v2 tokens must be recorded in the ledger; legacy tokens stay in-memory single-use.
+            if token.startswith("v2:"):
+                return False
         return True
 
     def validate_read_only_statement(self, sql_statement: str) -> None:
@@ -828,6 +1008,8 @@ class DatabricksSqlService:
         approval_token: str | None = None,
         parameters: dict[str, Any] | None = None,
         session: Any | None = None,
+        date_start: str | None = None,
+        date_end: str | None = None,
     ) -> list[dict[str, Any]]:
         """Safely execute a read-only SQL statement against Databricks System Tables.
 
@@ -837,6 +1019,11 @@ class DatabricksSqlService:
         3. If approval_token is invalid or missing, raises ApprovalRequiredError (server-enforced).
         4. If warehouse is STOPPED and startup is not permitted, raises WarehouseStoppedError.
         5. Zero-execution decoupling: never auto-starts or resumes stopped warehouse compute.
+        6. The token's signed scope is enforced: exact SQL hash, warehouse, workspace, expiry,
+           statement LIMIT <= signed max_rows and the signed date window.
+        7. The result must be COMPLETE: a statement that is still running, failed, was
+           truncated, or returned fewer rows than its manifest states raises
+           StatementIncompleteError instead of returning a short list.
         """
         _ = parameters
         cleaned_sql = sql_statement.strip()
@@ -846,7 +1033,14 @@ class DatabricksSqlService:
 
         # Enforce human approval gate
         is_token_valid = self.verify_approval_token(
-            approval_token, cleaned_sql, self.warehouse_id, session=session
+            approval_token,
+            cleaned_sql,
+            self.warehouse_id,
+            session=session,
+            max_rows=statement_row_limit(cleaned_sql),
+            date_start=date_start,
+            date_end=date_end,
+            enforce_scope=True,
         )
         # Allow testing bypass only when running unit tests under mock auth with explicit is_approved flag
         test_bypass = (
@@ -872,20 +1066,30 @@ class DatabricksSqlService:
             )
             raise ApprovalRequiredError(approval_req)
 
-        # Mark token as consumed for one-time-use / replay prevention (in memory and DB)
-        if approval_token and approval_token != "TEST-APPROVED-TOKEN":
-            consumed = self.consume_approval_token(approval_token, session=session)
-            if not consumed:
-                raise ApprovalRequiredError(
-                    {"error": "Token has already been consumed or replay was detected."}
-                )
+        uses_real_token = bool(approval_token and approval_token != "TEST-APPROVED-TOKEN")
+        offline_mode = self.auth_type == "mock" or self.settings.app_env == "testing"
+        if uses_real_token and session is None and not offline_mode:
+            # No durable ledger was supplied (e.g. direct service use). Single-use is still
+            # enforced in memory, but does not survive a restart. API routes always supply the
+            # ledger in live mode and fail closed if it is unavailable.
+            logger.warning("approval_token_ledger_not_configured", warehouse_id=self.warehouse_id)
 
-        # Check warehouse state: zero-execution decoupling
+        # Check warehouse state FIRST (zero-execution decoupling). A stopped warehouse or a
+        # failed health check must not consume the single-use approval.
         wh_health = self.check_warehouse_status()
         if wh_health.warehouse_state == "STOPPED":
             raise WarehouseStoppedError(wh_health.warehouse_id, wh_health.warehouse_name)
         if wh_health.status in ("AUTH_ERROR", "PERMISSION_DENIED", "CONNECTION_ERROR"):
             raise DatabricksAuthError(wh_health.message)
+
+        # Warehouse is usable: now consume the token (one-time use, in memory and durable ledger)
+        if uses_real_token:
+            assert approval_token is not None
+            consumed = self.consume_approval_token(approval_token, session=session)
+            if not consumed:
+                raise ApprovalRequiredError(
+                    {"error": "Token has already been consumed or replay was detected."}
+                )
 
         # Live execution (when approved and warehouse is running)
         client = self.get_client()
@@ -894,17 +1098,98 @@ class DatabricksSqlService:
             warehouse_id=self.warehouse_id,
             timeout=self.settings.databricks_query_timeout_seconds,
         )
+        sync_wait = min(
+            int(self.settings.databricks_query_timeout_seconds),
+            _STATEMENT_MAX_SYNC_WAIT_SECONDS,
+        )
         response = client.statement_execution.execute_statement(
             warehouse_id=self.warehouse_id,
             statement=cleaned_sql,
-            wait_timeout=f"{self.settings.databricks_query_timeout_seconds}s",
+            wait_timeout=f"{sync_wait}s",
         )
+        return self._collect_complete_rows(client, response)
+
+    def _collect_complete_rows(self, client: Any, response: Any) -> list[dict[str, Any]]:
+        """Return every row of a finished statement, or raise StatementIncompleteError.
+
+        Waits (bounded by the query timeout, cancelling on expiry) for PENDING/RUNNING
+        statements, rejects FAILED/CANCELED/CLOSED, rejects a manifest flagged ``truncated``,
+        follows ``next_chunk_index`` until exhausted and cross-checks the collected row count
+        against the manifest.
+        """
+        api = client.statement_execution
+        statement_id = getattr(response, "statement_id", None)
+        deadline = time.monotonic() + float(self.settings.databricks_query_timeout_seconds)
+        state = _state_name(getattr(getattr(response, "status", None), "state", None))
+        while state in ("PENDING", "RUNNING"):
+            if statement_id is None or time.monotonic() >= deadline:
+                if statement_id is not None:
+                    try:
+                        api.cancel_execution(statement_id)
+                    except Exception as exc:  # best effort: never mask the timeout
+                        logger.warning(
+                            "databricks_statement_cancel_failed", error=type(exc).__name__
+                        )
+                raise StatementIncompleteError(
+                    "STATEMENT_TIMEOUT",
+                    "The statement did not finish within the query timeout; no rows were used.",
+                )
+            time.sleep(_STATEMENT_POLL_SECONDS)
+            response = api.get_statement(statement_id)
+            state = _state_name(getattr(getattr(response, "status", None), "state", None))
+
+        if state != "SUCCEEDED":
+            err = getattr(getattr(response, "status", None), "error", None)
+            detail = self.auth_service.scrub_sensitive(str(getattr(err, "message", "") or ""))
+            raise StatementIncompleteError(
+                "STATEMENT_FAILED",
+                f"The statement ended in state {state}." + (f" {detail}" if detail else ""),
+            )
+
+        manifest = getattr(response, "manifest", None)
+        if manifest is None:
+            raise StatementIncompleteError(
+                "RESULT_INCOMPLETE",
+                "The result has no manifest, so its completeness cannot be verified.",
+            )
+        if getattr(manifest, "truncated", None):
+            raise StatementIncompleteError(
+                "RESULT_TRUNCATED", "Databricks truncated the result; rows were not used."
+            )
+        schema = getattr(manifest, "schema", None)
+        schema_cols = getattr(schema, "columns", None) or []
+        columns = [str(col.name or "") for col in schema_cols]
 
         rows: list[dict[str, Any]] = []
-        if response.result and response.result.data_array:
-            columns: list[str] = []
-            if response.manifest and response.manifest.schema and response.manifest.schema.columns:
-                columns = [str(col.name or "") for col in response.manifest.schema.columns]
-            for row_vals in response.result.data_array:
+        result = getattr(response, "result", None)
+        chunks_read = 0
+        while result is not None:
+            if getattr(result, "external_links", None):
+                raise StatementIncompleteError(
+                    "RESULT_INCOMPLETE", "External-link result chunks are not supported."
+                )
+            for row_vals in result.data_array or []:
                 rows.append(dict(zip(columns, row_vals, strict=False)))
+            chunks_read += 1
+            next_index = result.next_chunk_index
+            if next_index is None:
+                break
+            if statement_id is None or chunks_read > 100_000:
+                raise StatementIncompleteError(
+                    "RESULT_INCOMPLETE", "Further result chunks exist but cannot be fetched."
+                )
+            result = api.get_statement_result_chunk_n(statement_id, next_index)
+
+        expected_rows = manifest.total_row_count
+        if expected_rows is not None and len(rows) != expected_rows:
+            raise StatementIncompleteError(
+                "RESULT_INCOMPLETE",
+                f"Collected {len(rows)} rows but the manifest reports {expected_rows}.",
+            )
+        expected_chunks = manifest.total_chunk_count
+        if expected_chunks and chunks_read < expected_chunks:
+            raise StatementIncompleteError(
+                "RESULT_INCOMPLETE",
+                f"Read {chunks_read} of {expected_chunks} result chunks.",
+            )
         return rows

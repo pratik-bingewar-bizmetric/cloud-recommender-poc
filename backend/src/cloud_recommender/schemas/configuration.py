@@ -72,8 +72,21 @@ class ScopeDiscoveryResponse(BaseModel):
     tenant_or_org_id: str | None = Field(
         default=None, description="Tenant, Organization, or Account ID."
     )
-    status: Literal["ready", "permission_denied", "unsupported", "empty"] = Field(
-        default="ready", description="Discovery status code."
+    status: Literal[
+        "ready", "permission_denied", "unsupported", "empty", "authentication_required", "error"
+    ] = Field(
+        default="ready",
+        description=(
+            "Discovery status code. authentication_required = no valid identity (401 / not logged "
+            "in); permission_denied = identity lacks a role (403); error = any other failure."
+        ),
+    )
+    data_source: Literal["live", "demo_fixture", "none"] = Field(
+        default="live",
+        description=(
+            "live = retrieved from the cloud API; demo_fixture = fabricated demo data "
+            "(only with ALLOW_DEMO_FIXTURES); none = nothing could be retrieved."
+        ),
     )
     status_message: str = Field(
         default="Scope discovery completed successfully.",
@@ -85,6 +98,17 @@ class ScopeDiscoveryResponse(BaseModel):
     tree: list[ScopeDiscoveryNode] = Field(
         default_factory=list,
         description="Top-level hierarchy nodes (e.g. Subscriptions or Projects).",
+    )
+    completeness: Literal["COMPLETE", "INCOMPLETE", "UNKNOWN"] = Field(
+        default="UNKNOWN",
+        description=(
+            "COMPLETE only when every paginated read finished; INCOMPLETE when any read stopped "
+            "early (see source_errors); UNKNOWN when nothing was read."
+        ),
+    )
+    source_errors: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Exact failed reads: endpoint, HTTP status and error text (for access requests).",
     )
     total_discovered_resources: int = Field(
         default=0, description="Total count of discovered resources."

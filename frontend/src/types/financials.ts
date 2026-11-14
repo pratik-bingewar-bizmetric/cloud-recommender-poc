@@ -45,11 +45,12 @@ export interface CanonicalFinancialSummary {
   scope_name: string;
   reporting_period: string; // e.g. "30d" or "30-Day Projected Monthly"
   time_window: TimeWindowPreset;
-  currency: "USD" | "INR";
-  exchange_rate: number;
+  /** Source currency of the pricing catalog. No conversion is ever applied. */
+  currency: "USD";
   data_provenance: "live_authenticated" | "verified_pricing_catalog" | "simulation_benchmark";
   pricing_source: string;
-  rate_effective_date: string;
+  /** Not reported by the pricing APIs used; null rather than an invented date. */
+  rate_effective_date: string | null;
   last_updated: string;
 
   // 1. Spend Metrics

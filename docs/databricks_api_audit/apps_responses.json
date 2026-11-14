@@ -1,0 +1,144 @@
+[
+  {
+    "module_name": "apps",
+    "operation_name": "list_apps",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/apps",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/apps",
+    "query_parameters": {
+      "page_size": 10
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:03.951166+00:00",
+    "duration_ms": 114.26,
+    "records_count": 3,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "apps": [
+        {
+          "name": "cement-demand-forecasting",
+          "description": "App created by assistant",
+          "compute_status": {
+            "state": "STOPPED",
+            "message": "Start the app compute to deploy the app."
+          },
+          "url": "https://cement-demand-forecasting-642006393507276.16.azure.databricksapps.com",
+          "create_time": "2026-05-26T10:01:48Z",
+          "creator": "akshay.patil@bizmetric.com",
+          "update_time": "2026-11-05T21:15:01Z",
+          "updater": "sudarshan.bhamare@bizmetric.com",
+          "service_principal_id": 147237298982347,
+          "service_principal_name": "app-1qa7sz cement-demand-forecasting",
+          "default_source_code_path": "/Workspace/Users/akshay.patil@bizmetric.com/cement-demand-forecasting-app",
+          "service_principal_client_id": "0eefe7e2-8eef-422c-8f77-bb0e478e828f",
+          "id": "0eefe7e2-8eef-422c-8f77-bb0e478e828f",
+          "oauth2_app_integration_id": "44332cd5-eda0-4966-a92a-c5f1def1c333",
+          "oauth2_app_client_id": "44332cd5-eda0-4966-a92a-c5f1def1c333",
+          "compute_size": "MEDIUM",
+          "thumbnail_url": "",
+          "last_deployment_id": "01f158ead5c51cc5804d89adf19d79be",
+          "effective_compute_generation": "COMPUTE_GENERATION_GEN_0"
+        },
+        {
+          "name": "mcp-generate-ppt",
+          "description": "",
+          "compute_status": {
+            "state": "STOPPED",
+            "message": "Start the app compute to deploy the app."
+          },
+          "url": "https://mcp-generate-ppt-642006393507276.16.azure.databricksapps.com",
+          "create_time": "2026-06-25T10:48:59Z",
+          "creator": "subodh.hande@bizmetric.com",
+          "update_time": "2026-11-05T21:15:01Z",
+          "updater": "sudarshan.bhamare@bizmetric.com",
+          "service_principal_id": 141025460831224,
+          "service_principal_name": "app-1qa7sz mcp-generate-ppt",
+          "default_source_code_path": "/Workspace/Users/subodh.hande@bizmetric.com/NZ_agentic_dbr_mcp",
+          "service_principal_client_id": "73503081-1d6b-4369-a045-c4f0123c292f",
+          "id": "73503081-1d6b-4369-a045-c4f0123c292f",
+          "oauth2_app_integration_id": "d3fda910-2623-403f-b7ea-c5911d8d767f",
+          "oauth2_app_client_id": "d3fda910-2623-403f-b7ea-c5911d8d767f",
+          "compute_size": "MEDIUM",
+          "thumbnail_url": "",
+          "last_deployment_id": "01f1708e9301145eb0190fc84bc1cd8c",
+          "effective_compute_generation": "COMPUTE_GENERATION_GEN_0"
+        },
+        {
+          "name": "wonder-cement-app",
+          "description": "A basic starter application.",
+          "compute_status": {
+            "state": "STOPPED",
+            "message": "Start the app compute to deploy the app."
+          },
+          "url": "https://wonder-cement-app-642006393507276.16.azure.databricksapps.com",
+          "create_time": "2026-05-19T09:21:58Z",
+          "creator": "sudeshna.patil@bizmetric.com",
+          "update_time": "2026-11-05T21:15:01Z",
+          "updater": "sudeshna.patil@bizmetric.com",
+          "service_principal_id": 142710450845916,
+          "service_principal_name": "app-1qa7sz wonder-cement-app",
+          "default_source_code_path": "/Workspace/Users/sudeshna.patil@bizmetric.com/databricks_apps/wonder-cement-app_2026_05_19-09_21/nodejs-fastapi-hello-world-app",
+          "service_principal_client_id": "10eec9ef-f679-489e-8cd8-79f139aa6de0",
+          "id": "10eec9ef-f679-489e-8cd8-79f139aa6de0",
+          "oauth2_app_integration_id": "eaab7bda-ee67-4ab8-9c73-7981a2bb7c45",
+          "oauth2_app_client_id": "eaab7bda-ee67-4ab8-9c73-7981a2bb7c45",
+          "compute_size": "MEDIUM",
+          "thumbnail_url": "",
+          "last_deployment_id": "01f16e2fb9be153cae766fce36885b39",
+          "effective_compute_generation": "COMPUTE_GENERATION_GEN_0"
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "apps",
+    "operation_name": "get_app_details",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/apps/cement-demand-forecasting",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/apps/cement-demand-forecasting",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:04.065606+00:00",
+    "duration_ms": 69.89,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "name": "cement-demand-forecasting",
+      "description": "App created by assistant",
+      "compute_status": {
+        "state": "STOPPED",
+        "message": "Start the app compute to deploy the app."
+      },
+      "app_status": {
+        "state": "UNAVAILABLE",
+        "message": "App status is unavailable."
+      },
+      "url": "https://cement-demand-forecasting-642006393507276.16.azure.databricksapps.com",
+      "create_time": "2026-05-26T10:01:48Z",
+      "creator": "akshay.patil@bizmetric.com",
+      "update_time": "2026-11-05T21:15:01Z",
+      "updater": "sudarshan.bhamare@bizmetric.com",
+      "service_principal_id": 147237298982347,
+      "service_principal_name": "app-1qa7sz cement-demand-forecasting",
+      "default_source_code_path": "/Workspace/Users/akshay.patil@bizmetric.com/cement-demand-forecasting-app",
+      "service_principal_client_id": "0eefe7e2-8eef-422c-8f77-bb0e478e828f",
+      "id": "0eefe7e2-8eef-422c-8f77-bb0e478e828f",
+      "effective_user_api_scopes": [
+        "iam.access-control:read",
+        "iam.current-user:read"
+      ],
+      "oauth2_app_integration_id": "44332cd5-eda0-4966-a92a-c5f1def1c333",
+      "oauth2_app_client_id": "44332cd5-eda0-4966-a92a-c5f1def1c333",
+      "compute_size": "MEDIUM",
+      "thumbnail_url": "",
+      "last_deployment_id": "01f158ead5c51cc5804d89adf19d79be",
+      "effective_compute_generation": "COMPUTE_GENERATION_GEN_0"
+    }
+  }
+]

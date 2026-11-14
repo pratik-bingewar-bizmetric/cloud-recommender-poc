@@ -88,15 +88,15 @@ def test_ai_spend_composition_exact_invariants(service: FinOpsAnalyticsService) 
 def test_serving_endpoint_inventory_canonical_closure(
     service: FinOpsAnalyticsService,
 ) -> None:
-    """Validate that KNOWN_SERVING_ENDPOINTS contains exactly 11 canonical endpoints.
-
-    The 16 remaining endpoints from the earlier 27 discovery count cannot be queried
-    live due to the Zero-Execution policy and are documented as an unverified baseline.
-    """
-    assert len(service.KNOWN_SERVING_ENDPOINTS) == 11
-
-    # Verify all 11 canonical endpoints are accepted
-    for ep_id in service.KNOWN_SERVING_ENDPOINTS:
+    """Serving endpoints resolve from LIVE discovery only; there is no hardcoded registry."""
+    discovered = {
+        r.id
+        for d in service.workspace_service._discovery_cache.values()
+        for r in d.resources
+        if r.resource_type.lower() == "serving_endpoint"
+    }
+    assert discovered, "fixture inventory must contain serving endpoints"
+    for ep_id in discovered:
         cat, is_unknown = service._resolve_resource_filter(ep_id, "serving_endpoint")
         assert is_unknown is False, f"Canonical endpoint {ep_id} failed resolution"
         assert cat == "serving"

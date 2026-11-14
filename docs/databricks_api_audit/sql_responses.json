@@ -1,0 +1,159 @@
+[
+  {
+    "module_name": "sql",
+    "operation_name": "list_warehouses",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/sql/warehouses",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/sql/warehouses",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:00.407747+00:00",
+    "duration_ms": 88.22,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "warehouses": [
+        {
+          "id": "05ed10a52697a344",
+          "name": "Serverless Starter Warehouse",
+          "size": "XXSMALL",
+          "cluster_size": "2X-Small",
+          "min_num_clusters": 1,
+          "max_num_clusters": 1,
+          "auto_stop_mins": 5,
+          "auto_resume": true,
+          "creator_name": "sudarshan.bhamare@bizmetric.com",
+          "creator_id": 2808822863536320,
+          "tags": {},
+          "spot_instance_policy": "COST_OPTIMIZED",
+          "enable_photon": true,
+          "channel": {},
+          "enable_serverless_compute": true,
+          "warehouse_type": "PRO",
+          "num_clusters": 0,
+          "state": "STOPPED",
+          "jdbc_url": "jdbc:spark://adb-642006393507276.16.azuredatabricks.net:443/default;transportMode=http;ssl=1;AuthMech=3;httpPath=/sql/1.0/warehouses/05ed10a52697a344;",
+          "odbc_params": {
+            "hostname": "adb-642006393507276.16.azuredatabricks.net",
+            "path": "/sql/1.0/warehouses/05ed10a52697a344",
+            "protocol": "https",
+            "port": 443
+          },
+          "health": {
+            "details": "Warehouse health details are not visible to users with the CAN_USE permission on the warehouse"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "sql",
+    "operation_name": "get_warehouse_details",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/sql/warehouses/05ed10a52697a344",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/sql/warehouses/05ed10a52697a344",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:00.494559+00:00",
+    "duration_ms": 58.18,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "id": "05ed10a52697a344",
+      "name": "Serverless Starter Warehouse",
+      "size": "XXSMALL",
+      "cluster_size": "2X-Small",
+      "min_num_clusters": 1,
+      "max_num_clusters": 1,
+      "auto_stop_mins": 5,
+      "auto_resume": true,
+      "creator_name": "sudarshan.bhamare@bizmetric.com",
+      "creator_id": 2808822863536320,
+      "tags": {},
+      "spot_instance_policy": "COST_OPTIMIZED",
+      "enable_photon": true,
+      "channel": {},
+      "enable_serverless_compute": true,
+      "warehouse_type": "PRO",
+      "num_clusters": 0,
+      "num_active_sessions": 0,
+      "state": "STOPPED",
+      "jdbc_url": "jdbc:spark://adb-642006393507276.16.azuredatabricks.net:443/default;transportMode=http;ssl=1;AuthMech=3;httpPath=/sql/1.0/warehouses/05ed10a52697a344;",
+      "odbc_params": {
+        "hostname": "adb-642006393507276.16.azuredatabricks.net",
+        "path": "/sql/1.0/warehouses/05ed10a52697a344",
+        "protocol": "https",
+        "port": 443
+      },
+      "health": {
+        "details": "Warehouse health details are not visible to users with the CAN_USE permission on the warehouse"
+      }
+    }
+  },
+  {
+    "module_name": "sql",
+    "operation_name": "get_warehouse_permissions",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/permissions/sql/warehouses/05ed10a52697a344",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/permissions/sql/warehouses/05ed10a52697a344",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 403,
+    "response_timestamp_utc": "2026-11-11T11:32:00.554606+00:00",
+    "duration_ms": 130.63,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "FORBIDDEN_403",
+    "error_message": "pratik.bingewar@bizmetric.com does not have Manage permissions on SQL EndpointId: 05ed10a52697a344. Please contact the owner or an administrator for access. Config: host=https://adb-642006393507276.16.azuredatabricks.net, account_id=71c1893d-14e0-4107-8fb4-9f0bb8655555, workspace_id=642006393507276, discovery_url=https://adb-642006393507276.16.azuredatabricks.net/oidc/.well-known/oauth-authorization-server, token_audience=https://adb-642006393507276.16.azuredatabricks.net/oidc/v1/token, azure_tenant_id=fe82a67c-faa7-4d9a-bbfa-7d25b7047b41, auth_type=azure-cli",
+    "response_body": {
+      "error": "PermissionDenied",
+      "detail": "pratik.bingewar@bizmetric.com does not have Manage permissions on SQL EndpointId: 05ed10a52697a344. Please contact the owner or an administrator for access. Config: host=https://adb-642006393507276.16.azuredatabricks.net, account_id=71c1893d-14e0-4107-8fb4-9f0bb8655555, workspace_id=642006393507276, discovery_url=https://adb-642006393507276.16.azuredatabricks.net/oidc/.well-known/oauth-authorization-server, token_audience=https://adb-642006393507276.16.azuredatabricks.net/oidc/v1/token, azure_tenant_id=fe82a67c-faa7-4d9a-bbfa-7d25b7047b41, auth_type=azure-cli"
+    }
+  },
+  {
+    "module_name": "sql",
+    "operation_name": "get_warehouse_config",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/sql/config/warehouses",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/sql/config/warehouses",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 403,
+    "response_timestamp_utc": "2026-11-11T11:32:00.686870+00:00",
+    "duration_ms": 69.02,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "FORBIDDEN_403",
+    "error_message": "pratik.bingewar@bizmetric.com is not authorized to perform this action. Please contact your administrator. Config: host=https://adb-642006393507276.16.azuredatabricks.net, account_id=71c1893d-14e0-4107-8fb4-9f0bb8655555, workspace_id=642006393507276, discovery_url=https://adb-642006393507276.16.azuredatabricks.net/oidc/.well-known/oauth-authorization-server, token_audience=https://adb-642006393507276.16.azuredatabricks.net/oidc/v1/token, azure_tenant_id=fe82a67c-faa7-4d9a-bbfa-7d25b7047b41, auth_type=azure-cli",
+    "response_body": {
+      "error": "PermissionDenied",
+      "detail": "pratik.bingewar@bizmetric.com is not authorized to perform this action. Please contact your administrator. Config: host=https://adb-642006393507276.16.azuredatabricks.net, account_id=71c1893d-14e0-4107-8fb4-9f0bb8655555, workspace_id=642006393507276, discovery_url=https://adb-642006393507276.16.azuredatabricks.net/oidc/.well-known/oauth-authorization-server, token_audience=https://adb-642006393507276.16.azuredatabricks.net/oidc/v1/token, azure_tenant_id=fe82a67c-faa7-4d9a-bbfa-7d25b7047b41, auth_type=azure-cli"
+    }
+  },
+  {
+    "module_name": "sql",
+    "operation_name": "probe_statement_execution_api",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/sql/statements/00000000-0000-0000-0000-000000000000",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/sql/statements/00000000-0000-0000-0000-000000000000",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 404,
+    "response_timestamp_utc": "2026-11-11T11:32:00.755534+00:00",
+    "duration_ms": 59.29,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "NOT_FOUND_404",
+    "error_message": "The statement 00000000-0000-0000-0000-000000000000 was not found.",
+    "response_body": {
+      "error": "NotFound",
+      "detail": "The statement 00000000-0000-0000-0000-000000000000 was not found."
+    }
+  }
+]

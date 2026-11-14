@@ -11,7 +11,10 @@ import inspect
 import io
 import statistics
 from collections.abc import Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel
@@ -67,6 +70,12 @@ from cloud_recommender.schemas.finops import (
     WorkloadEconomicsResponse,
     WorkloadUnitEconomicsItem,
 )
+from cloud_recommender.services.databricks.billing_sql import (
+    ATTRIBUTION_RULES,
+    CostBasis,
+    MatchStatus,
+    matches_resource,
+)
 from cloud_recommender.services.databricks.workspace_service import DatabricksWorkspaceService
 
 
@@ -97,53 +106,64 @@ def _unknown_scope_guard[R: BaseModel](fn: Callable[..., R]) -> Callable[..., R]
     return wrapper
 
 
+@dataclass(frozen=True)
+class _CurrencyState:
+    """Currency of the priced billing rows in the scope most recently read.
+
+    ``code`` is set only when exactly one currency is present. ``mixed`` means several are
+    present: no monetary aggregate may then be shown (and nothing is ever converted).
+    """
+
+    code: str | None = None
+    mixed: bool = False
+    codes: tuple[str, ...] = ()
+
+
+_SCOPE_CURRENCY: ContextVar[_CurrencyState] = ContextVar(
+    "finops_scope_currency",
+    default=_CurrencyState(),  # noqa: B039 - frozen dataclass, immutable
+)
+
+_MIXED_CURRENCY_NOTE = (
+    "Ambiguous: priced billing rows use more than one currency ({codes}). "
+    "Amounts are never merged or converted, so no monetary total is shown."
+)
+
+
+def format_money(value: float, currency: str, decimals: int = 2) -> str:
+    """Render an amount in its own currency; only USD uses a symbol, others carry their code."""
+    if currency.upper() == "USD":
+        return f"${value:,.{decimals}f}"
+    return f"{value:,.{decimals}f} {currency.upper()}"
+
+
+# Display label of each billing attribution type (keeps analytics aligned with billing_sql).
+_ATTRIBUTION_LABELS: dict[str, str] = {
+    "SQL_WAREHOUSE": "warehouse",
+    "SERVING_ENDPOINT": "serving",
+    "APP": "app",
+    "JOB": "job",
+    "PIPELINE": "pipeline",
+    "CLUSTER": "cluster",
+    "POOL": "pool",
+    "NOTEBOOK": "notebook",
+    "SERVERLESS": "serverless",
+}
+
+
+# Derived from billing_sql.ATTRIBUTION_RULES so analytics and ingestion can never drift:
+# same keys, same priority order (``app_name`` is not an ingested key).
+_RESOURCE_KEYS: tuple[tuple[str, str], ...] = tuple(
+    (key, _ATTRIBUTION_LABELS[rtype]) for key, rtype in ATTRIBUTION_RULES
+)
+_FILTER_KEYS: dict[str, tuple[str, ...]] = {
+    label: tuple(k for k, lbl in _RESOURCE_KEYS if lbl == label)
+    for label in dict.fromkeys(lbl for _, lbl in _RESOURCE_KEYS)
+}
+
+
 class FinOpsAnalyticsService:
     """Canonical engine computing FinOps KPIs and module datasets for Azure Databricks."""
-
-    KNOWN_WAREHOUSES: set[str] = {
-        "05ed10a52697a344",
-    }
-    # Live discovered compute cluster on workspace 642006393507276.
-    # Provider-issued cluster ID is authoritative; name 'adf-deaccelator-compute' is display metadata only.
-    # Mock cluster '1105-132712-k0qfl59u' has been permanently purged.
-    KNOWN_CLUSTERS: set[str] = {
-        "1102-081455-7t3bqp3v",
-    }
-    # Verified live Model Serving Endpoints discovered from workspace 642006393507276
-    KNOWN_SERVING_ENDPOINTS: set[str] = {
-        "databricks-claude-fable-5",
-        "databricks-claude-fable-5-1",
-        "databricks-meta-llama-3-1-405b-instruct",
-        "databricks-bge-large-en",
-        "databricks-dbrx-instruct",
-        "databricks-mixtral-8x7b-instruct",
-        "dbrx-instruct-endpoint",
-        "mpt-30b-instruct",
-        "bge-large-en-v1.5",
-        "llama-3-70b-instruct",
-        "mistral-large",
-    }
-    # Historical baseline fixtures - explicitly isolated from live discovered inventory
-    HISTORICAL_FIXTURE_ENDPOINTS: dict[str, dict[str, Any]] = {
-        "deepseek-r1-endpoint": {
-            "model_name": "DeepSeek R1",
-            "provenance": "Historical Test Fixture (Offline Prototype)",
-            "status": "HISTORICAL_FIXTURE",
-            "is_live_asset": False,
-        },
-        "mistral-large-endpoint": {
-            "model_name": "Mistral Large 2407",
-            "provenance": "Historical Test Fixture (Offline Prototype)",
-            "status": "HISTORICAL_FIXTURE",
-            "is_live_asset": False,
-        },
-    }
-    # Verified live Databricks Apps discovered from authenticated workspace 642006393507276
-    KNOWN_APPS: set[str] = {
-        "cement-demand-forecasting",
-        "mcp-generate-ppt",
-        "wonder-cement-app",
-    }
 
     def __init__(
         self,
@@ -157,19 +177,9 @@ class FinOpsAnalyticsService:
         self._anomaly_overrides: dict[str, str] = {}
         self._audit_events: list[AuditEventItem] = []
 
-    AUTHORIZED_WORKSPACES: set[str] = {
-        "642006393507276",
-        "databricks-azure-dev",
-        "7405608085231210",
-        "databricks-azure-prod",
-        "2250283018608626",
-        "databricks-finops-dev",
-        "all",
-    }
-
     def _get_authorized_workspaces(self) -> set[str]:
-        """Compute authorized workspace and connection IDs dynamically from workspace registry."""
-        allowed = set(self.AUTHORIZED_WORKSPACES)
+        """Authorized scope ids come only from the live workspace registry (plus ``all``)."""
+        allowed = {"all"}
         for conn in self.workspace_service.list_connections():
             allowed.add(conn.workspace_id)
             allowed.add(conn.connection_id)
@@ -264,40 +274,39 @@ class FinOpsAnalyticsService:
 
         # Helper to look up an exact identifier's actual category
         def find_exact_asset_category(identifier: str) -> str | None:
-            # 0. Reject historical fixtures: never attribute as live assets
-            if identifier in self.HISTORICAL_FIXTURE_ENDPOINTS:
-                return None
+            # 1. Live discovery cache (any connection): exact provider id, or provider name for
+            #    serving endpoints and apps.
+            category_of = {
+                "warehouse": "warehouse",
+                "warehouses": "warehouse",
+                "sql_warehouse": "warehouse",
+                "cluster": "cluster",
+                "clusters": "cluster",
+                "compute": "cluster",
+                "model_serving": "serving",
+                "serving_endpoint": "serving",
+                "serving": "serving",
+                "app": "app",
+                "apps": "app",
+            }
+            for discovery in self.workspace_service._discovery_cache.values():
+                for item in discovery.resources or []:
+                    cat = category_of.get(item.resource_type.lower())
+                    if cat and (
+                        item.id == identifier
+                        or (item.name == identifier and cat in ("serving", "app"))
+                    ):
+                        return cat
 
-            # 1. Check live discovery cache if populated (authoritative ID matching only for compute!)
-            discovery = self.workspace_service._discovery_cache.get("databricks-azure-dev")
-            if discovery and discovery.resources:
-                for item in discovery.resources:
-                    t = item.resource_type.lower()
-                    if item.id == identifier:
-                        if t in ("warehouse", "warehouses", "sql_warehouse"):
-                            return "warehouse"
-                        if t in ("cluster", "clusters", "compute"):
-                            return "cluster"
-                        if t in ("model_serving", "serving_endpoint", "serving"):
-                            return "serving"
-                        if t in ("app", "apps"):
-                            return "app"
-                    # For serving endpoints and apps, provider name is canonical identifier
-                    if item.name == identifier:
-                        if t in ("model_serving", "serving_endpoint", "serving"):
-                            return "serving"
-                        if t in ("app", "apps"):
-                            return "app"
-
-            # 2. Check verified production registries (exact authoritative ID set membership only!)
-            if identifier in self.KNOWN_WAREHOUSES:
-                return "warehouse"
-            if identifier in self.KNOWN_CLUSTERS:
-                return "cluster"
-            if identifier in self.KNOWN_SERVING_ENDPOINTS:
-                return "serving"
-            if identifier in self.KNOWN_APPS:
-                return "app"
+            # 2. Ids attributed by ingested billing rows are real source data too.
+            billing = self._billing_service
+            if billing is not None:
+                for rec in billing._usage_store.values():
+                    for key, label in _RESOURCE_KEYS:
+                        if label in ("warehouse", "cluster", "serving", "app") and (
+                            str(rec.usage_metadata.get(key) or "") == identifier
+                        ):
+                            return label
 
             return None
 
@@ -325,7 +334,7 @@ class FinOpsAnalyticsService:
         self,
         metric_id: str,
         unit: str,
-        currency: str | None = "USD",
+        currency: str | None = None,
         source: str = "Azure Databricks Telemetry",
         formula: str | None = None,
         workspace_id: str = "642006393507276",
@@ -472,7 +481,7 @@ class FinOpsAnalyticsService:
         empty_kpi = self._build_empty_kpi(
             metric_id=metric_id,
             unit="unit",
-            currency="USD",
+            currency=None,
             source="Canonical KPI Registry",
             workspace_id=workspace_id or "642006393507276",
             resource_id=resource_id,
@@ -502,22 +511,8 @@ class FinOpsAnalyticsService:
         "costcenter",
         "department",
     )
-    _RESOURCE_META_KEYS: tuple[tuple[str, str], ...] = (
-        ("job_id", "job"),
-        ("warehouse_id", "warehouse"),
-        ("cluster_id", "cluster"),
-        ("endpoint_id", "serving"),
-        ("endpoint_name", "serving"),
-        ("app_id", "app"),
-        ("app_name", "app"),
-        ("dlt_pipeline_id", "pipeline"),
-    )
-    _FILTER_META_KEYS: dict[str, tuple[str, ...]] = {
-        "warehouse": ("warehouse_id",),
-        "cluster": ("cluster_id",),
-        "serving": ("endpoint_id", "endpoint_name"),
-        "app": ("app_id", "app_name"),
-    }
+    _RESOURCE_META_KEYS: tuple[tuple[str, str], ...] = _RESOURCE_KEYS
+    _FILTER_META_KEYS: dict[str, tuple[str, ...]] = _FILTER_KEYS
     _MIN_HISTORY_DAYS: int = 14
 
     @property
@@ -538,8 +533,16 @@ class FinOpsAnalyticsService:
         return datetime.now(UTC).isoformat()
 
     @staticmethod
-    def _usd(value: float) -> str:
-        return f"${value:,.2f}"
+    def _scope_currency() -> _CurrencyState:
+        return _SCOPE_CURRENCY.get()
+
+    def _money(self, value: float, currency: str | None = None, decimals: int = 2) -> str:
+        """Format a monetary amount in the confirmed currency of the scope; never assume USD."""
+        state = _SCOPE_CURRENCY.get()
+        if currency is None and state.mixed:
+            return "n/a (mixed currencies)"
+        code = currency or state.code
+        return format_money(value, code, decimals) if code else "-"
 
     def _scope_workspace_ids(self, workspace_id: Any) -> set[str]:
         """Resolve validated scope entries (workspace or connection ids) to workspace ids."""
@@ -563,7 +566,8 @@ class FinOpsAnalyticsService:
         *,
         value: float | None = None,
         formatted: str | None = None,
-        currency: str | None = "USD",
+        currency: str | None = None,
+        confirmed_currency: str | None = None,
         source: str,
         formula: str | None = None,
         caveats: str | None = None,
@@ -581,6 +585,24 @@ class FinOpsAnalyticsService:
         """Build a KPI whose display text always matches its provenance."""
         resource_id = resource_id if isinstance(resource_id, str) else None
         resource_type = resource_type if isinstance(resource_type, str) else None
+        money_unit = unit in ("USD", "USD/DBU")
+        mixed_note: str | None = None
+        if money_unit:
+            # The "USD" unit is only a marker for "a monetary amount": the real currency is the
+            # one confirmed by the priced rows (or by an explicit, named setting), never assumed.
+            if confirmed_currency:
+                currency = confirmed_currency
+            else:
+                state = _SCOPE_CURRENCY.get()
+                currency = state.code
+                if state.mixed:
+                    mixed_note = _MIXED_CURRENCY_NOTE.format(codes=", ".join(state.codes))
+                    value = None
+                    status = KpiStatus.UNAVAILABLE
+                    caveats = f"{caveats} {mixed_note}" if caveats else mixed_note
+            unit = unit.replace("USD", currency or "CURRENCY")
+        else:
+            currency = None
         reason_prefix = {
             KpiStatus.BLOCKED_PENDING_APPROVAL: "Blocked: requires approved read-only SQL access to system tables.",
             KpiStatus.INSUFFICIENT_HISTORY: "Insufficient history.",
@@ -595,11 +617,15 @@ class FinOpsAnalyticsService:
             reason: str | None = " ".join(
                 x for x in (reason_prefix.get(status, "Value not established."), caveats) if x
             )
+            if mixed_note:
+                reason = mixed_note
         elif formatted is not None:
             text = formatted
             reason = None
-        elif unit == "USD":
-            text = self._usd(value)
+        elif money_unit:
+            text = self._money(value, currency, 4 if unit.endswith("/DBU") else 2) + (
+                " / DBU" if unit.endswith("/DBU") else ""
+            )
             reason = None
         elif unit == "%":
             text = f"{value:,.1f}%"
@@ -678,6 +704,16 @@ class FinOpsAnalyticsService:
             for r in self.billing_service._usage_store.values()
             if not scope or r.workspace_id in scope
         ]
+        # Currency is judged on the whole workspace scope (before any resource filter) so a
+        # per-resource read can never disagree with the scope-level figures around it.
+        currencies = sorted({r.currency for r in rows if r.pricing_matched and r.currency})
+        _SCOPE_CURRENCY.set(
+            _CurrencyState(
+                code=currencies[0] if len(currencies) == 1 else None,
+                mixed=len(currencies) > 1,
+                codes=tuple(currencies),
+            )
+        )
         if filter_type in self._FILTER_META_KEYS:
             keys = self._FILTER_META_KEYS[filter_type]
             rows = [
@@ -690,20 +726,48 @@ class FinOpsAnalyticsService:
                 )
             ]
         elif resource_id:
-            rows = [r for r in rows if resource_id in r.usage_metadata.values()]
-        return rows
+            rows = [r for r in rows if matches_resource(r.usage_metadata, resource_id)]
+        return self._withhold_priced_costs(rows) if _SCOPE_CURRENCY.get().mixed else rows
+
+    @staticmethod
+    def _withhold_priced_costs(rows: list[BillingUsageRecord]) -> list[BillingUsageRecord]:
+        """Never sum different currencies: drop the costs of priced rows (scope is mixed).
+
+        Usage quantities are untouched. Affected rows read as unpriced (MIXED_CURRENCY) so
+        every downstream spend figure is explicitly partial rather than silently merged.
+        """
+        return [
+            r.model_copy(
+                update={
+                    "effective_cost": None,
+                    "pricing_matched": False,
+                    "currency": None,
+                    "cost_basis": CostBasis.METERED_USAGE,
+                    "match_status": MatchStatus.MIXED_CURRENCY,
+                }
+            )
+            if r.pricing_matched
+            else r
+            for r in rows
+        ]
 
     def _billing_provenance(
         self, rows: list[BillingUsageRecord], connection_id: str = "databricks-azure-dev"
     ) -> SectionProvenance:
         if rows:
             priced = sum(1 for r in rows if r.pricing_matched)
+            mixed = any(r.match_status == MatchStatus.MIXED_CURRENCY for r in rows)
             return SectionProvenance(
                 classification=KpiStatus.CALCULATED,
                 source="system.billing.usage (ingested) x rate card",
                 message=(
                     f"{priced}/{len(rows)} usage rows priced with list prices (DBU x list rate). "
                     "Excludes discounts, credits and Azure infrastructure charges."
+                    + (
+                        " Several currencies are present: costs are withheld, never merged or converted."
+                        if mixed
+                        else ""
+                    )
                 ),
                 retrieved_at=self._now_iso(),
                 record_count=len(rows),
@@ -753,15 +817,18 @@ class FinOpsAnalyticsService:
 
     @staticmethod
     def _cost(rec: BillingUsageRecord) -> float:
-        return rec.effective_cost or 0.0
+        """LIST_PRICE_ESTIMATE of one row as float (display boundary; storage stays Decimal)."""
+        return float(rec.effective_cost) if rec.effective_cost is not None else 0.0
 
     @staticmethod
     def _sum_cost(rows: list[BillingUsageRecord]) -> float:
-        return round(sum(r.effective_cost or 0.0 for r in rows), 2)
+        total = sum((r.effective_cost for r in rows if r.effective_cost is not None), Decimal("0"))
+        return round(float(total), 2)
 
     @staticmethod
     def _sum_dbu(rows: list[BillingUsageRecord]) -> float:
-        return round(sum(r.usage_quantity for r in rows if r.usage_unit == "DBU"), 4)
+        total = sum((r.usage_quantity for r in rows if r.usage_unit == "DBU"), Decimal("0"))
+        return round(float(total), 4)
 
     @staticmethod
     def _coverage(rows: list[BillingUsageRecord]) -> float:
@@ -773,7 +840,7 @@ class FinOpsAnalyticsService:
         for r in rows:
             d = out.setdefault(r.usage_date, [0.0, 0.0])
             d[0] += self._cost(r)
-            d[1] += r.usage_quantity if r.usage_unit == "DBU" else 0.0
+            d[1] += float(r.usage_quantity) if r.usage_unit == "DBU" else 0.0
         return {k: (round(v[0], 2), round(v[1], 4)) for k, v in sorted(out.items())}
 
     @staticmethod
@@ -850,14 +917,14 @@ class FinOpsAnalyticsService:
                     severity="Critical" if z >= 5 else "High" if z >= 4 else "Medium",
                     signal="Daily spend above trailing baseline",
                     resource="Workspace (all billed SKUs)",
-                    baseline=f"{self._usd(mean)} / day",
-                    observed=f"{self._usd(cost)} / day",
-                    estimated_impact=f"{self._usd(cost - mean)} (list-price basis)",
+                    baseline=f"{self._money(mean)} / day",
+                    observed=f"{self._money(cost)} / day",
+                    estimated_impact=f"{self._money(cost - mean)} (list-price basis)",
                     likely_cause="Not determined; review SKU contribution and workload attribution.",
                     evidence_detail=f"z={z:.2f} over {len(window)} trailing days from system.billing.usage.",
                     resource_type="workspace",
                     metric="Spend / Day",
-                    absolute_deviation=self._usd(cost - mean),
+                    absolute_deviation=self._money(cost - mean),
                     percentage_deviation=f"{((cost - mean) / mean * 100) if mean else 0:.1f}%",
                     detection_methodology="Z-score >= 3 SD over trailing <=28-day window (SD floored at 5% of mean)",
                     confidence=f"Statistical (n={len(window)} days)",
@@ -870,7 +937,7 @@ class FinOpsAnalyticsService:
                         {
                             "sku": k,
                             "pct": round(v / cost * 100, 1) if cost else 0.0,
-                            "amount": self._usd(v),
+                            "amount": self._money(v),
                         }
                         for k, v in sorted(by_sku.items(), key=lambda kv: -kv[1])[:5]
                     ],
@@ -936,7 +1003,7 @@ class FinOpsAnalyticsService:
                     finding=finding,
                     current_cost="-"
                     if not self._billing_rows(None, None, res.id)
-                    else self._usd(self._sum_cost(self._billing_rows(None, None, res.id))),
+                    else self._money(self._sum_cost(self._billing_rows(None, None, res.id))),
                     potential_savings_range="Not calculable",
                     recommended_action=action,
                     calculation_methodology=(
@@ -1062,7 +1129,7 @@ class FinOpsAnalyticsService:
         global_filters: dict[str, Any] = {
             "period": period,
             "environment": environment or "Development",
-            "currency": "USD",
+            "currency": self._scope_currency().code,
             "workspace_id": ws,
             "resource_id": resource_id,
             "resource_type": resource_type,
@@ -1110,7 +1177,6 @@ class FinOpsAnalyticsService:
 
         if not rows:
             msg: dict[str, Any] = {
-                "currency": "USD",
                 "source": "system.billing.usage",
                 "caveats": bill_prov.message,
                 **common,
@@ -1264,7 +1330,7 @@ class FinOpsAnalyticsService:
                 driver=f"{rtype}: {rid}",
                 workspace_owner=ws,
                 spend=round(amt, 2),
-                formatted_spend=self._usd(amt),
+                formatted_spend=self._money(amt),
                 change="n/a",
                 signal="Review" if total and amt / total >= 0.3 else "Stable",
             )
@@ -1344,7 +1410,7 @@ class FinOpsAnalyticsService:
             g = grouped.setdefault(
                 (r.usage_date, self._product_of(r), r.sku_name, owner), [0.0, 0.0]
             )
-            g[0] += r.usage_quantity
+            g[0] += float(r.usage_quantity)
             g[1] += self._cost(r)
         ledger = [
             CostExplorerItem(
@@ -1381,7 +1447,6 @@ class FinOpsAnalyticsService:
                 "USD/DBU",
                 KpiStatus.CALCULATED,
                 value=round(total / dbu, 4) if dbu else None,
-                formatted=f"${total / dbu:,.4f} / DBU" if dbu else None,
                 source="system.billing.usage x list prices",
                 formula="total cost / total DBU",
                 caveats=caveat,
@@ -1435,6 +1500,10 @@ class FinOpsAnalyticsService:
             resource_id=resource_id,
             resource_type=resource_type,
         )
+        # Source currency comes from the priced rows read by get_cost_explorer above.
+        csv_state = self._scope_currency()
+        csv_ccy_known = csv_state.code is not None
+        csv_ccy = csv_state.code or ("mixed currencies" if csv_state.mixed else "currency unknown")
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(
@@ -1445,8 +1514,8 @@ class FinOpsAnalyticsService:
                 "Workspace",
                 "Usage Qty",
                 "Unit",
-                "List Cost (USD)",
-                "Effective Cost (USD)",
+                f"List Cost ({csv_ccy})",
+                f"Effective Cost ({csv_ccy})",
                 "Owner Tag",
                 "Allocation Status",
             ]
@@ -1460,8 +1529,8 @@ class FinOpsAnalyticsService:
                     r.workspace,
                     r.usage_qty,
                     r.unit,
-                    f"${r.list_cost:.2f}",
-                    f"${r.effective_cost:.2f}",
+                    f"{r.list_cost:.2f}" if csv_ccy_known else "",
+                    f"{r.effective_cost:.2f}" if csv_ccy_known else "",
                     r.owner_tag,
                     r.allocation_status,
                 ]
@@ -2315,7 +2384,7 @@ class FinOpsAnalyticsService:
         return ScenarioSimulationResponse(
             baseline_spend=round(base, 2),
             adjusted_spend=round(adjusted, 2),
-            formatted_spend=self._usd(adjusted),
+            formatted_spend=self._money(adjusted),
             savings_vs_baseline=round(base - adjusted, 2),
             delta_label=f"{(adjusted - base) / base * 100:+.1f}% vs baseline forecast"
             if base
@@ -2350,9 +2419,18 @@ class FinOpsAnalyticsService:
         mtd = (
             fc["mtd"] if fc else (self._sum_cost(self._reference_month(rows)[1]) if rows else None)
         )
-        util = round(mtd / budget * 100, 1) if (mtd is not None and budget) else None
+        # The budget setting is USD: it is only comparable with USD-confirmed actuals.
+        scope_ccy = self._scope_currency()
+        budget_comparable = (not rows) or scope_ccy.code == "USD"
+        util = (
+            round(mtd / budget * 100, 1)
+            if (mtd is not None and budget and budget_comparable)
+            else None
+        )
         overrun = (
-            round(max(0.0, fc["forecast"] - budget), 2) if (fc and budget is not None) else None
+            round(max(0.0, fc["forecast"] - budget), 2)
+            if (fc and budget is not None and budget_comparable)
+            else None
         )
         kpis = {
             "approved_budget": self._mk_kpi(
@@ -2362,6 +2440,7 @@ class FinOpsAnalyticsService:
                 value=budget,
                 formatted=None if budget is not None else "No budget configured",
                 source="FINOPS_MONTHLY_BUDGET_USD setting",
+                confirmed_currency="USD",  # the setting is explicitly denominated in USD
                 caveats=None
                 if budget is not None
                 else "Set finops_monthly_budget_usd to enable budget tracking.",
@@ -2426,7 +2505,7 @@ class FinOpsAnalyticsService:
         }
         controls: list[BudgetControlItem] = []
         burn: list[dict[str, Any]] = []
-        if budget is not None and not is_unknown:
+        if budget is not None and not is_unknown and budget_comparable:
             controls.append(
                 BudgetControlItem(
                     budget_scope="Databricks workspace (monthly)",
@@ -2900,7 +2979,11 @@ class FinOpsAnalyticsService:
                 provider="Databricks",
                 sku_family=p.sku_name,
                 region=p.cloud,
-                list_rate=f"${p.price_per_unit:.5f} / {p.pricing_unit}",
+                list_rate=(
+                    "-"
+                    if p.price_per_unit is None
+                    else f"{format_money(p.price_per_unit, p.currency_code, 5)} / {p.usage_unit}"
+                ),
                 contract_rate="Not configured",
                 discount="N/A",
                 effective_date=p.price_start_time[:10],

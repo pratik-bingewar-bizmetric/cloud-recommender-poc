@@ -5,6 +5,7 @@ KPI cards, charts, ledgers, scenario simulator, and CSV reports.
 """
 
 import asyncio
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import structlog
@@ -17,9 +18,11 @@ from cloud_recommender.schemas.billing_ingestion import (
     BillingApprovalTokenResponse,
     BillingIngestionRunResponse,
     BillingIngestionStatusResponse,
+    BillingPriceEnvelope,
     BillingPriceRecord,
     BillingReconciliationResponse,
     BillingSummaryResponse,
+    BillingUsageEnvelope,
     BillingUsageRecord,
     IngestionPreviewResponse,
     IngestionRunCreateRequest,
@@ -56,6 +59,7 @@ from cloud_recommender.services.databricks.billing_ingestion_service import (
 )
 from cloud_recommender.services.databricks.finops_analytics_service import FinOpsAnalyticsService
 from cloud_recommender.services.databricks.refresher import get_refresher
+from cloud_recommender.services.databricks.sql_client import ApprovalLedgerError, LedgerHandle
 
 logger = structlog.get_logger(__name__)
 
@@ -78,6 +82,30 @@ def get_billing_service() -> BillingIngestionService:
     if _billing_service_instance is None:
         _billing_service_instance = BillingIngestionService()
     return _billing_service_instance
+
+
+async def get_billing_ledger(
+    settings: Settings = Depends(get_settings),
+) -> AsyncGenerator[LedgerHandle | None, None]:
+    """Durable approval-token ledger handle (AsyncSession + owning loop).
+
+    Offline/mock/testing runs return ``None`` and keep the in-memory single-use set. In every
+    other mode the handle is mandatory for live execution; if PostgreSQL (or the migrated
+    ``billing_approval_tokens`` table) is unavailable, token operations fail closed.
+    """
+    if settings.databricks_auth_type == "mock" or settings.app_env == "testing":
+        yield None
+        return
+    from cloud_recommender.db.session import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        yield LedgerHandle(session=session, loop=asyncio.get_running_loop())
+
+
+def _as_ledger(value: Any) -> LedgerHandle | None:
+    """Normalise a dependency value (a Depends object when the route is called directly)."""
+    return value if isinstance(value, LedgerHandle) else None
 
 
 async def warm_live_metadata(
@@ -579,16 +607,18 @@ def _param(val: Any, default: Any = None) -> Any:
 @router.post("/ingestion/preview", response_model=IngestionPreviewResponse)
 def preview_ingestion(
     workspace_id: str = Query("642006393507276", description="Target workspace ID"),
-    start_date: str = Query("2026-10-01", description="Start date YYYY-MM-DD"),
-    end_date: str = Query("2026-11-04", description="End date YYYY-MM-DD"),
+    start_date: str | None = Query(
+        None, description="Start date YYYY-MM-DD (default: first day of the current month)"
+    ),
+    end_date: str | None = Query(None, description="End date YYYY-MM-DD (default: today, UTC)"),
     limit: int = Query(50, ge=1, le=1000, description="Max preview records"),
     service: BillingIngestionService = Depends(get_billing_service),
 ) -> IngestionPreviewResponse:
     """Preview available billing records without starting the SQL warehouse."""
     return service.preview_ingestion(
         workspace_id=_param(workspace_id, "642006393507276"),
-        start_date=_param(start_date, "2026-10-01"),
-        end_date=_param(end_date, "2026-11-04"),
+        start_date=_param(start_date, None),
+        end_date=_param(end_date, None),
         limit=_param(limit, 50),
     )
 
@@ -597,9 +627,10 @@ def preview_ingestion(
 def execute_ingestion_run(
     request: IngestionRunCreateRequest,
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingIngestionRunResponse:
     """Attempt an ingestion execution run. Gated by strict Human Approval policy."""
-    return service.run_ingestion(request)
+    return service.run_ingestion(request, ledger=_as_ledger(ledger))
 
 
 @router.post("/ingestion/approval-token", response_model=BillingApprovalTokenResponse)
@@ -607,6 +638,7 @@ def issue_approval_token(
     request: BillingApprovalTokenRequest,
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingApprovalTokenResponse:
     """Issue a cryptographically signed, role-authorized approval token for live execution."""
     import base64
@@ -670,6 +702,7 @@ def issue_approval_token(
             approver_roles=approver_roles,
             max_rows=request.max_rows,
             approval_purpose=request.approval_purpose,
+            session=_as_ledger(ledger),
         )
 
         if token.startswith("v2:"):
@@ -715,6 +748,11 @@ def issue_approval_token(
             )
     except PermissionError as pe:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(pe)) from pe
+    except ApprovalLedgerError as le:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "APPROVAL_LEDGER_UNAVAILABLE", "message": str(le)},
+        ) from le
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
@@ -734,7 +772,7 @@ def get_billing_summary(
     )
 
 
-@router.get("/billing/usage", response_model=list[BillingUsageRecord])
+@router.get("/billing/usage", response_model=BillingUsageEnvelope | list[BillingUsageRecord])
 def get_billing_usage(
     workspace_id: str = Query("642006393507276", description="Target workspace ID"),
     sku_name: str | None = Query(None, description="Filter by SKU name"),
@@ -744,27 +782,60 @@ def get_billing_usage(
     end_date: str | None = Query(None, description="End date filter"),
     limit: int | None = Query(None, description="Maximum number of records to return"),
     offset: int = Query(0, description="Offset for pagination"),
+    record_type: str | None = Query(None, description="Filter by record_type"),
+    envelope: bool = Query(
+        False, description="Return {total, offset, limit, records} instead of a bare list"
+    ),
     service: BillingIngestionService = Depends(get_billing_service),
-) -> list[BillingUsageRecord]:
-    """List normalized billing usage events with parameter filtering."""
-    return service.list_usage_records(
+) -> BillingUsageEnvelope | list[BillingUsageRecord]:
+    """List normalized billing usage events with parameter filtering.
+
+    Default response is the legacy bare list. ``envelope=true`` returns the paginated envelope
+    the frontend contract expects (``total`` is the pre-pagination match count).
+    """
+    matches = service.list_usage_records(
         workspace_id=_param(workspace_id, "642006393507276"),
         sku_name=_param(sku_name, None),
         product=_param(product, None),
         resource_id=_param(resource_id, None),
         start_date=_param(start_date, None),
         end_date=_param(end_date, None),
-        limit=_param(limit, None),
-        offset=_param(offset, 0),
     )
+    rtype = _param(record_type, None)
+    if rtype:
+        matches = [m for m in matches if m.record_type.lower() == str(rtype).lower()]
+    off = max(int(_param(offset, 0)), 0)
+    lim = _param(limit, None)
+    page = matches[off:] if lim is None else matches[off : off + int(lim)]
+    if _param(envelope, False) is True:
+        return BillingUsageEnvelope(
+            total=len(matches),
+            offset=off,
+            limit=len(page) if lim is None else int(lim),
+            records=page,
+        )
+    return page
 
 
-@router.get("/billing/pricing", response_model=list[BillingPriceRecord])
+@router.get("/billing/pricing", response_model=BillingPriceEnvelope | list[BillingPriceRecord])
 def get_billing_pricing(
+    sku_name: str | None = Query(None, description="Filter by SKU name"),
+    limit: int | None = Query(None, ge=1, description="Maximum number of records to return"),
+    envelope: bool = Query(False, description="Return {total, records} instead of a bare list"),
     service: BillingIngestionService = Depends(get_billing_service),
-) -> list[BillingPriceRecord]:
-    """List published list prices from system.billing.list_prices."""
-    return service.list_price_records()
+) -> BillingPriceEnvelope | list[BillingPriceRecord]:
+    """List the ingested rate card (empty until an approved list_prices ingestion)."""
+    prices = service.list_price_records()
+    sku = _param(sku_name, None)
+    if sku:
+        prices = [p for p in prices if p.sku_name.upper() == str(sku).upper()]
+    total = len(prices)
+    lim = _param(limit, None)
+    if lim is not None:
+        prices = prices[: int(lim)]
+    if _param(envelope, False) is True:
+        return BillingPriceEnvelope(total=total, records=prices)
+    return prices
 
 
 @router.get("/billing/reconciliation", response_model=BillingReconciliationResponse)

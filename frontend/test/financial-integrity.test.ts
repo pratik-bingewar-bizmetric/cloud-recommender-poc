@@ -65,7 +65,6 @@ test("Dashboard no longer invents a trend from fixed multipliers or a synthetic 
 test("null, undefined and non-finite amounts render 'No data available', never $0.00", () => {
   for (const v of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
     assert.strictEqual(formatFinancialCurrency(v), NO_DATA_LABEL);
-    assert.strictEqual(formatFinancialCurrency(v, "INR"), NO_DATA_LABEL);
   }
   assert.strictEqual(NO_DATA_LABEL, "No data available");
 });
@@ -73,7 +72,7 @@ test("null, undefined and non-finite amounts render 'No data available', never $
 test("a confirmed real zero and real values still format normally", () => {
   assert.strictEqual(formatFinancialCurrency(0), "$0.00");
   assert.strictEqual(formatFinancialCurrency(12.5), "$12.50");
-  assert.strictEqual(formatFinancialCurrency(1, "INR"), "₹83");
+  assert.strictEqual(formatFinancialCurrency(1000), "$1,000.00"); // as reported, no FX
 });
 
 test("toFiniteNumber keeps null/empty/NaN as null and parses real strings", () => {
