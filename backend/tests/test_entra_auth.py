@@ -46,7 +46,7 @@ def make_token(
     sub: str = "user-12345",
     tid: str = TENANT_ID,
     roles: list[str] | None = None,
-    scopes: str = "Workload.Read Workload.Write",
+    scopes: str = "access_as_user Workload.Read Workload.Write",
     expires_in_seconds: int = 3600,
 ) -> str:
     """Helper to generate and cryptographically sign a test Entra ID JWT."""

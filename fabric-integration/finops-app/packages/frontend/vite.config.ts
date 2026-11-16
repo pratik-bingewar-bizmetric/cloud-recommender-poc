@@ -70,6 +70,12 @@ export default defineConfig({
       include: [/node_modules/],
     },
     rollupOptions: {
+      // Sign-in helper pages (MSAL v5 redirect bridge and popup relay) are separate entries.
+      input: {
+        main: resolve(projectRoot, 'index.html'),
+        redirect: resolve(projectRoot, 'redirect.html'),
+        'popup-relay': resolve(projectRoot, 'popup-relay.html'),
+      },
       plugins: [
         license({
           thirdParty: {

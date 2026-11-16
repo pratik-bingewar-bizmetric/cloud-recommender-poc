@@ -458,7 +458,7 @@ def _price_run(rows: list[list[Any]], **resp: Any) -> tuple[BillingIngestionServ
     billing = BillingIngestionService(sql_service=svc)
     q = build_list_prices_query(limit=PRICE_ROW_LIMIT)
     tok = svc.issue_approval_token(
-        query=q, warehouse_id=WH, approver_roles=["Admin"], max_rows=PRICE_ROW_LIMIT
+        query=q, warehouse_id=WH, approver_roles=["FinOpsAdmin"], max_rows=PRICE_ROW_LIMIT
     )
     request = _run_request(tok, source_table="system.billing.list_prices")
     return billing, billing.run_ingestion(request)
@@ -480,7 +480,9 @@ def test_c2_rate_card_at_its_bound_is_incomplete_and_flagged_on_the_summary(
     svc = _running_service(_api(_statement_response(PRICE_COLS, [_price_row(i) for i in range(3)])))
     billing = BillingIngestionService(sql_service=svc)
     q = bis.build_list_prices_query(limit=3)
-    tok = svc.issue_approval_token(query=q, warehouse_id=WH, approver_roles=["Admin"], max_rows=3)
+    tok = svc.issue_approval_token(
+        query=q, warehouse_id=WH, approver_roles=["FinOpsAdmin"], max_rows=3
+    )
     res = billing.run_ingestion(_run_request(tok, source_table="system.billing.list_prices"))
     assert res.status == "incomplete" and res.error_code == "ROW_LIMIT_REACHED"
     billing.ingest_records([_rec("p1", 1, sku_name="SKU_0")])
@@ -502,7 +504,7 @@ def test_token_row_limit_above_signed_max_rows_is_refused() -> None:
     tok = svc.issue_approval_token(
         query=q,
         warehouse_id=WH,
-        approver_roles=["Admin"],
+        approver_roles=["FinOpsAdmin"],
         max_rows=100,
         start_date="2026-11-01",
         end_date="2026-11-10",
@@ -525,7 +527,7 @@ def test_token_unbounded_statement_is_refused_at_execution() -> None:
     client = _FakeClient("RUNNING")
     svc = _sql(client)
     q = "SELECT record_id FROM system.billing.usage"
-    tok = svc.issue_approval_token(query=q, warehouse_id=WH, approver_roles=["Admin"])
+    tok = svc.issue_approval_token(query=q, warehouse_id=WH, approver_roles=["FinOpsAdmin"])
     with pytest.raises(ApprovalRequiredError):
         svc.execute_read_only_statement(q, is_approved=True, approval_token=tok)
     assert client.executed == []
@@ -570,7 +572,7 @@ def test_token_expired_is_refused() -> None:
     tok = svc.issue_approval_token(
         query=q,
         warehouse_id=WH,
-        approver_roles=["Admin"],
+        approver_roles=["FinOpsAdmin"],
         ttl_seconds=-5,
         max_rows=100,
         start_date="2026-11-01",

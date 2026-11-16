@@ -15,6 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.27.0",
     "@microsoft/rayfin-auth": "^1.36.0-alpha",
     "@microsoft/rayfin-auth-provider-fabric": "^1.36.0-alpha",
     "@microsoft/rayfin-client": "^1.36.0-alpha",

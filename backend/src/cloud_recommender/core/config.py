@@ -1,15 +1,81 @@
 """Application configuration management using Pydantic Settings."""
 
 import logging
+import os
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 
 import structlog
 from dotenv import dotenv_values
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+_GUID_PATTERN = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_INSECURE_SECRET_MARKERS: tuple[str, ...] = (
+    "insecure",
+    "default",
+    "placeholder",
+    "changeme",
+    "change-me",
+    "change_me",
+    "change-in-production",
+    "replace",
+    "your_",
+    "your-",
+    "xxx",
+    "example",
+    "{{secrets/",
+)
+MIN_PRODUCTION_SECRET_LENGTH = 32
+_LOCAL_ORIGIN_PATTERN = re.compile(
+    r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(/.*)?$", re.IGNORECASE
+)
+
+
+VALID_APP_ENVIRONMENTS: tuple[str, ...] = ("development", "testing", "staging", "production")
+# Environment variables set by hosting platforms. Development authentication is refused when any
+# of them is present, so a dev flag copied into a hosted deployment cannot take effect.
+HOSTED_RUNTIME_MARKERS: tuple[str, ...] = (
+    "CONTAINER_APP_NAME",
+    "WEBSITE_SITE_NAME",
+    "DATABRICKS_APP_PORT",
+    "KUBERNETES_SERVICE_HOST",
+    "FUNCTIONS_WORKER_RUNTIME",
+)
+
+
+def is_hosted_runtime() -> bool:
+    """Return True when the process appears to run on a managed hosting platform."""
+    return any(os.environ.get(marker) for marker in HOSTED_RUNTIME_MARKERS)
+
+
+class InsecureConfigurationError(RuntimeError):
+    """Raised at startup when production security settings are missing or unsafe.
+
+    Deliberately NOT a ``ValueError``: pydantic echoes ``input_value`` for ValueErrors raised in
+    validators, which would copy secret values into logs. Messages here name variables only.
+    """
+
+
+def is_insecure_secret(value: str | None) -> bool:
+    """Return True when a secret is missing, too short, low-entropy or a known placeholder."""
+    if value is None:
+        return True
+    cleaned = value.strip()
+    if len(cleaned) < MIN_PRODUCTION_SECRET_LENGTH or len(set(cleaned)) < 8:
+        return True
+    lowered = cleaned.lower()
+    return any(marker in lowered for marker in _INSECURE_SECRET_MARKERS)
+
+
+def is_local_origin(origin: str) -> bool:
+    """Return True for localhost / loopback CORS origins."""
+    return bool(_LOCAL_ORIGIN_PATTERN.match(origin.strip()))
 
 
 class Settings(BaseSettings):
@@ -17,8 +83,11 @@ class Settings(BaseSettings):
 
     # Application Core
     app_name: str = Field(default="cloud-recommender", description="Application service name")
+    # APP_ENV must be provided explicitly (enforced by ``require_explicit_environment``); the
+    # default exists only to satisfy typing and is never used to start the application.
     app_env: Literal["development", "testing", "staging", "production"] = Field(
-        default="development", description="Application runtime environment"
+        default="development",
+        description="Application runtime environment (must be set explicitly via APP_ENV).",
     )
     debug: bool = Field(default=False, description="Enable debug mode")
     api_host: str = Field(default="0.0.0.0", description="API server bind host")
@@ -48,18 +117,47 @@ class Settings(BaseSettings):
         description="Enable cryptographic Microsoft Entra ID JWT verification for protected API routes.",
     )
     entra_tenant_id: str | None = Field(
-        default="fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-        description="Target Microsoft Entra ID tenant GUID.",
+        default=None,
+        description="Target Microsoft Entra ID tenant GUID (no default; must be configured).",
     )
     entra_audience: str | None = Field(
         default=None,
         description="Expected audience (client ID or API URI) for incoming Entra ID JWTs.",
+    )
+    entra_required_scopes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["access_as_user"],
+        description=(
+            "Delegated scopes (`scp`) accepted for API access; a token needs at least one. "
+            "Tokens without `scp` (application tokens) need an application role instead."
+        ),
+    )
+    entra_allowed_client_ids: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "Approved calling applications (`azp`/`appid` claim GUIDs). Mandatory in production; "
+            "when non-empty, tokens from any other client are rejected with 403."
+        ),
     )
     entra_jwks_cache_ttl_hours: int = Field(
         default=24,
         ge=1,
         le=168,
         description="Cache time-to-live for Microsoft published JWKS public keys in hours.",
+    )
+
+    dev_auth_enabled: bool = Field(
+        default=False,
+        description=(
+            "Explicit opt-in local-development identity used ONLY when Entra auth is disabled "
+            "and a request carries no bearer token. Rejected when APP_ENV=production/staging."
+        ),
+    )
+    dev_auth_roles: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Application roles granted to the development identity (none by default; add "
+            "FinOpsAdmin locally to exercise restricted operations)."
+        ),
     )
 
     # Relational Database (PostgreSQL with asyncpg)
@@ -227,6 +325,28 @@ class Settings(BaseSettings):
     azure_client_id: str | None = Field(default=None)
     azure_client_secret: str | None = Field(default=None)
     azure_subscription_id: str | None = Field(default=None)
+    azure_authority_url: str = Field(
+        default="https://login.microsoftonline.com",
+        description="Microsoft Entra authority used for user-supplied service principal tokens.",
+    )
+    azure_live_session_ttl_seconds: int = Field(
+        default=3300,
+        ge=60,
+        le=3600,
+        description="Maximum lifetime of a live Azure connection session (also bounded by token).",
+    )
+    azure_live_max_connections_per_user: int = Field(
+        default=10, ge=1, le=100, description="Maximum active live Azure connections per user."
+    )
+    azure_live_connect_attempts_per_minute: int = Field(
+        default=5, ge=1, le=100, description="Connect/validate attempts per user per minute."
+    )
+    azure_live_max_resources: int = Field(
+        default=5000, ge=100, le=50000, description="Maximum resources/groups returned per call."
+    )
+    azure_live_request_timeout_seconds: int = Field(
+        default=30, ge=5, le=120, description="Timeout for Entra and Azure calls."
+    )
     azure_arm_base_url: str = Field(
         default="https://management.azure.com",
         description="Azure Resource Manager read-only endpoint.",
@@ -282,6 +402,12 @@ class Settings(BaseSettings):
         ),
     )
     pricing_cache_ttl_hours: int = Field(default=24, ge=1, le=168)
+    pricing_refresh_cooldown_seconds: int = Field(
+        default=900,
+        ge=0,
+        le=86400,
+        description="Minimum seconds between pricing refreshes per connection/subscription scope.",
+    )
 
     # File Ingestion Limits
     max_document_size_mb: int = Field(default=25, ge=1, le=100)
@@ -290,6 +416,43 @@ class Settings(BaseSettings):
     # Logging & Observability
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO")
     log_format: Literal["json", "console"] = Field(default="json")
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_explicit_environment(cls, data: Any) -> Any:
+        """Refuse to start unless APP_ENV is explicitly set to a known environment.
+
+        A missing/invalid value must never silently become "development". Only variable names
+        and the allowed set are reported, never other configuration values.
+        """
+        value = data.get("app_env") if isinstance(data, dict) else None
+        if not isinstance(value, str) or value.strip().lower() not in VALID_APP_ENVIRONMENTS:
+            raise InsecureConfigurationError(
+                "APP_ENV must be set explicitly to one of: "
+                + ", ".join(VALID_APP_ENVIRONMENTS)
+                + "."
+            )
+        return data
+
+    @field_validator("entra_required_scopes", "entra_allowed_client_ids", mode="before")
+    @classmethod
+    def split_entra_lists(cls, v: object) -> list[str]:
+        """Accept JSON arrays or comma/space separated strings for Entra list settings."""
+        import json
+
+        if isinstance(v, str):
+            text = v.strip()
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(i).strip() for i in parsed if str(i).strip()]
+                except ValueError:
+                    pass
+            return [i for i in re.split(r"[,\s]+", text) if i]
+        if isinstance(v, list):
+            return [str(i).strip() for i in v if str(i).strip()]
+        return []
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -328,6 +491,84 @@ class Settings(BaseSettings):
         elif v.startswith("postgresql://") and not v.startswith("postgresql+asyncpg://"):
             v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
         return v
+
+    @model_validator(mode="after")
+    def validate_security_configuration(self) -> "Settings":
+        """Construction-time consistency checks (apply to the API *and* operational scripts).
+
+        - Entra auth requires a tenant GUID and an audience in every environment.
+        - Development authentication is allowed only in development/testing and never on a
+          managed hosting platform.
+        Messages name variables only; values are never echoed.
+        """
+        problems: list[str] = []
+
+        if self.entra_auth_enabled:
+            if not self.entra_tenant_id or not _GUID_PATTERN.match(self.entra_tenant_id.strip()):
+                problems.append("ENTRA_TENANT_ID must be set to a valid tenant GUID")
+            if not self.entra_audience or not self.entra_audience.strip():
+                problems.append("ENTRA_AUDIENCE must be set when ENTRA_AUTH_ENABLED=true")
+
+        if self.dev_auth_enabled:
+            if self.app_env not in ("development", "testing"):
+                problems.append(
+                    "DEV_AUTH_ENABLED is only permitted when APP_ENV is development/testing"
+                )
+            if is_hosted_runtime():
+                problems.append("DEV_AUTH_ENABLED is not permitted on a managed hosting platform")
+
+        if problems:
+            raise InsecureConfigurationError(
+                "Insecure security configuration: " + "; ".join(problems) + "."
+            )
+        return self
+
+    def validate_for_serving(self) -> None:
+        """Enforce the web-server security requirements (called when the API app is built).
+
+        Operational scripts (migrations, audits) construct ``Settings`` without calling this, so
+        they need only their own configuration; the running API can never skip it because
+        ``create_app`` and the lifespan both invoke it.
+        """
+        if self.app_env != "production":
+            return
+        problems: list[str] = []
+        if not self.entra_auth_enabled:
+            problems.append("ENTRA_AUTH_ENABLED must be true in production")
+        if not self.entra_tenant_id or not _GUID_PATTERN.match(self.entra_tenant_id.strip()):
+            problems.append("ENTRA_TENANT_ID must be explicitly set to a valid tenant GUID")
+        if not self.entra_audience or not self.entra_audience.strip():
+            problems.append("ENTRA_AUDIENCE must be set in production")
+        if not self.entra_required_scopes:
+            problems.append("ENTRA_REQUIRED_SCOPES must contain at least one scope")
+        if not self.entra_allowed_client_ids:
+            problems.append("ENTRA_ALLOWED_CLIENT_IDS must list the approved client applications")
+        elif any(not _GUID_PATTERN.match(c) for c in self.entra_allowed_client_ids):
+            problems.append("ENTRA_ALLOWED_CLIENT_IDS must contain only GUIDs")
+        if is_insecure_secret(self.secret_key):
+            problems.append(
+                f"SECRET_KEY must be a non-default secret of at least "
+                f"{MIN_PRODUCTION_SECRET_LENGTH} characters"
+            )
+        if is_insecure_secret(self.finops_signing_secret):
+            problems.append(
+                f"FINOPS_SIGNING_SECRET must be a non-default secret of at least "
+                f"{MIN_PRODUCTION_SECRET_LENGTH} characters"
+            )
+        if "cors_origins" not in self.model_fields_set or not self.cors_origins:
+            problems.append("CORS_ORIGINS must be set explicitly in production")
+        elif any(is_local_origin(o) or o.strip() == "*" for o in self.cors_origins):
+            problems.append(
+                "CORS_ORIGINS must not contain localhost or wildcard origins in production"
+            )
+        elif any(not o.strip().lower().startswith("https://") for o in self.cors_origins):
+            problems.append("CORS_ORIGINS must use https:// origins in production")
+        if self.debug:
+            problems.append("DEBUG must be false in production")
+        if problems:
+            raise InsecureConfigurationError(
+                "Insecure security configuration: " + "; ".join(problems) + "."
+            )
 
     model_config = SettingsConfigDict(
         env_file=(".env", "backend/.env"),
@@ -376,6 +617,29 @@ def has_valid_sp_credentials(*values: str | None) -> bool:
 def get_settings() -> Settings:
     """Return cached application settings singleton."""
     return Settings()
+
+
+def get_operational_settings() -> Settings:
+    """Settings for operational scripts (migrations, audits).
+
+    Same construction-time safety checks (explicit APP_ENV, no dev auth, consistent Entra
+    settings) but NOT the web-server serving requirements, and it never alters authentication
+    behaviour of any running API. Scripts must not print values from this object.
+    """
+    return get_settings()
+
+
+def redact_connection_string(text: str, database_url: str | None = None) -> str:
+    """Remove credentials from DSN-like text before printing (``scheme://user:pw@host``)."""
+    redacted = re.sub(r"(://[^/\s:@]*):[^@\s/]*@", r"\1:***@", text)
+    if database_url:
+        from urllib.parse import unquote, urlparse
+
+        password = urlparse(database_url).password
+        if password:
+            for variant in {password, unquote(password)}:
+                redacted = redacted.replace(variant, "***")
+    return redacted
 
 
 def reload_settings() -> Settings:

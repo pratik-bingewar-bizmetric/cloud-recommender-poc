@@ -13,6 +13,7 @@ import threading
 from collections.abc import Generator
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -94,37 +95,29 @@ def test_rbac_server_derived_identity_authorized_roles(
         workspace_id="642006393507276",
     )
 
-    # FinOpsAdministrator succeeds
+    # FinOpsAdmin succeeds
     user_finops = AuthenticatedUser(
         sub="user-123",
         preferred_username="finops-lead@bizmetric.com",
-        roles=["FinOpsAdministrator"],
+        roles=["FinOpsAdmin"],
         is_authenticated=True,
     )
     resp1 = issue_approval_token(req, current_user=user_finops, service=service)
     assert resp1.status == "ISSUED"
     assert resp1.approver_sub == "finops-lead@bizmetric.com"
-    assert "FinOpsAdministrator" in resp1.approver_roles
+    assert "FinOpsAdmin" in resp1.approver_roles
 
-    # Admin succeeds
-    user_admin = AuthenticatedUser(
-        sub="admin-456",
-        preferred_username="admin@bizmetric.com",
-        roles=["Admin"],
-        is_authenticated=True,
-    )
-    resp2 = issue_approval_token(req, current_user=user_admin, service=service)
-    assert resp2.status == "ISSUED"
-
-    # PlatformAdministrator succeeds
-    user_platform = AuthenticatedUser(
-        sub="plat-789",
-        preferred_username="platform@bizmetric.com",
-        roles=["PlatformAdministrator"],
-        is_authenticated=True,
-    )
-    resp3 = issue_approval_token(req, current_user=user_platform, service=service)
-    assert resp3.status == "ISSUED"
+    # Retired administrator roles are rejected (single restricted role: FinOpsAdmin)
+    for retired_role in ("Admin", "FinOpsAdministrator", "PlatformAdministrator"):
+        retired_user = AuthenticatedUser(
+            sub="retired-1",
+            preferred_username="retired@bizmetric.com",
+            roles=[retired_role],
+            is_authenticated=True,
+        )
+        with pytest.raises(HTTPException) as excinfo:
+            issue_approval_token(req, current_user=retired_user, service=service)
+        assert excinfo.value.status_code == 403
 
 
 def test_rbac_unauthenticated_and_unauthorized_rejections(
@@ -171,11 +164,11 @@ def test_anti_spoofing_client_payload_ignored(
     """Verify that client-injected approver_sub or approver_roles in the payload cannot spoof privileges."""
     service = BillingIngestionService(sql_service=sql_service)
 
-    # A Viewer tries to supply approver_roles=["Admin", "FinOpsAdministrator"] in the request payload
+    # A Viewer tries to supply approver_roles=["Admin", "FinOpsAdmin"] in the request payload
     malicious_req = BillingApprovalTokenRequest(
         query="SELECT record_id FROM system.billing.usage LIMIT 10",
         approver_sub="spoofed-admin@bizmetric.com",
-        approver_roles=["FinOpsAdministrator", "Admin"],
+        approver_roles=["FinOpsAdmin", "Admin"],
     )
 
     actual_viewer = AuthenticatedUser(
@@ -200,7 +193,9 @@ def test_missing_signing_key_fails_closed() -> None:
     """Verify that if finops_signing_secret is missing, token issuance fails closed."""
     unconfigured_settings = Settings(
         app_name="cloud-recommender-test",
-        app_env="production",
+        # Service-level fail-closed check; production Settings now refuse to start without a secret.
+        app_env="staging",
+        dev_auth_enabled=False,
         finops_signing_secret=None,
     )
     unconfigured_service = DatabricksSqlService(
@@ -213,7 +208,7 @@ def test_missing_signing_key_fails_closed() -> None:
         unconfigured_service.issue_approval_token(
             query="SELECT * FROM system.billing.usage LIMIT 10",
             warehouse_id=unconfigured_service.warehouse_id,
-            approver_roles=["FinOpsAdministrator"],
+            approver_roles=["FinOpsAdmin"],
         )
     assert "finops_signing_secret' is not configured" in str(exc.value)
 
@@ -226,7 +221,7 @@ def test_key_rotation_verification(sql_service: DatabricksSqlService) -> None:
     token_k1 = sql_service.issue_approval_token(
         query=query,
         warehouse_id=sql_service.warehouse_id,
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
     )
     assert token_k1.startswith("v2:k1-2026:")
     assert sql_service.verify_approval_token(token_k1, query, sql_service.warehouse_id) is True
@@ -250,7 +245,7 @@ def test_canonical_payload_tamper_rejection(sql_service: DatabricksSqlService) -
         start_date="2026-10-01",
         end_date="2026-11-04",
         max_rows=500,
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
     )
 
     # 1. Correct parameters pass verification
@@ -394,7 +389,7 @@ def test_atomic_token_consumption_and_replay_prevention(
     token = sql_service.issue_approval_token(
         query=query,
         warehouse_id=sql_service.warehouse_id,
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         session=sqlite_session,
     )
 
@@ -432,7 +427,7 @@ def test_concurrent_token_consumption(
     token = sql_service.issue_approval_token(
         query=query,
         warehouse_id=sql_service.warehouse_id,
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         session=main_session,
     )
     main_session.close()

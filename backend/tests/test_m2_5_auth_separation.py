@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from security_fixtures import PRODUCTION_SECURITY
 
 from cloud_recommender.core.config import Settings
 from cloud_recommender.services.databricks.auth import (
@@ -89,7 +90,7 @@ def test_dev_without_cli_session_fails_closed_instead_of_using_sp() -> None:
 def test_production_without_sp_credentials_never_falls_back_to_azure_cli() -> None:
     provider = _cli()
     svc = DatabricksAuthService(
-        settings=_settings(app_env="production"), azure_cli_provider=provider
+        settings=_settings(app_env="production", **PRODUCTION_SECURITY), azure_cli_provider=provider
     )
     with patch("cloud_recommender.services.databricks.auth.WorkspaceClient") as ws:
         with pytest.raises(DatabricksAuthError, match="refusing silent fallback"):

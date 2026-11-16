@@ -9,6 +9,13 @@ os.environ.setdefault("FINOPS_SIGNING_KID", "k1-2026")
 # Tests opt in to labelled demo fixtures; production code fails closed when Azure auth is missing.
 os.environ.setdefault("ALLOW_DEMO_FIXTURES", "true")
 
+# APP_ENV must now be explicit (no silent "development" default).
+os.environ.setdefault("APP_ENV", "testing")
+# Explicit opt-in to the local-development identity (never available in production). The role set
+# (the single restricted role) mirrors what legacy suites expect; production/auth suites pass dev_auth_enabled=False explicitly.
+os.environ.setdefault("DEV_AUTH_ENABLED", "true")
+os.environ.setdefault("DEV_AUTH_ROLES", '["FinOpsAdmin"]')
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -33,6 +40,8 @@ def test_settings() -> Settings:
         allow_demo_fixtures=True,  # tests opt in to labelled fixtures; production fails closed
         finops_signing_secret="finops-test-signing-secret-2026-min-32-chars-long",
         finops_signing_kid="k1-2026",
+        dev_auth_enabled=True,
+        dev_auth_roles=["FinOpsAdmin"],
     )
 
 

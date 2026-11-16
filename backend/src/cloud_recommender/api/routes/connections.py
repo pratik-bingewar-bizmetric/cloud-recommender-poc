@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter, Depends, status
 
-from cloud_recommender.core.auth import require_roles
 from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.schemas.connections import (
     CloudConnection,
@@ -64,7 +63,6 @@ async def validate_connection(
     response_model=CloudConnection,
     status_code=status.HTTP_201_CREATED,
     summary="Register and validate a new cloud connection with safe server-side credentials",
-    dependencies=[Depends(require_roles("Admin", "FinOpsAdmin"))],
 )
 async def create_connection(
     request: CreateConnectionRequest,

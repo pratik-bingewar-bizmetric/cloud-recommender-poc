@@ -11,7 +11,12 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from cloud_recommender.core.auth import AuthenticatedUser, get_current_user
+from cloud_recommender.core.auth import (
+    RESTRICTED_ROLES,
+    AuthenticatedUser,
+    actor_for,
+    get_current_user,
+)
 from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.schemas.billing_ingestion import (
     BillingApprovalTokenRequest,
@@ -369,10 +374,14 @@ def record_decision_action(
     decision_id: str,
     req: RecommendationActionRequest,
     service: FinOpsAnalyticsService = Depends(get_finops_service),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> DecisionItem:
-    """Record an action (Approved, Deferred) on a recommendation with audit tracking."""
+    """Record an action (Approved, Deferred) on a recommendation, attributed to the caller."""
     return service.record_decision_action(
-        decision_id=decision_id, action=req.action, notes=req.notes
+        decision_id=decision_id,
+        action=req.action,
+        notes=req.notes,
+        actor=actor_for(current_user),
     )
 
 
@@ -424,13 +433,14 @@ def update_finops_anomaly_status(
     anomaly_id: str,
     payload: AnomalyStatusUpdateRequest,
     service: FinOpsAnalyticsService = Depends(get_finops_service),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Update anomaly investigation lifecycle status with audit tracking."""
     try:
         return service.update_anomaly_status(
             anomaly_id=anomaly_id,
             new_status=payload.status,
-            actor="finops.operator",
+            actor=actor_for(current_user),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -669,7 +679,7 @@ def issue_approval_token(
         )
 
     # 2. Enforce RBAC
-    allowed_roles = {"Admin", "FinOpsAdministrator", "PlatformAdministrator"}
+    allowed_roles = set(RESTRICTED_ROLES)
     caller_roles = getattr(current_user, "roles", []) or []
     if not any(r in allowed_roles for r in caller_roles):
         raise HTTPException(

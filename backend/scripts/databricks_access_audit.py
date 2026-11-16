@@ -21,7 +21,7 @@ import httpx
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError
 
-from cloud_recommender.core.config import get_settings
+from cloud_recommender.core.config import get_operational_settings
 from cloud_recommender.services.databricks.workspace_service import DatabricksWorkspaceService
 
 SAFE_CLAIMS = ("iss", "sub", "aud", "azp", "scope", "scp", "exp", "iat", "client_id")
@@ -225,7 +225,7 @@ def run(w: WorkspaceClient) -> dict[str, Any]:
 
 def main() -> None:
     conn_id, mode = sys.argv[1], (sys.argv[2] if len(sys.argv) > 2 else "sp")
-    settings = get_settings()
+    settings = get_operational_settings()
     conn = DatabricksWorkspaceService().get_connection(conn_id)
     if conn is None:
         sys.exit("unknown connection")

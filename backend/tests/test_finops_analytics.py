@@ -357,14 +357,20 @@ def test_scenario_simulator(service: FinOpsAnalyticsService) -> None:
 def test_decision_action_mutation_and_audit(service: FinOpsAnalyticsService) -> None:
     assert service.get_reports_audit().audit_events == []  # no seeded history
     updated = service.record_decision_action(
-        "rec-wh-autostop-05ed10a52697a344", "Approved", notes="Approved for test"
+        "rec-wh-autostop-05ed10a52697a344",
+        "Approved",
+        notes="Approved for test",
+        actor="analyst@contoso.net",
     )
     assert updated.status == "Approved"
     # Approval is a workflow state only: no savings are realized or executed
     assert updated.verified_realized_savings == 0.0
 
     reports = service.get_reports_audit()
-    assert any(a.event == "Recommendation marked Approved" for a in reports.audit_events)
+    assert any(
+        a.event == "Recommendation marked Approved" and a.actor == "analyst@contoso.net"
+        for a in reports.audit_events
+    )
 
 
 def test_settings_system_tables_readiness(service: FinOpsAnalyticsService) -> None:

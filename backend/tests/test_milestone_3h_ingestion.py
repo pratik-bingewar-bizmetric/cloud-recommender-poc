@@ -119,7 +119,7 @@ def test_hmac_approval_token_and_replay_prevention(sql_service: DatabricksSqlSer
         start_date="2026-10-01",
         end_date="2026-11-04",
         ttl_seconds=300,
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
     )
 
     # 1. Valid token verification passes
@@ -139,7 +139,7 @@ def test_hmac_approval_token_and_replay_prevention(sql_service: DatabricksSqlSer
         query=valid_query,
         warehouse_id=sql_service.warehouse_id,
         ttl_seconds=-10,  # Already expired
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
     )
     assert (
         sql_service.verify_approval_token(expired_token, valid_query, sql_service.warehouse_id)

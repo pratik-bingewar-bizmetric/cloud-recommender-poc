@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from cloud_recommender.core.config import Settings, get_settings
+from cloud_recommender.core.config import InsecureConfigurationError, Settings, get_settings
 
 
 def test_default_settings_values() -> None:
@@ -23,14 +23,15 @@ def test_custom_settings_override() -> None:
     """Verify settings can be overridden with valid inputs."""
     custom = Settings(
         app_name="custom-recommender",
-        app_env="production",
+        app_env="staging",  # production requires the hardened security settings (see test_security_hardening)
+        dev_auth_enabled=False,
         api_port=9000,
         debug=True,
         llm_provider="openai",
         fabric_enabled=True,
     )
     assert custom.app_name == "custom-recommender"
-    assert custom.app_env == "production"
+    assert custom.app_env == "staging"
     assert custom.api_port == 9000
     assert custom.debug is True
     assert custom.llm_provider == "openai"
@@ -57,7 +58,7 @@ def test_invalid_port_validation() -> None:
 
 def test_invalid_environment_validation() -> None:
     """Verify validation fails on unknown environment strings."""
-    with pytest.raises(ValidationError):
+    with pytest.raises(InsecureConfigurationError, match="APP_ENV"):
         Settings(app_env="invalid_env")  # type: ignore[arg-type]
 
 

@@ -6,15 +6,95 @@ from typing import Any
 
 import jwt
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from cloud_recommender.core.config import Settings, get_settings
+from cloud_recommender.core.config import Settings, get_settings, is_hosted_runtime
 
 logger = structlog.get_logger(__name__)
 
 security = HTTPBearer(auto_error=False)
+
+# --------------------------------------------------------------------------------------
+# Authorization model (simplified: authenticated user + restricted operations)
+#
+# Layers (all applied to every protected route through ``enforce_route_policy``):
+#   1. Authentication  - valid Entra JWT (401 otherwise).
+#   2. Client approval - ``azp``/``appid`` must be in ENTRA_ALLOWED_CLIENT_IDS when configured
+#                        (mandatory in production)                              -> 403.
+#   3. API access      - delegated (user) tokens need a required scope (``scp``, default
+#                        ``access_as_user``); application-only (daemon) tokens need the separate
+#                        application permission ``FinOpsDaemon`` and nothing else   -> 403.
+#   4. Operation class - see below                                              -> 403.
+#
+# Operation classes
+#   P  public        : health/catalog/root, excluded from the protected routers.
+#   U  user          : any authenticated *user* (delegated token): every GET, plus the explicit
+#                      non-GET list ``USER_NON_GET_ENDPOINTS``.
+#   R  restricted    : needs the single role ``FinOpsAdmin`` on a *user* token. Default for any
+#                      non-GET endpoint that is not explicitly classified (secure by default).
+#   D  daemon        : application tokens may call ONLY ``DAEMON_ALLOWED_ENDPOINTS`` (read-only
+#                      organization status endpoints). Daemon tokens never receive user or
+#                      restricted permissions, and restricted/human-approval operations are
+#                      unreachable for them.
+# Personal-connection (owner) operations are introduced with the persistent connection layer
+# (Stage B); until then the connection create/validate/configuration operations stay restricted.
+# A valid signature + audience alone never grants access.
+# --------------------------------------------------------------------------------------
+ROLE_FINOPS_ADMIN = "FinOpsAdmin"
+ROLE_FINOPS_DAEMON = "FinOpsDaemon"
+RESTRICTED_ROLES: tuple[str, ...] = (ROLE_FINOPS_ADMIN,)
+
+SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
+
+_ROUTES = "cloud_recommender.api.routes"
+
+# Class U: non-GET endpoints open to any authenticated user. Each one persists nothing that
+# affects other users beyond attributed audit records / advisory status, executes no SQL or
+# warehouse compute, and mutates no cloud resource. Keyed by "<module>.<function>".
+USER_NON_GET_ENDPOINTS: frozenset[str] = frozenset(
+    {
+        # read-only computations
+        f"{_ROUTES}.analysis.analyze_requirements",
+        f"{_ROUTES}.architecture.generate_architecture",
+        f"{_ROUTES}.finops.simulate_scenario",
+        f"{_ROUTES}.inventory.analyze_azure_subscription",
+        f"{_ROUTES}.inventory.analyze_gcp_project",
+        f"{_ROUTES}.inventory.compare_multi_cloud",
+        f"{_ROUTES}.monitoring.get_monitoring_overview",
+        f"{_ROUTES}.monitoring.get_resource_monitoring_detail",
+        f"{_ROUTES}.monitoring.search_monitoring_logs",
+        f"{_ROUTES}.monitoring.get_token_economics",
+        f"{_ROUTES}.pricing.simulate_costs",
+        # organization (Databricks) connectivity checks: REST only, no SQL, no compute
+        f"{_ROUTES}.databricks.test_databricks_connection",
+        f"{_ROUTES}.databricks.refresh_workspace_discovery",
+        f"{_ROUTES}.finops.validate_ingestion",
+        f"{_ROUTES}.finops.preview_ingestion",
+        # advisory records with actor attribution (zero-execution: nothing is applied)
+        f"{_ROUTES}.finops.record_decision_action",
+        f"{_ROUTES}.finops.update_finops_anomaly_status",
+        # shared price cache refresh, throttled by a cooldown (see core/refresh_guard.py)
+        f"{_ROUTES}.pricing.refresh_prices",
+        # live Azure connection (user-supplied service principal); ownership is enforced by the
+        # owner-bound session store (404 for another user's connection)
+        f"{_ROUTES}.azure_live.connect_azure",
+        f"{_ROUTES}.azure_live.validate_azure_connection",
+        f"{_ROUTES}.azure_live.disconnect_azure",
+    }
+)
+
+# Class D: the only endpoints an application-only (daemon) token may call. Read-only
+# organization status endpoints; no user data, no mutation, no restricted operation.
+DAEMON_ALLOWED_ENDPOINTS: frozenset[str] = frozenset(
+    {
+        f"{_ROUTES}.databricks.list_databricks_connections",
+        f"{_ROUTES}.databricks.get_workspace_health",
+        f"{_ROUTES}.finops.get_ingestion_status",
+        f"{_ROUTES}.finops.get_ingestion_runs",
+    }
+)
 
 
 class AuthenticatedUser(BaseModel):
@@ -36,6 +116,16 @@ class AuthenticatedUser(BaseModel):
     )
     is_authenticated: bool = Field(
         default=True, description="Whether the token was cryptographically verified"
+    )
+    client_id: str | None = Field(
+        default=None, description="Calling application (azp for v2 tokens, appid for v1 tokens)"
+    )
+    is_development_identity: bool = Field(
+        default=False, description="True only for the explicit local-development identity"
+    )
+    is_application_token: bool = Field(
+        default=False,
+        description="True for application-only (daemon) tokens, i.e. tokens without a `scp` claim",
     )
 
 
@@ -128,32 +218,40 @@ class EntraTokenValidator:
         )
 
     def validate_token(self, token: str) -> AuthenticatedUser:
-        """Cryptographically verify token signature, expiry, audience, and issuer."""
+        """Cryptographically verify token signature, expiry, not-before, audience, issuer, tenant.
+
+        Fails closed: a missing tenant or audience configuration rejects every token (401).
+        """
+        if not self.tenant_id or not self.audience or not self.valid_issuers:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "error_code": "AUTH_NOT_CONFIGURED",
+                    "message": (
+                        "Bearer tokens cannot be validated because ENTRA_TENANT_ID and "
+                        "ENTRA_AUDIENCE are not configured."
+                    ),
+                },
+            )
+
         public_key = self._get_signing_key(token)
-
-        decode_kwargs: dict[str, Any] = {
-            "algorithms": ["RS256"],
-            "options": {
-                "verify_signature": True,
-                "verify_exp": True,
-                "verify_nbf": True,
-                "verify_iat": True,
-                "verify_aud": bool(self.audience),
-                "verify_iss": bool(self.valid_issuers),
-            },
-        }
-
-        if self.audience:
-            decode_kwargs["audience"] = self.audience
-
-        if self.valid_issuers:
-            decode_kwargs["issuer"] = self.valid_issuers
 
         try:
             payload: dict[str, Any] = jwt.decode(
                 token,
                 key=public_key,
-                **decode_kwargs,
+                algorithms=["RS256"],
+                audience=self.audience,
+                issuer=self.valid_issuers,
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_nbf": True,
+                    "verify_iat": True,
+                    "verify_aud": True,
+                    "verify_iss": True,
+                    "require": ["exp", "nbf", "iss", "aud"],
+                },
             )
         except jwt.ExpiredSignatureError as exc:
             raise HTTPException(
@@ -171,6 +269,14 @@ class EntraTokenValidator:
                     "message": (
                         f"Token audience does not match configured backend audience: {exc}"
                     ),
+                },
+            ) from exc
+        except jwt.MissingRequiredClaimError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "error_code": "MALFORMED_TOKEN",
+                    "message": f"Token is missing a required claim: {exc.claim}.",
                 },
             ) from exc
         except jwt.InvalidIssuerError as exc:
@@ -200,13 +306,13 @@ class EntraTokenValidator:
 
         # Explicit tenant ID check for multi-tenant token isolation
         token_tid = payload.get("tid")
-        if self.tenant_id and token_tid and str(token_tid).lower() != self.tenant_id.lower():
+        if not token_tid or str(token_tid).lower() != self.tenant_id.lower():
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
                     "error_code": "INVALID_TENANT",
                     "message": (
-                        f"Token tenant '{token_tid}' does not match configured tenant '{self.tenant_id}'."
+                        "Token tenant does not match the configured Microsoft Entra tenant."
                     ),
                 },
             )
@@ -228,6 +334,8 @@ class EntraTokenValidator:
             scopes=scopes,
             raw_claims=payload,
             is_authenticated=True,
+            client_id=str(payload.get("azp") or payload.get("appid") or "") or None,
+            is_application_token=not scopes,
         )
 
 
@@ -243,24 +351,20 @@ def get_current_user(
     settings: Settings = Depends(get_settings),
     validator: EntraTokenValidator = Depends(get_token_validator),
 ) -> AuthenticatedUser:
-    """Extract and validate caller identity, enforcing Entra ID JWT verification when enabled."""
-    if not settings.entra_auth_enabled:
-        # If disabled (local dev / test), allow optional token parsing or fall back to dev identity
-        if credentials and credentials.credentials:
-            try:
-                return validator.validate_token(credentials.credentials)
-            except Exception:
-                pass
-        return AuthenticatedUser(
-            sub="local-dev-user",
-            name="Local FinOps Developer",
-            preferred_username="developer@local.internal",
-            roles=["Admin", "Reader", "CostManagementReader"],
-            is_authenticated=True,
-        )
+    """Resolve the caller identity.
 
-    # Entra authentication is strictly enabled
-    if not credentials or not credentials.credentials:
+    - A supplied bearer token is ALWAYS validated; an invalid token yields 401 in every mode
+      and is never downgraded to a development identity.
+    - Without a token: 401 when Entra auth is enabled. Only when Entra auth is disabled, the
+      environment is development/testing AND DEV_AUTH_ENABLED is set, a least-privilege
+      development identity is returned. Production can never reach that branch (the settings
+      validator rejects it at startup, and it is re-checked here).
+    """
+    token = credentials.credentials if credentials and credentials.credentials else None
+    if token:
+        return validator.validate_token(token)
+
+    if settings.entra_auth_enabled:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -270,15 +374,126 @@ def get_current_user(
                     "access this endpoint."
                 ),
             },
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return validator.validate_token(credentials.credentials)
+    if (
+        settings.dev_auth_enabled
+        and settings.app_env in ("development", "testing")
+        and not is_hosted_runtime()
+    ):
+        logger.warning("development_authentication_identity_used")
+        return AuthenticatedUser(
+            sub="local-dev-user",
+            name="Local FinOps Developer",
+            preferred_username="developer@local.internal",
+            roles=list(settings.dev_auth_roles),
+            is_authenticated=True,
+            is_development_identity=True,
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "error_code": "AUTHENTICATION_REQUIRED",
+            "message": (
+                "Authentication is required. Configure ENTRA_AUTH_ENABLED=true "
+                "(or DEV_AUTH_ENABLED=true for local development only)."
+            ),
+        },
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def require_authenticated_user(
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> AuthenticatedUser:
-    """Enforce that the caller is authenticated."""
+    """Enforce that the caller is authenticated (identity only; see ``require_api_access``)."""
+    return user
+
+
+def owner_key_for(user: AuthenticatedUser) -> str:
+    """Ownership key derived from the validated token: tenant + object id (never client input)."""
+    if user.is_development_identity:
+        return "dev:local-development"
+    return f"{user.tid or 'no-tenant'}:{user.oid or user.sub}"
+
+
+def actor_for(user: AuthenticatedUser) -> str:
+    """Stable audit identity derived from the validated token (never from request input)."""
+    if not isinstance(
+        user, AuthenticatedUser
+    ):  # route invoked directly, outside dependency injection
+        return "unattributed"
+    return user.preferred_username or user.name or user.oid or user.sub
+
+
+def _forbidden(error_code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"error_code": error_code, "message": message},
+    )
+
+
+def require_api_access(
+    user: AuthenticatedUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> AuthenticatedUser:
+    """Baseline authorization: approved client + scope (user tokens) or daemon permission."""
+    if user.is_development_identity:
+        return user
+
+    allowed_clients = {c.lower() for c in settings.entra_allowed_client_ids}
+    if allowed_clients and (user.client_id or "").lower() not in allowed_clients:
+        raise _forbidden(
+            "UNAPPROVED_CLIENT_APPLICATION",
+            "The calling application is not approved to use this API.",
+        )
+
+    if user.is_application_token:
+        if ROLE_FINOPS_DAEMON not in user.roles:
+            raise _forbidden(
+                "INSUFFICIENT_APPLICATION_PERMISSION",
+                "The application token does not carry the required application permission.",
+            )
+    elif not set(user.scopes) & set(settings.entra_required_scopes):
+        raise _forbidden(
+            "INSUFFICIENT_SCOPE",
+            "The token does not carry a required scope for this API.",
+        )
+    return user
+
+
+def _endpoint_id(request: Request) -> str | None:
+    endpoint = getattr(request.scope.get("route"), "endpoint", None)
+    if endpoint is None:
+        return None
+    return f"{endpoint.__module__}.{endpoint.__qualname__}"
+
+
+def enforce_route_policy(
+    request: Request,
+    user: AuthenticatedUser = Depends(require_api_access),
+) -> AuthenticatedUser:
+    """Router-level policy: operation class U / R for users, class D for daemon tokens."""
+    endpoint = _endpoint_id(request)
+
+    if user.is_application_token:
+        if endpoint not in DAEMON_ALLOWED_ENDPOINTS:
+            raise _forbidden(
+                "OPERATION_NOT_PERMITTED_FOR_APPLICATION",
+                "Application tokens may only call the designated read-only status endpoints.",
+            )
+        return user
+
+    if request.method in SAFE_METHODS or endpoint in USER_NON_GET_ENDPOINTS:
+        return user
+
+    if not set(user.roles) & set(RESTRICTED_ROLES):
+        raise _forbidden(
+            "INSUFFICIENT_PERMISSIONS",
+            f"This operation requires the application role {list(RESTRICTED_ROLES)}.",
+        )
     return user
 
 

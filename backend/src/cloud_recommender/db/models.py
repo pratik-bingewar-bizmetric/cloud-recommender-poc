@@ -1049,7 +1049,7 @@ class BillingApprovalTokenModel(Base):
         JSONType,
         default=list,
         nullable=False,
-        doc="Roles held by approver (must include Admin, FinOpsAdministrator, or PlatformAdministrator)",
+        doc="Roles held by approver (must include FinOpsAdmin)",
     )
     workspace_id: Mapped[str] = mapped_column(
         String(64),

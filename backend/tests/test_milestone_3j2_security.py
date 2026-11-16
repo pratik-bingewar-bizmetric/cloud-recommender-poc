@@ -1,7 +1,7 @@
 """Milestone 3J.2 Test Suite — Final Hardening, RBAC, Fail-Closed SQL & Durable Tokens.
 
 Verifies:
-1. Role-based token issuance (Admin, FinOpsAdministrator, PlatformAdministrator vs. unauthorized roles).
+1. Role-based token issuance (FinOpsAdmin only vs. all other roles).
 2. Fail-closed SQL validation:
    - Strict allowlist: only system.billing.usage and system.billing.list_prices.
    - Comments rejection (-- and /* */).
@@ -60,35 +60,27 @@ def sqlite_session() -> Generator[Session, None, None]:
 
 
 def test_rbac_token_issuance_allowed_roles(sql_service: DatabricksSqlService) -> None:
-    """Verify that FinOpsAdministrator, Admin, and PlatformAdministrator can issue tokens."""
+    """Verify that only FinOpsAdmin can issue tokens (Admin/PlatformAdministrator retired)."""
     query = "SELECT record_id FROM system.billing.usage LIMIT 5"
 
-    # 1. FinOpsAdministrator succeeds
+    # 1. FinOpsAdmin succeeds
     token1 = sql_service.issue_approval_token(
         query=query,
         warehouse_id=sql_service.warehouse_id,
         approver_sub="finops-lead@bizmetric.com",
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
     )
     assert token1 is not None and (token1.startswith("v2:") or len(token1.split(":")) == 7)
 
-    # 2. Admin succeeds
-    token2 = sql_service.issue_approval_token(
-        query=query,
-        warehouse_id=sql_service.warehouse_id,
-        approver_sub="admin@bizmetric.com",
-        approver_roles=["Admin"],
-    )
-    assert token2 is not None
-
-    # 3. PlatformAdministrator succeeds
-    token3 = sql_service.issue_approval_token(
-        query=query,
-        warehouse_id=sql_service.warehouse_id,
-        approver_sub="platform-eng@bizmetric.com",
-        approver_roles=["PlatformAdministrator"],
-    )
-    assert token3 is not None
+    # 2. Retired administrator roles are no longer accepted (single restricted role: FinOpsAdmin)
+    for retired_role in ("Admin", "FinOpsAdministrator", "PlatformAdministrator"):
+        with pytest.raises(PermissionError):
+            sql_service.issue_approval_token(
+                query=query,
+                warehouse_id=sql_service.warehouse_id,
+                approver_sub="retired-role@bizmetric.com",
+                approver_roles=[retired_role],
+            )
 
 
 def test_rbac_token_issuance_unauthorized_roles(sql_service: DatabricksSqlService) -> None:
@@ -211,7 +203,7 @@ def test_durable_token_persistence_and_cross_restart_replay(
         end_date="2026-11-04",
         ttl_seconds=600,
         approver_sub="finops-admin@bizmetric.com",
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         session=sqlite_session,
     )
 
@@ -273,7 +265,7 @@ def test_warehouse_startup_decoupled_from_ingestion(sql_service: DatabricksSqlSe
     token = sql_service.issue_approval_token(
         query=valid_query,
         warehouse_id=sql_service.warehouse_id,
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         max_rows=10,
         start_date="2026-10-01",
         end_date="2026-11-04",
@@ -310,13 +302,13 @@ def test_approval_token_api_endpoint(sql_service: DatabricksSqlService) -> None:
     """Verify POST /api/v1/finops/ingestion/approval-token behaves according to RBAC."""
     service = BillingIngestionService(sql_service=sql_service)
 
-    # Valid request with FinOpsAdministrator
+    # Valid request with FinOpsAdmin
     valid_req = BillingApprovalTokenRequest(
         query="SELECT * FROM system.billing.usage LIMIT 50",
         warehouse_id="05ed10a52697a344",
         workspace_id="642006393507276",
         approver_sub="lead-operator@bizmetric.com",
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         ttl_seconds=300,
     )
     resp = issue_approval_token(valid_req, service=service)
@@ -339,7 +331,7 @@ def test_approval_token_api_endpoint(sql_service: DatabricksSqlService) -> None:
     unsafe_req = BillingApprovalTokenRequest(
         query="SELECT * FROM system.billing.usage -- comment",
         approver_sub="lead-operator@bizmetric.com",
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
     )
     with pytest.raises(Exception) as exc:
         issue_approval_token(unsafe_req, service=service)

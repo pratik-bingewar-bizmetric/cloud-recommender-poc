@@ -417,11 +417,7 @@ class DatabricksSqlService:
         "system.billing.list_prices",
     }
 
-    ALLOWED_APPROVER_ROLES: set[str] = {
-        "Admin",
-        "FinOpsAdministrator",
-        "PlatformAdministrator",
-    }
+    ALLOWED_APPROVER_ROLES: set[str] = {"FinOpsAdmin"}
 
     def _get_signing_keys(self) -> dict[str, bytes]:
         """Retrieve active and rotated cryptographic HMAC signing keys mapped by kid.
@@ -1058,7 +1054,7 @@ class DatabricksSqlService:
             approval_req["approval_instructions"] = (
                 "Request a cryptographically signed authorization token via "
                 "POST /api/v1/finops/ingestion/approval-token using an authenticated "
-                "principal with FinOpsAdministrator, Admin, or PlatformAdministrator role."
+                "principal with the FinOpsAdmin role."
             )
             logger.info(
                 "databricks_sql_gated_approval_required",

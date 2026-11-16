@@ -393,7 +393,11 @@ class FinOpsAnalyticsService:
         }
 
     def record_decision_action(
-        self, decision_id: str, action: str, notes: str | None = None
+        self,
+        decision_id: str,
+        action: str,
+        notes: str | None = None,
+        actor: str = "unattributed",
     ) -> DecisionItem:
         """Update decision status and record audit entry."""
         self._action_overrides[decision_id] = {"status": action, "notes": notes}
@@ -405,7 +409,7 @@ class FinOpsAnalyticsService:
             0,
             AuditEventItem(
                 timestamp=now_str,
-                actor="pratik.bingewar",
+                actor=actor,
                 event=f"Recommendation marked {action}",
                 resource=updated.title[:30] + "...",
                 before="Pending",

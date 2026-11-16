@@ -22,6 +22,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from security_fixtures import PRODUCTION_SECURITY
 
 from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.main import create_app
@@ -201,6 +202,7 @@ def test_environment_separation_dev_vs_prod() -> None:
     # PROD: environment="production" requires SP credentials and fails closed if missing
     prod_settings_no_sp = Settings(
         app_env="production",
+        **PRODUCTION_SECURITY,
         databricks_client_id=None,
         databricks_client_secret=None,
     )
@@ -221,6 +223,7 @@ def test_environment_separation_dev_vs_prod() -> None:
     # PROD with SP credentials succeeds with oauth-m2m
     prod_settings_with_sp = Settings(
         app_env="production",
+        **PRODUCTION_SECURITY,
         databricks_client_id="prod-sp-id",
         databricks_client_secret="prod-sp-secret-val",
     )
@@ -267,6 +270,7 @@ def test_auth_service_settings_sp_precedence_over_azure_cli() -> None:
     """Verify valid Settings (.env) SP credentials lock auth_type='oauth-m2m' in production."""
     sp_settings = Settings(
         app_env="production",
+        **PRODUCTION_SECURITY,
         databricks_auth_type="oauth-m2m",
         databricks_client_id="test-sp-client-id-0001",
         databricks_client_secret="valid-runtime-secret-value",
@@ -606,12 +610,18 @@ def test_m1_auth_production_never_falls_back_to_personal_cli() -> None:
     """Verify production app_env never silently falls back to personal Azure CLI credentials."""
     prod_settings = Settings(
         app_env="production",
+        **PRODUCTION_SECURITY,
         databricks_auth_type="azure-cli",
         databricks_client_id=None,
         databricks_client_secret=None,
     )
     auth_service = DatabricksAuthService(settings=prod_settings)
-    with patch.dict("os.environ", {"DATABRICKS_CLIENT_ID": "", "DATABRICKS_CLIENT_SECRET": ""}):
+    # APP_ENV is now set explicitly for the whole test session ("testing"); the auth service reads
+    # it ahead of settings.app_env, so pin the production environment for this scenario.
+    with patch.dict(
+        "os.environ",
+        {"DATABRICKS_CLIENT_ID": "", "DATABRICKS_CLIENT_SECRET": "", "APP_ENV": "production"},
+    ):
         with pytest.raises(DatabricksAuthError) as exc:
             auth_service.create_workspace_client(
                 host="https://adb-7405608085231210.10.azuredatabricks.net",
@@ -776,7 +786,7 @@ def test_m1_sql_client_ignores_llm_mock_and_classifies_warehouse_errors() -> Non
     stopped_token = svc_stopped.issue_approval_token(
         query=stopped_sql,
         warehouse_id="wh-custom-prod-03",
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         max_rows=100,
     )
     with pytest.raises(WarehouseStoppedError):
@@ -818,7 +828,7 @@ def test_m1_sql_client_ignores_llm_mock_and_classifies_warehouse_errors() -> Non
     running_token = svc_running.issue_approval_token(
         query="SELECT * FROM system.billing.usage LIMIT 1",
         warehouse_id="wh-prod-override-99",
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         max_rows=1,
     )
     svc_running.execute_read_only_statement(

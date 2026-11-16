@@ -24,6 +24,7 @@ logger = structlog.get_logger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager handling startup and shutdown hooks."""
     settings = get_settings()
+    settings.validate_for_serving()
     setup_logging(settings)
 
     logger.info(
@@ -59,6 +60,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Create and configure a FastAPI application instance."""
     if settings is None:
         settings = get_settings()
+    # Web-server security requirements (not applied to operational scripts); never skippable.
+    settings.validate_for_serving()
+
+    # Interactive API documentation is a development aid: disabled entirely in production.
+    docs_enabled = settings.app_env != "production"
 
     app = FastAPI(
         title="Cloud Recommender API",
@@ -68,18 +74,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
         version=__version__,
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
     )
 
     # Configure CORS Middleware
+    # Production: only the verbs/headers the API actually uses (routes are GET/POST; the SPA sends
+    # a Bearer token and JSON). Development keeps permissive behaviour for local tooling.
+    is_production = settings.app_env == "production"
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "OPTIONS"] if is_production else ["*"],
+        allow_headers=["Authorization", "Content-Type", "Accept"] if is_production else ["*"],
     )
 
     # --------------------------------------------------------------------------
@@ -102,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "type": "http_error",
                 }
             },
+            headers=exc.headers,
         )
 
     @app.exception_handler(AzureAuthenticationRequired)
@@ -125,10 +135,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # Submitted values (``input``) and ``ctx`` are dropped: they can contain secrets such as
+        # a service principal client secret, and must never be logged or echoed back.
+        safe_errors = [
+            {k: v for k, v in error.items() if k not in ("input", "ctx", "url")}
+            for error in exc.errors()
+        ]
         logger.warning(
             "validation_error",
             path=request.url.path,
-            errors=exc.errors(),
+            errors=safe_errors,
         )
         return JSONResponse(
             status_code=422,
@@ -137,7 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "code": 422,
                     "message": "Request validation failed",
                     "type": "validation_error",
-                    "details": exc.errors(),
+                    "details": safe_errors,
                 }
             },
         )
@@ -180,7 +196,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "service": settings.app_name,
             "version": __version__,
             "status": "online",
-            "docs": "/docs",
+            "docs": "/docs" if docs_enabled else "disabled",
         }
 
     return app

@@ -81,7 +81,7 @@ def _issue(svc: DatabricksSqlService, handle: LedgerHandle) -> str:
         query=QUERY,
         warehouse_id=WH,
         approver_sub="op",
-        approver_roles=["Admin"],
+        approver_roles=["FinOpsAdmin"],
         max_rows=100,
         start_date="2026-11-01",
         end_date="2026-11-10",

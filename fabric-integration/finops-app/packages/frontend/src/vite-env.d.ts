@@ -13,6 +13,12 @@ interface ImportMetaEnv {
   readonly VITE_FABRIC_ITEM_ID?: string;
   /** Fabric portal base URL (e.g. https://app.fabric.microsoft.com/). */
   readonly VITE_FABRIC_PORTAL_URL?: string;
+  /** SPA app registration (client) ID used to acquire a backend-audience Entra token. */
+  readonly VITE_ENTRA_CLIENT_ID?: string;
+  /** Entra directory (tenant) ID. */
+  readonly VITE_ENTRA_TENANT_ID?: string;
+  /** Backend API scope, e.g. api://<backend-app-id>/access_as_user. */
+  readonly VITE_ENTRA_API_SCOPE?: string;
 }
 
 interface ImportMeta {

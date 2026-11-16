@@ -417,7 +417,7 @@ def _token(svc: DatabricksSqlService, query: str) -> str:
         query=query,
         warehouse_id=WH,
         approver_sub="op",
-        approver_roles=["FinOpsAdministrator"],
+        approver_roles=["FinOpsAdmin"],
         max_rows=statement_row_limit(query) or 1000,
         start_date=dates.group(1) if dates else "",
         end_date=dates.group(2) if dates else "",
@@ -583,7 +583,7 @@ def test_d7_async_ledger_persists_consumes_and_blocks_cross_restart_replay(
     svc = _sql()
     q = "SELECT record_id FROM system.billing.usage LIMIT 5"
     tok = svc.issue_approval_token(
-        query=q, warehouse_id=WH, approver_sub="op", approver_roles=["Admin"], session=handle
+        query=q, warehouse_id=WH, approver_sub="op", approver_roles=["FinOpsAdmin"], session=handle
     )
     row = sync.execute(select(BillingApprovalTokenModel)).scalar_one()
     assert row.is_consumed is False
@@ -604,12 +604,16 @@ def test_d7_ledger_failures_fail_closed(
     svc = _sql()
     q = "SELECT record_id FROM system.billing.usage LIMIT 5"
     tok = svc.issue_approval_token(
-        query=q, warehouse_id=WH, approver_sub="op", approver_roles=["Admin"], session=handle
+        query=q, warehouse_id=WH, approver_sub="op", approver_roles=["FinOpsAdmin"], session=handle
     )
     fake.fail = True
     with pytest.raises(ApprovalLedgerError):
         svc.issue_approval_token(
-            query=q, warehouse_id=WH, approver_sub="op", approver_roles=["Admin"], session=handle
+            query=q,
+            warehouse_id=WH,
+            approver_sub="op",
+            approver_roles=["FinOpsAdmin"],
+            session=handle,
         )
     assert svc.verify_approval_token(tok, q, WH, session=handle) is False
     assert _sql().consume_approval_token(tok, session=handle) is False
@@ -621,7 +625,7 @@ def test_d7_raw_async_session_is_rejected_not_silently_ignored() -> None:
     q = "SELECT record_id FROM system.billing.usage LIMIT 5"
     with pytest.raises(ApprovalLedgerError):
         svc.issue_approval_token(
-            query=q, warehouse_id=WH, approver_sub="op", approver_roles=["Admin"], session=raw
+            query=q, warehouse_id=WH, approver_sub="op", approver_roles=["FinOpsAdmin"], session=raw
         )
 
 
@@ -636,7 +640,7 @@ def test_d7_calling_the_ledger_on_the_event_loop_thread_is_refused(
             query="SELECT record_id FROM system.billing.usage LIMIT 5",
             warehouse_id=WH,
             approver_sub="op",
-            approver_roles=["Admin"],
+            approver_roles=["FinOpsAdmin"],
             session=handle,
         )
 
@@ -652,7 +656,7 @@ def test_d7_execution_consumes_through_the_ledger_after_the_state_check(
     svc = _sql(client)
     q = build_usage_query(WS, "2026-11-01", "2026-11-10", 100)
     tok = svc.issue_approval_token(
-        query=q, warehouse_id=WH, approver_sub="op", approver_roles=["Admin"], session=handle
+        query=q, warehouse_id=WH, approver_sub="op", approver_roles=["FinOpsAdmin"], session=handle
     )
     svc.execute_read_only_statement(q, is_approved=True, approval_token=tok, session=handle)
     sync.expire_all()
