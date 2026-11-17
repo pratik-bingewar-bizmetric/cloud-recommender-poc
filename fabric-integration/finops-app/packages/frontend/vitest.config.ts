@@ -18,6 +18,9 @@ export default defineConfig({
       },
     }),
   ],
+  define: {
+    __BUILD_INFO__: JSON.stringify({ commit: 'test', branch: 'test', dirty: false, builtAt: 'test' }),
+  },
   test: {
     environment: 'jsdom',
     setupFiles: ['src/test/setup.ts'],

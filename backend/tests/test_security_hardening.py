@@ -51,8 +51,6 @@ from cloud_recommender.main import create_app
 OTHER_TENANT_ID = "11111111-2222-3333-4444-555555555555"
 RESTRICTED_PATHS = [
     "/api/v1/configuration",
-    "/api/v1/connections",
-    "/api/v1/connections/validate",
     "/api/v1/finops/ingestion/run",
     "/api/v1/finops/ingestion/approval-token",
     "/api/v1/ingestion/c1/runs",
@@ -335,6 +333,8 @@ def minimal_production_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "DEBUG",
     ):
         monkeypatch.delenv(name, raising=False)
+    # Isolate from a developer's real .env (it may enable dev auth, which production rejects).
+    monkeypatch.setattr("cloud_recommender.core.config.default_env_files", lambda: ())
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://migrator:S3cretPw!@db.test:5432/app")
     get_settings.cache_clear()
@@ -355,6 +355,8 @@ def test_operational_settings_do_not_require_web_security() -> None:
 
 def test_operational_settings_still_require_explicit_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("APP_ENV", raising=False)
+    # No .env file supplies APP_ENV either (a developer's real .env would otherwise satisfy it).
+    monkeypatch.setattr("cloud_recommender.core.config.default_env_files", lambda: ())
     get_settings.cache_clear()
     try:
         with pytest.raises(InsecureConfigurationError, match="APP_ENV"):
@@ -638,7 +640,7 @@ async def test_user_operations_need_no_role(
 
 
 def test_user_operation_allow_list_is_explicit_and_small() -> None:
-    assert len(USER_NON_GET_ENDPOINTS) == 21
+    assert len(USER_NON_GET_ENDPOINTS) == 26
     assert RESTRICTED_ROLES == ("FinOpsAdmin",)
 
 
@@ -755,8 +757,12 @@ async def test_dev_identity_needs_finops_admin_for_restricted_operations(
 ) -> None:
     plain_app = build_app(dev_settings(), keys[1])
     admin_app = build_app(dev_settings(dev_auth_roles=["FinOpsAdmin"]), keys[1])
-    assert (await call(plain_app, "POST", "/api/v1/connections", json={})).status_code == 403
-    assert (await call(admin_app, "POST", "/api/v1/connections", json=[])).status_code == 422
+    assert (
+        await call(plain_app, "POST", "/api/v1/finops/ingestion/run", json={})
+    ).status_code == 403
+    assert (
+        await call(admin_app, "POST", "/api/v1/finops/ingestion/run", json=[])
+    ).status_code == 422
 
 
 @pytest.mark.asyncio

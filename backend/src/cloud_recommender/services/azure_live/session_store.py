@@ -65,9 +65,17 @@ class AzureSessionStore:
             del self._sessions[key]
 
     def create(
-        self, owner_key: str, tenant_id: str, client_id: str, token: AzureToken
+        self,
+        owner_key: str,
+        tenant_id: str,
+        client_id: str,
+        token: AzureToken,
+        connection_id: str | None = None,
     ) -> AzureSession:
+        """Register a token. ``connection_id`` is given for persisted connections (re-minted)."""
         self._purge()
+        if connection_id is not None:
+            self._sessions.pop(connection_id, None)  # replace the cached token
         owned = [s for s in self._sessions.values() if s.owner_key == owner_key]
         if len(owned) >= self.max_per_owner or len(self._sessions) >= MAX_SESSIONS_TOTAL:
             raise HTTPException(
@@ -79,7 +87,7 @@ class AzureSessionStore:
             )
         now = self._clock()
         session = AzureSession(
-            connection_id=secrets.token_urlsafe(24),
+            connection_id=connection_id or secrets.token_urlsafe(24),
             owner_key=owner_key,
             tenant_id=tenant_id,
             client_id=client_id,
@@ -100,6 +108,9 @@ class AzureSessionStore:
     def delete(self, connection_id: str, owner_key: str) -> None:
         self.get(connection_id, owner_key)
         del self._sessions[connection_id]
+
+    def discard(self, connection_id: str) -> None:
+        self._sessions.pop(connection_id, None)
 
     def clear(self) -> None:
         self._sessions.clear()

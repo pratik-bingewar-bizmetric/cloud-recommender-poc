@@ -80,6 +80,12 @@ USER_NON_GET_OPERATIONS = frozenset(
         ("POST", "/api/v1/azure/connections"),
         ("POST", "/api/v1/azure/connections/{connection_id}/validate"),
         ("DELETE", "/api/v1/azure/connections/{connection_id}"),
+        # owner-bound persistent connections
+        ("POST", "/api/v1/connections"),
+        ("POST", "/api/v1/connections/validate"),
+        ("POST", "/api/v1/connections/{connection_id}/validate"),
+        ("PATCH", "/api/v1/connections/{connection_id}"),
+        ("DELETE", "/api/v1/connections/{connection_id}"),
     }
 )
 
@@ -87,8 +93,6 @@ USER_NON_GET_OPERATIONS = frozenset(
 RESTRICTED_OPERATIONS = frozenset(
     {
         ("POST", "/api/v1/configuration"),
-        ("POST", "/api/v1/connections"),
-        ("POST", "/api/v1/connections/validate"),
         ("POST", "/api/v1/finops/ingestion/run"),
         ("POST", "/api/v1/finops/ingestion/approval-token"),
         ("POST", "/api/v1/ingestion/{connection_id}/runs"),
@@ -273,6 +277,11 @@ def test_classification_matches_application_lists() -> None:
             ("azure_live", "connect_azure"),
             ("azure_live", "validate_azure_connection"),
             ("azure_live", "disconnect_azure"),
+            ("connections", "create_connection"),
+            ("connections", "validate_connection"),
+            ("connections", "validate_owned_connection"),
+            ("connections", "update_connection"),
+            ("connections", "delete_connection"),
         ]
     }
     expected_daemon = {

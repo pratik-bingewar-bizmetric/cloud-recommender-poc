@@ -8,11 +8,13 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from cloud_recommender import __version__
 from cloud_recommender.api.routes.health import router as health_router
 from cloud_recommender.api.v1.router import api_v1_router
+from cloud_recommender.core.auth import describe_auth_mode
 from cloud_recommender.core.config import Settings, get_settings, setup_logging
 from cloud_recommender.db.session import close_db_engine
 from cloud_recommender.services.inventory.azure_inventory import AzureAuthenticationRequired
@@ -34,6 +36,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         version=__version__,
         debug=settings.debug,
     )
+    auth_mode, auth_hint = describe_auth_mode(settings)
+    if auth_mode == "none":
+        logger.warning("authentication_not_configured", auth_mode=auth_mode, hint=auth_hint)
+    else:
+        logger.info("authentication_mode", auth_mode=auth_mode, hint=auth_hint)
 
     refresher = None
     if settings.app_env != "testing" and settings.databricks_inventory_refresh_seconds > 0:
@@ -154,6 +161,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "message": "Request validation failed",
                     "type": "validation_error",
                     "details": safe_errors,
+                }
+            },
+        )
+
+    @app.exception_handler(SQLAlchemyError)
+    @app.exception_handler(ConnectionError)
+    async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Database problems are an explicit 503 with guidance, never a generic 500."""
+        logger.error("database_unavailable", path=request.url.path, error_type=type(exc).__name__)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": {
+                    "code": 503,
+                    "message": {
+                        "error_code": "DATABASE_UNAVAILABLE",
+                        "message": (
+                            "The application database is unavailable or not initialised "
+                            "(an administrator must apply the pending database migrations). "
+                            "Nothing was saved."
+                        ),
+                    },
+                    "type": "database_unavailable",
                 }
             },
         )

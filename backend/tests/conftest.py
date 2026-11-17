@@ -11,6 +11,12 @@ os.environ.setdefault("ALLOW_DEMO_FIXTURES", "true")
 
 # APP_ENV must now be explicit (no silent "development" default).
 os.environ.setdefault("APP_ENV", "testing")
+# Persistent connections: in-memory store and a throw-away test key (never a real secret).
+os.environ.setdefault("CONNECTION_STORE", "memory")
+os.environ.setdefault("CONNECTION_KEY_PROVIDER", "env")
+os.environ.setdefault(
+    "CONNECTION_ENCRYPTION_KEYS", '{"test-1": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}'
+)
 # Explicit opt-in to the local-development identity (never available in production). The role set
 # (the single restricted role) mirrors what legacy suites expect; production/auth suites pass dev_auth_enabled=False explicitly.
 os.environ.setdefault("DEV_AUTH_ENABLED", "true")

@@ -160,6 +160,32 @@ export function useAzureLiveConnection(api: AzureLiveApi = azureLiveApi) {
     [api, loadOverview],
   );
 
+  /**
+   * Open a SAVED connection (created earlier, stored encrypted by the backend). No secret is
+   * needed in the browser: the backend uses the stored credential for this user's connection.
+   */
+  const openSaved = useCallback(
+    async (connectionId: string, preferredSubscriptionId?: string) => {
+      setStatus("connecting");
+      setError(null);
+      try {
+        const response = await api.validate(connectionId);
+        credentialsRef.current = null; // nothing secret is held client-side for saved connections
+        setConnection(response.connection);
+        setSubscriptions(response.subscriptions);
+        setRequestedSubscription(null);
+        setValidation({ valid: response.valid, checkedAt: new Date().toISOString() });
+        setStatus("connected");
+        const target = preferredSubscriptionId ?? firstAccessible(response.subscriptions);
+        if (target) await loadOverview(response.connection.connection_id, target);
+      } catch (err) {
+        setStatus("disconnected");
+        setError(toUiError(err));
+      }
+    },
+    [api, loadOverview],
+  );
+
   const validate = useCallback(async () => {
     if (!connection) return;
     setError(null);
@@ -259,6 +285,7 @@ export function useAzureLiveConnection(api: AzureLiveApi = azureLiveApi) {
     metricValues,
     validation,
     connect,
+    openSaved,
     validate,
     fetchSubscriptions,
     selectSubscription,

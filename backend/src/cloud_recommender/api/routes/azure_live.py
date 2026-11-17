@@ -14,6 +14,11 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from cloud_recommender.api.connection_deps import (
+    get_azure_http_transport,
+    get_connection_manager,
+    get_session_store,
+)
 from cloud_recommender.core.auth import AuthenticatedUser, get_current_user, owner_key_for
 from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.schemas.azure_live import (
@@ -35,13 +40,14 @@ from cloud_recommender.services.azure_live.session_store import (
     AzureSession,
     AzureSessionStore,
     SlidingWindowLimiter,
-    azure_session_store,
     connect_attempt_limiter,
 )
 from cloud_recommender.services.azure_live.validation import (
+    is_guid,
     require_guid,
     require_resource_id,
 )
+from cloud_recommender.services.connections.connection_manager import ConnectionManager
 
 logger = structlog.get_logger(__name__)
 
@@ -51,18 +57,6 @@ _RESOURCE_GROUP = re.compile(r"^[A-Za-z0-9._()\-]{1,90}$")
 _METRIC_NAME = re.compile(r"^[A-Za-z0-9_./ ]{1,100}$")
 _INTERVALS = {"PT1M", "PT5M", "PT15M", "PT30M", "PT1H", "PT6H", "PT12H", "P1D"}
 _AGGREGATIONS = {"Average", "Minimum", "Maximum", "Total", "Count"}
-
-
-def get_azure_http_transport() -> httpx.AsyncBaseTransport | None:
-    """Transport override point (tests inject a mock; production uses the default)."""
-    return None
-
-
-def get_session_store(settings: Settings = Depends(get_settings)) -> AzureSessionStore:
-    azure_session_store.configure(
-        settings.azure_live_session_ttl_seconds, settings.azure_live_max_connections_per_user
-    )
-    return azure_session_store
 
 
 def get_attempt_limiter(settings: Settings = Depends(get_settings)) -> SlidingWindowLimiter:
@@ -80,14 +74,23 @@ def connection_info(session: AzureSession) -> AzureConnectionInfo:
     )
 
 
-def _owned_service(
+async def _owned_service(
     connection_id: str,
     user: AuthenticatedUser,
     settings: Settings,
     store: AzureSessionStore,
     transport: httpx.AsyncBaseTransport | None,
+    manager: ConnectionManager,
 ) -> AzureLiveDataService:
-    session = store.get(connection_id, owner_key_for(user))  # 404 for foreign/unknown/expired
+    """Resolve the caller's connection: an active session, or a saved (persistent) connection
+    whose stored credential is used to mint a fresh Azure token. 404 for anything not theirs."""
+    owner = owner_key_for(user)
+    try:
+        session = store.get(connection_id, owner)
+    except HTTPException as exc:
+        if exc.status_code != 404 or not is_guid(connection_id):
+            raise
+        session = await manager.activate_session(owner, connection_id)
     return AzureLiveDataService(session, settings, transport)
 
 
@@ -184,10 +187,11 @@ async def validate_azure_connection(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     limiter: Annotated[SlidingWindowLimiter, Depends(get_attempt_limiter)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
 ) -> ValidateResponse:
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     limiter.check(owner_key_for(user))
     subscriptions = await service.list_subscriptions()
     valid = subscriptions.state.value in ("accessible", "empty")
@@ -217,11 +221,11 @@ async def list_subscriptions(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
 ) -> DataDomain:
-    return await _owned_service(
-        connection_id, user, settings, store, transport
-    ).list_subscriptions()
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
+    return await service.list_subscriptions()
 
 
 @router.get(
@@ -233,10 +237,11 @@ async def list_resource_groups(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
 ) -> DataDomain:
     sub = require_guid(subscription_id, "subscription_id")
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     return await service.list_resource_groups(sub)
 
 
@@ -250,11 +255,12 @@ async def list_resources(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
     resource_group: Annotated[str | None, Query()] = None,
 ) -> ResourceListResponse:
     sub = require_guid(subscription_id, "subscription_id")
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     domain, breakdown = await service.list_resources(sub, _group(resource_group))
     return ResourceListResponse(resources=domain, type_breakdown=breakdown)
 
@@ -267,11 +273,12 @@ async def get_resource_detail(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
 ) -> DataDomain:
     sub = require_guid(subscription_id, "subscription_id")
     rid = require_resource_id(resource_id, sub)
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     return await service.get_resource(sub, rid)
 
 
@@ -286,11 +293,12 @@ async def get_metric_definitions(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
 ) -> DataDomain:
     sub = require_guid(subscription_id, "subscription_id")
     rid = require_resource_id(resource_id, sub)
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     return await service.metric_definitions(sub, rid)
 
 
@@ -305,6 +313,7 @@ async def get_metric_values(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
     hours: Annotated[int, Query(ge=1, le=168)] = 24,
     interval: Annotated[str, Query()] = "PT1H",
@@ -329,7 +338,7 @@ async def get_metric_values(
                 "message": "Unsupported interval or aggregation.",
             },
         )
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     domain = await service.metric_values(sub, rid, names, hours, interval, aggregation)
     return MetricValuesResponse(metrics=domain)
 
@@ -341,6 +350,7 @@ async def get_cost(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
     period: Annotated[str, Query()] = "month_to_date",
 ) -> DataDomain:
@@ -353,7 +363,7 @@ async def get_cost(
                 "message": f"period must be one of {sorted(COST_PERIODS)}.",
             },
         )
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     return await service.cost(sub, period)
 
 
@@ -366,9 +376,10 @@ async def get_overview(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     settings: Annotated[Settings, Depends(get_settings)],
     store: Annotated[AzureSessionStore, Depends(get_session_store)],
+    manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     transport: Annotated[httpx.AsyncBaseTransport | None, Depends(get_azure_http_transport)],
 ) -> OverviewResponse:
     """All dashboard domains for one subscription; each carries its own access state."""
     sub = require_guid(subscription_id, "subscription_id")
-    service = _owned_service(connection_id, user, settings, store, transport)
+    service = await _owned_service(connection_id, user, settings, store, transport, manager)
     return await service.overview(connection_info, sub)

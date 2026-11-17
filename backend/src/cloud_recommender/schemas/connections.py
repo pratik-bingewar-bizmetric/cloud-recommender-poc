@@ -1,9 +1,10 @@
 """Domain schemas and API contracts for cloud provider connections, authentication discovery, and verification."""
 
 from datetime import UTC, datetime
-from typing import Literal
+from enum import StrEnum
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from cloud_recommender.schemas.common import CloudProvider
 
@@ -18,6 +19,28 @@ ConnectionStatus = Literal[
     "scope_not_found",
     "simulation_fixture",
 ]
+
+
+class IntegrationState(StrEnum):
+    """State of ONE integration of a connection (authentication success never implies the rest)."""
+
+    CONNECTED = "connected"
+    PERMISSION_DENIED = "permission_denied"
+    NOT_CONFIGURED = "not_configured"
+    UNAVAILABLE = "unavailable"
+    ERROR = "error"
+
+
+class IntegrationStatus(BaseModel):
+    """Validation result for a single integration (ARM, cost, monitor, Databricks, Fabric)."""
+
+    integration: str = Field(
+        ..., description="resource_manager | cost_management | monitor | databricks | fabric"
+    )
+    state: IntegrationState
+    message: str | None = Field(default=None, description="Human-readable explanation.")
+    required_permission: str | None = Field(default=None, description="Role/permission to grant.")
+    details: dict[str, Any] = Field(default_factory=dict, description="Non-secret facts.")
 
 
 class CloudConnection(BaseModel):
@@ -54,6 +77,14 @@ class CloudConnection(BaseModel):
         default_factory=list,
         description="Explicit security and permission boundaries (strictly read-only).",
     )
+    ownership: Literal["owned", "organization"] = Field(
+        default="organization",
+        description="'owned' = created by the caller (persistent, encrypted); otherwise organization.",
+    )
+    integrations: list[IntegrationStatus] = Field(
+        default_factory=list, description="Per-integration validation results (owned connections)."
+    )
+    warnings: list[str] = Field(default_factory=list, description="Non-blocking findings.")
 
 
 class ValidateConnectionRequest(BaseModel):
@@ -100,6 +131,14 @@ class CreateConnectionRequest(BaseModel):
     """
 
     provider: CloudProvider = Field(..., description="Cloud provider (azure or gcp).")
+    auth_method: Literal["service_principal", "azure_cli", "managed_identity"] | None = Field(
+        default=None,
+        description=(
+            "Azure authentication method. Defaults to service_principal. azure_cli is local "
+            "development only; managed_identity needs an Azure-hosted backend identity. The "
+            "method is never switched silently."
+        ),
+    )
     name: str = Field(..., min_length=2, max_length=100, description="Friendly connection name.")
     scope_id: str = Field(
         ..., min_length=2, max_length=150, description="Subscription ID or GCP Project ID."
@@ -109,8 +148,19 @@ class CreateConnectionRequest(BaseModel):
     azure_client_id: str | None = Field(
         default=None, description="App / Service Principal Client ID (GUID)."
     )
-    azure_client_secret: str | None = Field(
-        default=None, description="Service Principal client secret."
+    azure_client_secret: SecretStr | None = Field(
+        default=None, description="Service Principal client secret (never stored in plaintext)."
+    )
+    # Optional integrations (non-secret configuration; the Azure credential is reused)
+    databricks_workspace_url: str | None = Field(
+        default=None,
+        description="Azure Databricks workspace URL (https://adb-....azuredatabricks.net).",
+    )
+    databricks_workspace_id: str | None = Field(
+        default=None, description="Databricks workspace ID."
+    )
+    fabric_workspace_id: str | None = Field(
+        default=None, description="Microsoft Fabric workspace GUID."
     )
     # GCP specific fields
     gcp_project_id: str | None = Field(default=None, description="GCP Project identifier.")
@@ -120,3 +170,17 @@ class CreateConnectionRequest(BaseModel):
     gcp_access_token: str | None = Field(
         default=None, description="Short-lived GCP OAuth2 access token."
     )
+
+
+class UpdateConnectionRequest(BaseModel):
+    """Edit / reconnect / rotate. Omitted fields are unchanged; the owner is never client-supplied."""
+
+    name: str | None = Field(default=None, min_length=2, max_length=100)
+    azure_client_id: str | None = None
+    azure_client_secret: SecretStr | None = Field(
+        default=None,
+        description="New client secret (credential rotation); revalidated before saving.",
+    )
+    databricks_workspace_url: str | None = None
+    databricks_workspace_id: str | None = None
+    fabric_workspace_id: str | None = None

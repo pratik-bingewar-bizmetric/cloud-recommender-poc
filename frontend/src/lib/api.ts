@@ -5,6 +5,7 @@ import {
   ApiErrorDetail,
   ArchitectureComponent,
   ClarifyingAnswer,
+  CloudConnection,
   CostSimulationResponse,
   LogSearchRequest,
   LogSearchResponse,
@@ -15,8 +16,11 @@ import {
   RequirementsAnalysisResponse,
   ResourceDetailMonitoringResponse,
   WorkloadAssumptions,
+  UpdateConnectionRequest,
   WorkloadProfile,
 } from "@/types";
+
+import { describeAuthFailure } from "./authErrors";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -67,9 +71,41 @@ async function handleResponse<T>(res: Response): Promise<T> {
     } catch {
       detail = { message: res.statusText };
     }
-    throw new ApiError(res.status, detail);
+    // 401/403 get an explicit, actionable explanation instead of a bare status.
+    throw new ApiError(res.status, detail, describeAuthFailure(res.status, detail.message) ?? undefined);
   }
   return res.json() as Promise<T>;
+}
+
+/** Edit / reconnect / rotate the credential of one of YOUR connections (validated before saving). */
+export async function updateConnection(
+  connectionId: string,
+  payload: UpdateConnectionRequest
+): Promise<CloudConnection> {
+  const res = await appFetch(`${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<CloudConnection>(res);
+}
+
+/** Re-validate one of your connections with its stored credential. */
+export async function revalidateConnection(connectionId: string): Promise<CloudConnection> {
+  const res = await appFetch(
+    `${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}/validate`,
+    { method: "POST", headers: { "Content-Type": "application/json" } }
+  );
+  return handleResponse<CloudConnection>(res);
+}
+
+/** Delete one of your connections and its stored credential. */
+export async function deleteConnection(connectionId: string): Promise<void> {
+  const res = await appFetch(`${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}`, {
+    method: "DELETE",
+  });
+  if (res.status === 204) return;
+  await handleResponse<unknown>(res);
 }
 
 export async function checkBackendHealth(): Promise<{ status: string }> {

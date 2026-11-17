@@ -1,3 +1,4 @@
+import { entraTokenService } from "@/services/entra-token.service";
 import {
   ApiErrorDetail,
   ArchitectureComponent,
@@ -164,7 +165,10 @@ export async function getAuthToken(): Promise<string | null> {
 }
 
 async function getHeaders(customHeaders?: Record<string, string>): Promise<Record<string, string> | undefined> {
-  const token = await getAuthToken();
+  // Calls to the FastAPI backend need a backend-audience Entra token. It is used when the user has
+  // signed in to the API (silent, no popup); otherwise the existing token behaviour is unchanged.
+  // (getAuthToken stays as-is because Fabric UDF calls use it with their own audience.)
+  const token = (await entraTokenService.getAccessTokenSilent()) ?? (await getAuthToken());
   if (!token && !customHeaders) {
     return undefined;
   }
@@ -568,10 +572,11 @@ export async function deleteConnection(
   if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
     return udfDeleteConnection(connectionId);
   }
-  const res = await fetch(`${API_BASE_URL}/connections/${connectionId}`, {
+  const res = await fetch(`${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}`, {
     method: "DELETE",
     headers: await getHeaders(),
   });
+  if (res.status === 204) return { deleted: true, connection_id: connectionId };
   return handleResponse<{ deleted: boolean; connection_id: string }>(res);
 }
 

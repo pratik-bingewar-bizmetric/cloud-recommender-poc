@@ -82,6 +82,12 @@ USER_NON_GET_ENDPOINTS: frozenset[str] = frozenset(
         f"{_ROUTES}.azure_live.connect_azure",
         f"{_ROUTES}.azure_live.validate_azure_connection",
         f"{_ROUTES}.azure_live.disconnect_azure",
+        # owner-bound persistent connections (ownership enforced by the repository: 404 otherwise)
+        f"{_ROUTES}.connections.create_connection",
+        f"{_ROUTES}.connections.validate_connection",
+        f"{_ROUTES}.connections.validate_owned_connection",
+        f"{_ROUTES}.connections.update_connection",
+        f"{_ROUTES}.connections.delete_connection",
     }
 )
 
@@ -410,6 +416,30 @@ def require_authenticated_user(
 ) -> AuthenticatedUser:
     """Enforce that the caller is authenticated (identity only; see ``require_api_access``)."""
     return user
+
+
+def describe_auth_mode(settings: Settings) -> tuple[str, str]:
+    """Return (mode, hint) describing how protected endpoints authenticate callers.
+
+    Modes: ``entra`` (bearer tokens required), ``development_identity`` (tokenless requests get
+    the local development identity) or ``none`` (every protected request returns 401 until
+    authentication is configured). Used for an actionable startup message; contains no secrets.
+    """
+    if settings.entra_auth_enabled:
+        return "entra", "Microsoft Entra bearer tokens are required."
+    if settings.dev_auth_enabled and settings.app_env in ("development", "testing"):
+        roles = ",".join(settings.dev_auth_roles) or "none"
+        return (
+            "development_identity",
+            f"Tokenless requests use the local development identity (roles: {roles}). "
+            "Local development only.",
+        )
+    return (
+        "none",
+        "Protected endpoints will return 401. For local development set DEV_AUTH_ENABLED=true "
+        '(and DEV_AUTH_ROLES=["FinOpsAdmin"] for restricted operations) in the .env file the '
+        "backend loads, or enable Entra authentication.",
+    )
 
 
 def owner_key_for(user: AuthenticatedUser) -> str:

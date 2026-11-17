@@ -353,31 +353,32 @@ async def test_require_roles_enforcement(
 
 
 @pytest.mark.asyncio
-async def test_create_connection_requires_admin_role_rejects_reader_403(
+async def test_create_connection_is_open_to_an_authenticated_user_not_to_anonymous_callers(
     app_with_entra: FastAPI,
     rsa_key_pair: tuple[rsa.RSAPrivateKey, rsa.RSAPublicKey],
 ) -> None:
-    """Verify POST /api/v1/connections rejects authenticated user with only Reader role (403)."""
+    """Connections are owner operations: any authenticated user may create their own (no admin
+    role); an anonymous caller is rejected. 422 = authorized, stopped by input validation."""
     priv, _ = rsa_key_pair
     reader_token = make_token(priv, roles=["Reader"])
-
     payload = {
         "provider": "azure",
         "name": "Production Subscription",
-        "tenant_id": TENANT_ID,
-        "subscription_id": "11111111-2222-3333-4444-555555555555",
-        "client_id": "test-client-id",
-        "client_secret": "test-secret-mock",
+        "scope_id": "11111111-2222-3333-4444-555555555555",
+        "azure_tenant_id": TENANT_ID,
+        "azure_client_id": "not-a-guid",
+        "azure_client_secret": "test-secret-mock",
     }
-
     transport = ASGITransport(app=app_with_entra)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
+        anonymous = await client.post("/api/v1/connections", json=payload)
+        user = await client.post(
             "/api/v1/connections",
             json=payload,
             headers={"Authorization": f"Bearer {reader_token}"},
         )
-
-    assert response.status_code == 403
-    detail = response.json()["error"]["message"]
-    assert detail["error_code"] == "INSUFFICIENT_PERMISSIONS"
+    assert anonymous.status_code == 401
+    assert (
+        user.status_code == 422
+    )  # authorized; the invalid client id is rejected before any cloud call
+    assert "test-secret-mock" not in user.text

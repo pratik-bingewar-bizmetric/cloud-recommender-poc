@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -1122,4 +1123,55 @@ class BillingApprovalTokenModel(Base):
         Index("ix_billing_approval_token_status", "is_consumed", "expires_at"),
         Index("ix_billing_approval_token_wh_qhash", "warehouse_id", "query_hash"),
         UniqueConstraint("nonce", name="uq_billing_approval_tokens_nonce"),
+    )
+
+
+class CloudConnectionModel(Base):
+    """Owner-bound persistent cloud connection with an encrypted credential.
+
+    ``owner_tid``/``owner_oid`` come from the validated application token (never from the request).
+    The client secret is stored only as AES-256-GCM ciphertext (``secret_ciphertext``) whose AAD
+    binds it to this row id and the owner; the plaintext never reaches the database or any API.
+    """
+
+    __tablename__ = "cloud_connections"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID, primary_key=True, default=uuid.uuid4)
+    owner_tid: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_oid: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    auth_method: Mapped[str] = mapped_column(String(40), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    scope_id: Mapped[str] = mapped_column(String(150), nullable=False)
+    credential_tenant_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    credential_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    secret_ciphertext: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    secret_kid: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    integration_config: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=dict
+    )
+    last_validation: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="connected")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    last_validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_tid",
+            "owner_oid",
+            "provider",
+            "scope_id",
+            "credential_client_id",
+            name="uq_cloud_connection_owner_scope",
+        ),
+        Index("ix_cloud_connections_owner", "owner_tid", "owner_oid"),
     )

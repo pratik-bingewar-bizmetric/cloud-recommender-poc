@@ -4,13 +4,14 @@ import logging
 import os
 import re
 import sys
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import structlog
 from dotenv import dotenv_values
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _GUID_PATTERN = re.compile(
@@ -93,7 +94,10 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", description="API server bind host")
     api_port: int = Field(default=8000, ge=1, le=65535, description="API server bind port")
     api_v1_str: str = Field(default="/api/v1", description="Prefix for version 1 API routes")
-    cors_origins: list[str] = Field(
+    # NoDecode: App Service settings are plain strings (comma separated); validate_cors_origins
+    # accepts both a JSON array and a comma list. Without it pydantic-settings JSON-decodes first
+    # and the app crashes at startup on a comma-separated CORS_ORIGINS.
+    cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
             "http://localhost:3000",
             "http://127.0.0.1:3000",
@@ -152,7 +156,7 @@ class Settings(BaseSettings):
             "and a request carries no bearer token. Rejected when APP_ENV=production/staging."
         ),
     )
-    dev_auth_roles: list[str] = Field(
+    dev_auth_roles: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         description=(
             "Application roles granted to the development identity (none by default; add "
@@ -329,6 +333,44 @@ class Settings(BaseSettings):
         default="https://login.microsoftonline.com",
         description="Microsoft Entra authority used for user-supplied service principal tokens.",
     )
+    # Persistent connections (owner-bound, encrypted credentials)
+    connection_store: Literal["database", "memory"] = Field(
+        default="database",
+        description=(
+            "Where connections are persisted. 'memory' is NOT persistent and is accepted only in "
+            "development/testing."
+        ),
+    )
+    connection_key_provider: Literal["keyvault", "env", "local_file"] = Field(
+        default="local_file",
+        description="Source of the credential encryption key (local_file: development only).",
+    )
+    connection_encryption_keys: SecretStr | None = Field(
+        default=None,
+        description='JSON key ring {"kid": "<base64 32 bytes>"} for the "env" provider.',
+    )
+    connection_active_key_id: str | None = Field(
+        default=None, description="Active key id (env provider)."
+    )
+    key_vault_url: str | None = Field(
+        default=None, description="Key Vault URL (keyvault provider)."
+    )
+    connection_key_secret_name: str | None = Field(
+        default=None, description="Key Vault secret holding the base64 master key."
+    )
+    connections_max_per_user: int = Field(default=10, ge=1, le=100)
+    connection_reject_write_principals: bool = Field(
+        default=True,
+        description="Reject service principals that hold write permissions (read-only policy).",
+    )
+    allow_cli_connections: bool = Field(
+        default=False,
+        description="Allow the explicit, local-development-only Azure CLI authentication method.",
+    )
+    fabric_api_base_url: str = Field(
+        default="https://api.fabric.microsoft.com",
+        description="Microsoft Fabric REST API base URL used for workspace/lakehouse/capacity checks.",
+    )
     azure_live_session_ttl_seconds: int = Field(
         default=3300,
         ge=60,
@@ -434,10 +476,16 @@ class Settings(BaseSettings):
             )
         return data
 
-    @field_validator("entra_required_scopes", "entra_allowed_client_ids", mode="before")
+    @field_validator(
+        "entra_required_scopes", "entra_allowed_client_ids", "dev_auth_roles", mode="before"
+    )
     @classmethod
     def split_entra_lists(cls, v: object) -> list[str]:
-        """Accept JSON arrays or comma/space separated strings for Entra list settings."""
+        """Accept JSON arrays or comma/space separated strings for list settings.
+
+        Needed because ``reload_settings()`` passes raw ``.env`` strings as init arguments (no
+        JSON decoding), and so a plain ``FinOpsAdmin`` works in the process environment too.
+        """
         import json
 
         if isinstance(v, str):
@@ -565,6 +613,18 @@ class Settings(BaseSettings):
             problems.append("CORS_ORIGINS must use https:// origins in production")
         if self.debug:
             problems.append("DEBUG must be false in production")
+        if self.connection_store != "database":
+            problems.append("CONNECTION_STORE must be 'database' in production")
+        if self.connection_key_provider == "local_file":
+            problems.append("CONNECTION_KEY_PROVIDER must be 'keyvault' or 'env' in production")
+        elif self.connection_key_provider == "keyvault" and not (
+            self.key_vault_url and self.connection_key_secret_name
+        ):
+            problems.append("KEY_VAULT_URL and CONNECTION_KEY_SECRET_NAME must be set")
+        elif self.connection_key_provider == "env" and not self.connection_encryption_keys:
+            problems.append("CONNECTION_ENCRYPTION_KEYS must be set")
+        if self.allow_cli_connections:
+            problems.append("ALLOW_CLI_CONNECTIONS must be false in production")
         if problems:
             raise InsecureConfigurationError(
                 "Insecure security configuration: " + "; ".join(problems) + "."
@@ -613,10 +673,34 @@ def has_valid_sp_credentials(*values: str | None) -> bool:
     return bool(values) and all(is_valid_credential_value(val) for val in values)
 
 
+# backend/src/cloud_recommender/core/config.py -> parents[4] is the repository root.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def default_env_files(
+    repo_root: Path = _REPO_ROOT, environ: Mapping[str, str] | None = None
+) -> tuple[str, ...]:
+    """Absolute ``.env`` files the application should load, independent of the launch directory.
+
+    The documented launchers start the API from ``backend/`` (``startup.bat``) while the project's
+    ``.env`` lives in the repository root, so cwd-relative lookup silently skipped it. Priority is
+    the same as before (later files override earlier ones): repo-root ``.env``, then
+    ``backend/.env``. Returns ``()`` when ``APP_ENV=testing`` so automated tests never read a
+    developer's real ``.env``; callers then fall back to the class default.
+    """
+    env = os.environ if environ is None else environ
+    if env.get("APP_ENV", "").strip().lower() == "testing":
+        return ()
+    candidates = (repo_root / ".env", repo_root / "backend" / ".env")
+    return tuple(str(p) for p in candidates if p.is_file())
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Return cached application settings singleton."""
-    return Settings()
+    files = default_env_files()
+    # `_env_file` is a pydantic-settings init option that the type stubs do not declare.
+    return Settings(_env_file=files) if files else Settings()  # type: ignore[call-arg]
 
 
 def get_operational_settings() -> Settings:
@@ -645,7 +729,7 @@ def redact_connection_string(text: str, database_url: str | None = None) -> str:
 def reload_settings() -> Settings:
     """Re-read .env files fresh and return an updated Settings instance without mutating os.environ."""
     env_overrides: dict[str, str] = {}
-    for env_path in (Path("backend/.env"), Path(".env")):
+    for env_path in (_REPO_ROOT / "backend" / ".env", _REPO_ROOT / ".env"):
         if env_path.is_file():
             for key, val in dotenv_values(env_path).items():
                 if key and val is not None:

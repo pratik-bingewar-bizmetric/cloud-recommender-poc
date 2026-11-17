@@ -152,3 +152,6 @@ terraform.rc
 
 
 frontend/.next-*/
+
+# Local development credential-encryption key (generated on first use)
+backend/.local-secrets/

@@ -19,7 +19,12 @@ interface ImportMetaEnv {
   readonly VITE_ENTRA_TENANT_ID?: string;
   /** Backend API scope, e.g. api://<backend-app-id>/access_as_user. */
   readonly VITE_ENTRA_API_SCOPE?: string;
+  /** Fabric/Power BI delegated scope for User Data Functions (default: .../powerbi/api/user_impersonation). */
+  readonly VITE_FABRIC_UDF_SCOPE?: string;
 }
+
+/** Injected at build time by vite.config.ts (see src/lib/build-info.ts). */
+declare const __BUILD_INFO__: { commit: string; builtAt: string; branch: string; dirty: boolean };
 
 interface ImportMeta {
   readonly env: ImportMetaEnv;

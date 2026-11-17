@@ -1,8 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { missingEntraSettings } from "@/config/entra";
 import { useAzureLiveConnection } from "@/hooks/use-azure-live-connection";
+import { listConnections } from "@/lib/api";
 import type { AzureLiveApi } from "@/lib/azureLiveApi";
+import type { CloudConnection } from "@/types";
 import { entraTokenService, type BackendTokenService } from "@/services/entra-token.service";
 import { AzureConnectionForm } from "./AzureConnectionForm";
 import { AzureLiveDashboard } from "./AzureLiveDashboard";
@@ -10,15 +12,35 @@ import { AzureLiveDashboard } from "./AzureLiveDashboard";
 interface Props {
   api?: AzureLiveApi;
   tokenService?: BackendTokenService;
+  /** Loads the caller's saved connections (defaults to GET /connections). */
+  listSaved?: () => Promise<CloudConnection[]>;
 }
 
 /** Live Azure connection screen: API sign-in -> service principal -> real Azure data. */
-export function AzureLiveView({ api, tokenService = entraTokenService }: Props) {
+export function AzureLiveView({ api, tokenService = entraTokenService, listSaved = listConnections }: Props) {
   const live = useAzureLiveConnection(api);
   const [apiSignedIn, setApiSignedIn] = useState<boolean>(() => tokenService.getAccount() !== null);
   const [signInError, setSignInError] = useState<string | null>(null);
 
   const configured = tokenService.isConfigured();
+  const [saved, setSaved] = useState<CloudConnection[]>([]);
+  const [savedError, setSavedError] = useState<string | null>(null);
+
+  // Saved (persistent) connections survive refreshes, restarts and logout/login.
+  useEffect(() => {
+    if (!configured || !apiSignedIn) return;
+    let cancelled = false;
+    listSaved()
+      .then((items) => {
+        if (!cancelled) setSaved(items.filter((c) => c.ownership === "owned" && c.provider === "azure"));
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setSavedError(err instanceof Error ? err.message : "Saved connections could not be loaded.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, apiSignedIn, listSaved]);
 
   const signIn = useCallback(async () => {
     setSignInError(null);
@@ -76,6 +98,33 @@ export function AzureLiveView({ api, tokenService = entraTokenService }: Props) 
               {live.error.category && <span> ({live.error.category.replace(/_/g, " ")})</span>}
               {live.error.retryAfterSeconds && <span> Retry in {live.error.retryAfterSeconds}s.</span>}
             </div>
+          )}
+
+          {live.status !== "connected" && (saved.length > 0 || savedError) && (
+            <section className="rounded-xl border border-slate-200 bg-white p-4 space-y-2" aria-label="Saved connections">
+              <h2 className="text-sm font-bold text-navy-900">Saved connections</h2>
+              {savedError && (
+                <p className="text-xs text-red-700" role="alert">
+                  {savedError}
+                </p>
+              )}
+              <ul className="divide-y divide-slate-100">
+                {saved.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between py-1.5 text-xs">
+                    <span>
+                      <strong>{c.name}</strong> <code className="text-slate-500">{c.scope_id}</code>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => live.openSaved(c.id, c.scope_id)}
+                      className="rounded-md border border-slate-300 px-3 py-1 font-semibold text-navy-800"
+                    >
+                      Open
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
 
           <AzureConnectionForm

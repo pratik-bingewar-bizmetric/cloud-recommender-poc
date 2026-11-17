@@ -36,6 +36,11 @@ PRODUCTION_SECURITY: dict[str, Any] = {
     "secret_key": STRONG_SECRET,
     "finops_signing_secret": STRONG_SIGNING,
     "cors_origins": [FABRIC_ORIGIN],
+    # persistent connections: production uses the database store and a managed encryption key
+    "connection_store": "database",
+    "connection_key_provider": "env",
+    "connection_encryption_keys": '{"test-1": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}',
+    "connection_active_key_id": "test-1",
 }
 
 

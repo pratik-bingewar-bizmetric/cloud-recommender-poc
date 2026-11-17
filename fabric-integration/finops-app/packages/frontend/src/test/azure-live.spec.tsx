@@ -129,6 +129,7 @@ const signedIn: BackendTokenService = {
   getAccount: () => ({ homeAccountId: "h", environment: "e", tenantId: TENANT, username: "u@x", localAccountId: "l" }),
   signIn: vi.fn(),
   getAccessToken: vi.fn().mockResolvedValue("backend-token"),
+  getAccessTokenSilent: vi.fn().mockResolvedValue("backend-token"),
   signOut: vi.fn(),
 };
 
@@ -257,6 +258,23 @@ describe("Azure live connection UI", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Refresh$/ }));
     await waitFor(() => expect(api.connect).toHaveBeenCalledTimes(2));
     expect((api.connect as ReturnType<typeof vi.fn>).mock.calls[1][0].clientSecret).toBe(SECRET);
+  });
+
+  it("lists saved connections and opens one without asking for any secret", async () => {
+    const api = fakeApi();
+    const saved = [
+      { id: "saved-1", name: "Production", provider: "azure", scope_id: SUB, display_name: "Production", auth_method: "service_principal", status: "connected", is_live: true, capabilities: [], access_limitations: [], ownership: "owned" },
+      { id: "org-1", name: "Org", provider: "azure", scope_id: "x", display_name: "Org", auth_method: "x", status: "connected", is_live: true, capabilities: [], access_limitations: [], ownership: "organization" },
+    ] as never;
+    render(<AzureLiveView api={api} tokenService={signedIn} listSaved={async () => saved} />);
+    const section = await screen.findByLabelText("Saved connections");
+    expect(within(section).getByText("Production")).toBeInTheDocument();
+    expect(within(section).queryByText("Org")).toBeNull(); // only your own saved connections
+    fireEvent.click(within(section).getByRole("button", { name: "Open" }));
+    await screen.findByTestId("azure-live-dashboard");
+    expect(api.validate).toHaveBeenCalledWith("saved-1");
+    expect(api.connect).not.toHaveBeenCalled(); // no credentials re-entered or sent
+    expect(api.overview).toHaveBeenCalledWith(connection.connection_id, SUB);
   });
 
   it("asks the user to sign in to the API first when no Entra account exists", () => {

@@ -751,6 +751,26 @@ export interface CloudConnection {
   capabilities: string[];
   access_limitations: string[];
   service_integrations?: ServiceIntegration[];
+  /** 'owned' = created by the signed-in user (persistent, encrypted); otherwise organization. */
+  ownership?: "owned" | "organization";
+  /** Per-integration validation results (owned connections). */
+  integrations?: ConnectionIntegrationStatus[];
+  warnings?: string[];
+}
+
+export type IntegrationState =
+  | "connected"
+  | "permission_denied"
+  | "not_configured"
+  | "unavailable"
+  | "error";
+
+export interface ConnectionIntegrationStatus {
+  integration: "resource_manager" | "cost_management" | "monitor" | "databricks" | "fabric" | string;
+  state: IntegrationState;
+  message?: string | null;
+  required_permission?: string | null;
+  details?: Record<string, unknown>;
 }
 
 export interface ValidateConnectionRequest {
@@ -777,14 +797,29 @@ export interface ConnectionValidationResponse {
 
 export interface CreateConnectionRequest {
   provider: CloudProvider;
+  /** Azure: service_principal (default), azure_cli (local development only) or managed_identity. */
+  auth_method?: "service_principal" | "azure_cli" | "managed_identity";
   name: string;
   scope_id: string;
   azure_tenant_id?: string;
   azure_client_id?: string;
   azure_client_secret?: string;
+  databricks_workspace_url?: string;
+  databricks_workspace_id?: string;
+  fabric_workspace_id?: string;
   gcp_project_id?: string;
   gcp_service_account_json?: string;
   gcp_access_token?: string;
+}
+
+export interface UpdateConnectionRequest {
+  name?: string;
+  azure_client_id?: string;
+  /** New client secret (rotation). Validated before it replaces the stored one. */
+  azure_client_secret?: string;
+  databricks_workspace_url?: string;
+  databricks_workspace_id?: string;
+  fabric_workspace_id?: string;
 }
 
 export type TokenDataStatus =

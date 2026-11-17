@@ -392,7 +392,7 @@ class ConnectionService:
             data = {
                 "grant_type": "client_credentials",
                 "client_id": req.azure_client_id.strip(),
-                "client_secret": req.azure_client_secret.strip(),
+                "client_secret": req.azure_client_secret.get_secret_value().strip(),
                 "scope": "https://management.azure.com/.default",
             }
             try:

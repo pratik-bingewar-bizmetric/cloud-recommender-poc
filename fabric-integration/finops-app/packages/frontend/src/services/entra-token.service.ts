@@ -16,7 +16,14 @@ import {
   type Configuration,
 } from "@azure/msal-browser";
 
-import { getEntraConfig, missingEntraSettings, type EntraConfig } from "@/config/entra";
+import {
+  getEntraConfig,
+  getFabricEntraConfig,
+  missingEntraSettings,
+  missingFabricEntraSettings,
+  type EntraConfig,
+  type FabricEntraConfig,
+} from "@/config/entra";
 
 export class EntraNotConfiguredError extends Error {
   readonly missing: string[];
@@ -33,11 +40,24 @@ export interface BackendTokenService {
   signIn(): Promise<AccountInfo>;
   /** A fresh backend-audience access token (silent when possible, popup otherwise). */
   getAccessToken(): Promise<string>;
+  /**
+   * Backend-audience token WITHOUT any user interaction: null when Entra is not configured, nobody
+   * is signed in to the backend API, or a silent refresh is not possible. Never opens a popup.
+   */
+  getAccessTokenSilent(): Promise<string | null>;
   getAccount(): AccountInfo | null;
   signOut(): Promise<void>;
+  /**
+   * Delegated Entra token for the FABRIC audience (Power BI service), used for Fabric User Data
+   * Functions. Silent first (optionally forcing a refresh), interactive popup only when required.
+   * It is a different token from the backend-audience one and never shared with it.
+   */
+  getFabricAccessToken(options?: { forceRefresh?: boolean }): Promise<string>;
 }
 
-export function buildMsalConfiguration(config: EntraConfig): Configuration {
+export function buildMsalConfiguration(
+  config: Pick<EntraConfig, "clientId" | "tenantId" | "redirectUri" | "popupRelayUri">
+): Configuration {
   return {
     auth: {
       clientId: config.clientId,
@@ -57,6 +77,7 @@ export function createEntraTokenService(
   configProvider: () => EntraConfig | null = () => getEntraConfig(),
   clientFactory: (cfg: Configuration) => PublicClientApplication = (cfg) =>
     new PublicClientApplication(cfg),
+  fabricConfigProvider: () => FabricEntraConfig | null = () => getFabricEntraConfig(),
 ): BackendTokenService {
   let client: PublicClientApplication | null = null;
   let initialized: Promise<PublicClientApplication> | null = null;
@@ -67,9 +88,12 @@ export function createEntraTokenService(
     return config;
   };
 
+  // One MSAL instance serves both tokens (no duplicate initialisation). The Fabric token only
+  // needs client + tenant, so it works even when the backend API scope is not configured.
   const getClient = (): Promise<PublicClientApplication> => {
     if (!initialized) {
-      const config = requireConfig();
+      const config = configProvider() ?? fabricConfigProvider();
+      if (!config) throw new EntraNotConfiguredError(missingEntraSettings());
       client = clientFactory(buildMsalConfiguration(config));
       initialized = client.initialize().then(() => client as PublicClientApplication);
     }
@@ -98,6 +122,42 @@ export function createEntraTokenService(
       try {
         if (!account) throw new InteractionRequiredAuthError("no_account", "No signed-in account");
         const result = await pca.acquireTokenSilent({ ...request, account });
+        return result.accessToken;
+      } catch (error) {
+        if (!(error instanceof InteractionRequiredAuthError)) throw error;
+        const result = await pca.acquireTokenPopup(request);
+        pca.setActiveAccount(result.account);
+        return result.accessToken;
+      }
+    },
+
+    async getAccessTokenSilent() {
+      const config = configProvider();
+      if (!config) return null;
+      try {
+        const pca = await getClient();
+        const account = activeAccount(pca);
+        if (!account) return null;
+        const result = await pca.acquireTokenSilent({ scopes: [config.apiScope], account });
+        return result.accessToken;
+      } catch {
+        return null; // caller falls back to its existing behaviour; the backend answers 401
+      }
+    },
+
+    async getFabricAccessToken(options = {}) {
+      const fabric = fabricConfigProvider();
+      if (!fabric) throw new EntraNotConfiguredError(missingFabricEntraSettings());
+      const pca = await getClient();
+      const account = activeAccount(pca);
+      const request = { scopes: [fabric.fabricUdfScope] };
+      try {
+        if (!account) throw new InteractionRequiredAuthError("no_account", "No signed-in account");
+        const result = await pca.acquireTokenSilent({
+          ...request,
+          account,
+          forceRefresh: options.forceRefresh ?? false,
+        });
         return result.accessToken;
       } catch (error) {
         if (!(error instanceof InteractionRequiredAuthError)) throw error;
