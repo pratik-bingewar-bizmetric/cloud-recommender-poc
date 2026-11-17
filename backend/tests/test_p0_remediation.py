@@ -48,6 +48,7 @@ from tests.test_m7_1_billing_hardening import (
     _statement_response,
     _token,
 )
+from tests.thread_utils import run_concurrently
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "cloud_recommender"
 COLS = ["record_id", "workspace_id", "sku_name", "usage_unit", "usage_quantity"]
@@ -613,18 +614,10 @@ def test_token_single_use_exactly_one_winner_under_thread_contention() -> None:
     svc = _sql()
     q = build_usage_query(WS, "2026-11-01", "2026-11-10", 100)
     tok = _token(svc, q)
-    barrier = threading.Barrier(16)
-    results: list[bool] = []
-
-    def worker() -> None:
-        barrier.wait()
-        results.append(svc.consume_approval_token(tok))
-
-    threads = [threading.Thread(target=worker) for _ in range(16)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    # Bounded: barrier and joins have timeouts, so a stuck worker fails the test with a clear
+    # message instead of hanging the suite. The original assertion is unchanged.
+    results = run_concurrently(16, lambda: svc.consume_approval_token(tok))
+    assert len(results) == 16
     assert results.count(True) == 1 and results.count(False) == 15
 
 

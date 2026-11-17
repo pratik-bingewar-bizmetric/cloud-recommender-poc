@@ -9,7 +9,6 @@ Forensic verification covering:
 6. Zero-execution decoupling (warehouse STOPPED preservation).
 """
 
-import threading
 from collections.abc import Generator
 
 import pytest
@@ -29,6 +28,7 @@ from cloud_recommender.services.databricks.sql_client import (
     DatabricksSqlService,
     MutationProhibitedError,
 )
+from tests.thread_utils import run_concurrently
 
 
 @pytest.fixture
@@ -432,23 +432,15 @@ def test_concurrent_token_consumption(
     )
     main_session.close()
 
-    results: list[bool] = []
-    lock = threading.Lock()
-
-    def try_consume():
+    def try_consume() -> bool:
         thread_session = sqlite_session_factory()
         try:
-            res = sql_service.consume_approval_token(token, session=thread_session)
-            with lock:
-                results.append(res)
+            return sql_service.consume_approval_token(token, session=thread_session)
         finally:
             thread_session.close()
 
-    threads = [threading.Thread(target=try_consume) for _ in range(5)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    # Bounded (barrier/join timeouts): a stuck worker fails the test instead of hanging the suite.
+    results = run_concurrently(5, try_consume)
 
     # Exactly ONE thread must succeed; the other four must be rejected
     assert results.count(True) == 1

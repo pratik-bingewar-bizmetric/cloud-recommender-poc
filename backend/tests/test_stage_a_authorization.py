@@ -207,8 +207,10 @@ async def test_concurrent_pricing_refresh_is_rejected_with_409(
 ) -> None:
     app, engine = pricing_app(keys, pricing_refresh_cooldown_seconds=0)
     gate = asyncio.Event()
+    entered = asyncio.Event()
 
     async def slow_refresh(*_a: Any, **_k: Any) -> object:
+        entered.set()
         await gate.wait()
         return object()
 
@@ -216,10 +218,17 @@ async def test_concurrent_pricing_refresh_is_rejected_with_409(
     token = make_token(keys[0], roles=[])
 
     first = asyncio.create_task(post(app, "/api/v1/pricing/refresh", token, json={}))
-    await asyncio.sleep(0.2)  # first request is now inside the guarded section
-    second = await post(app, "/api/v1/pricing/refresh", token, json={})
-    gate.set()
-    first_response = await first
+    try:
+        # Wait until the first request is PROVABLY inside the guarded section. A fixed sleep let
+        # the second request win on a loaded machine; it then blocked on ``gate`` forever (the
+        # gate is only released after the second request returns) and hung the whole suite.
+        await asyncio.wait_for(entered.wait(), timeout=30)
+        second = await asyncio.wait_for(
+            post(app, "/api/v1/pricing/refresh", token, json={}), timeout=30
+        )
+    finally:
+        gate.set()  # always release the first request, even if an assertion above fails
+    first_response = await asyncio.wait_for(first, timeout=30)
 
     assert second.status_code == 409
     assert second.json()["error"]["message"]["error_code"] == "REFRESH_IN_PROGRESS"
