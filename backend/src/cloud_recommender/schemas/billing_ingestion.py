@@ -348,6 +348,16 @@ class BillingSummaryResponse(BaseModel):
     pricing_coverage_pct: float | None = Field(
         default=None, description="Share of DBU rows with a matched price (0-100)"
     )
+    record_coverage_pct: float | None = Field(
+        default=None, description="Share of DBU records with a matched price (0-100)"
+    )
+    quantity_coverage_pct: float | None = Field(
+        default=None, description="Share of metered DBU quantity with a matched price (0-100)"
+    )
+    matched_dbu: float | None = Field(default=None, description="Metered DBU with matched price")
+    unmatched_dbu: float | None = Field(
+        default=None, description="Metered DBU without matched price"
+    )
     cost_basis: CostBasis = Field(
         default=CostBasis.METERED_USAGE,
         description="LIST_PRICE_ESTIMATE when total_spend_verified is present, else METERED_USAGE",
@@ -400,6 +410,16 @@ class BillingReconciliationResponse(BaseModel):
     gross_dbu: float | None = None
     retraction_dbu: float | None = None
     net_dbu: float | None = None
+    matched_dbu: float | None = Field(default=None, description="Metered DBU with matched price")
+    unmatched_dbu: float | None = Field(
+        default=None, description="Metered DBU without matched price"
+    )
+    record_coverage_pct: float | None = Field(
+        default=None, description="Share of usage records with matched pricing (0-100)"
+    )
+    quantity_coverage_pct: float | None = Field(
+        default=None, description="Share of metered DBU quantity with matched pricing (0-100)"
+    )
     gross_cost: float | None = None
     net_cost: float | None = None
     currency: str | None = Field(default=None)

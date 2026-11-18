@@ -1,4 +1,10 @@
 import { entraTokenService } from "@/services/entra-token.service";
+import type {
+  LogoutResponse,
+  ServicePrincipalConnectRequest,
+  ServicePrincipalConnectResponse,
+  SessionInfoResponse,
+} from "@/types/auth";
 import {
   ApiErrorDetail,
   ArchitectureComponent,
@@ -15,16 +21,6 @@ import {
   WorkloadAssumptions,
   WorkloadProfile,
 } from "@/types";
-import {
-  getFabricUdfBaseUrl,
-  udfListConnections,
-  udfCreateConnection,
-  udfValidateConnection,
-  udfDeleteConnection,
-  udfGetInventory,
-  udfGetCostWaste,
-  udfGetTokenEconomics,
-} from "./fabric-udf-client";
 
 export function getApiBaseUrl(): string {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
@@ -34,10 +30,7 @@ export function getApiBaseUrl(): string {
   if (import.meta.env.DEV) {
     return "http://localhost:8000/api/v1";
   }
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    return getFabricUdfBaseUrl();
-  }
-  // In production, do not silently fallback to localhost
+  // In production, do not silently fallback to localhost or UDF
   throw new ApiError(
     503,
     {
@@ -73,8 +66,49 @@ export class ApiError extends Error {
 export type TokenProvider = () => Promise<string | null> | string | null;
 let currentTokenProvider: TokenProvider | null = null;
 let isResolvingToken = false;
+let activeSessionToken: string | null = null;
 
 const ENTRA_TOKEN_STORAGE_KEY = "fabric_entra_access_token";
+const SESSION_TOKEN_STORAGE_KEY = "finops_session_token";
+
+/**
+ * Persist or clear the active Service Principal application session token.
+ */
+export function setSessionToken(token: string | null): void {
+  activeSessionToken = token && token.trim() ? token.trim() : null;
+  if (typeof window !== "undefined") {
+    try {
+      if (activeSessionToken) {
+        sessionStorage.setItem(SESSION_TOKEN_STORAGE_KEY, activeSessionToken);
+      } else {
+        sessionStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+      }
+    } catch {
+      // Storage access restricted
+    }
+  }
+}
+
+/**
+ * Retrieve the active Service Principal application session token from memory or session storage.
+ */
+export function getSessionToken(): string | null {
+  if (activeSessionToken) {
+    return activeSessionToken;
+  }
+  if (typeof window !== "undefined") {
+    try {
+      const stored = sessionStorage.getItem(SESSION_TOKEN_STORAGE_KEY);
+      if (stored && stored.trim()) {
+        activeSessionToken = stored.trim();
+        return activeSessionToken;
+      }
+    } catch {
+      // Storage access restricted
+    }
+  }
+  return null;
+}
 
 /**
  * Persist or clear a delegated Microsoft Entra ID access token for Fabric UDF REST calls.
@@ -165,10 +199,8 @@ export async function getAuthToken(): Promise<string | null> {
 }
 
 async function getHeaders(customHeaders?: Record<string, string>): Promise<Record<string, string> | undefined> {
-  // Calls to the FastAPI backend need a backend-audience Entra token. It is used when the user has
-  // signed in to the API (silent, no popup); otherwise the existing token behaviour is unchanged.
-  // (getAuthToken stays as-is because Fabric UDF calls use it with their own audience.)
-  const token = (await entraTokenService.getAccessTokenSilent()) ?? (await getAuthToken());
+  const sessionToken = getSessionToken();
+  const token = sessionToken ?? (await entraTokenService.getAccessTokenSilent()) ?? (await getAuthToken());
   if (!token && !customHeaders) {
     return undefined;
   }
@@ -180,6 +212,25 @@ async function getHeaders(customHeaders?: Record<string, string>): Promise<Recor
     headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
+}
+
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return init !== undefined ? await fetch(input, init) : await fetch(input);
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(
+      503,
+      {
+        error_code: "BACKEND_UNAVAILABLE",
+        message:
+          err instanceof Error
+            ? `FinOps backend is unreachable: ${err.message}`
+            : "FinOps backend is unreachable.",
+      },
+      "FinOps backend is unreachable. Please verify network connectivity."
+    );
+  }
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -202,9 +253,26 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
     let defaultMsg = `API request failed with status ${res.status}`;
     if (res.status === 401) {
-      defaultMsg = detail.message || "Authentication required. Please sign in via Microsoft Entra ID.";
+      defaultMsg =
+        detail.message ||
+        "Authentication required. Please sign in via Microsoft Entra ID to access FinOps services.";
     } else if (res.status === 403) {
-      defaultMsg = detail.message || "Access denied. Insufficient role permissions for this operation.";
+      defaultMsg =
+        detail.message ||
+        "Access denied. You do not have the required permissions (e.g. FinOpsAdmin) for this operation.";
+    } else if (res.status === 503) {
+      if (detail.error_code === "DATABASE_UNAVAILABLE") {
+        defaultMsg =
+          "The application database is temporarily unavailable or not initialized. Cloud connection persistence is paused until migrations are applied.";
+      } else if (detail.error_code === "BACKEND_UNAVAILABLE") {
+        defaultMsg = detail.message || "FinOps backend is unreachable. Please verify connectivity.";
+      } else {
+        defaultMsg = detail.message || "The requested FinOps service is temporarily unavailable.";
+      }
+    } else if (res.status === 404) {
+      defaultMsg = detail.message || "The requested resource was not found.";
+    } else if (res.status === 422) {
+      defaultMsg = detail.message || "Request validation failed. Please check input parameters.";
     }
 
     throw new ApiError(res.status, detail, defaultMsg);
@@ -213,11 +281,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export async function checkBackendHealth(): Promise<{ status: string }> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    return { status: "healthy" };
-  }
   const rootUrl = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
-  const res = await fetch(`${rootUrl}/health`);
+  const res = await apiFetch(`${rootUrl}/health`);
   return handleResponse<{ status: string }>(res);
 }
 
@@ -297,53 +362,16 @@ import type {
 } from "@/types";
 
 export async function getProvidersStatus(): Promise<ProviderConnectionStatus[]> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    const connections = await udfListConnections();
-    const azureConns = connections.filter((c) => c.provider === "azure");
-    const isAzureConnected = azureConns.some((c) => c.status === "connected");
-    return [
-      {
-        provider: "azure" as const,
-        status: isAzureConnected ? "connected" : "not_configured",
-        accounts_count: azureConns.length,
-        last_synced_at: azureConns[0]?.last_verified_at || null,
-      },
-      {
-        provider: "aws" as const,
-        status: "not_configured" as const,
-        accounts_count: 0,
-        last_synced_at: null,
-      },
-      {
-        provider: "gcp" as const,
-        status: "not_configured" as const,
-        accounts_count: 0,
-        last_synced_at: null,
-      },
-    ];
-  }
   const headers = await getHeaders();
   const url = `${API_BASE_URL}/inventory/providers/status`;
-  const res = headers ? await fetch(url, { headers }) : await fetch(url);
+  const res = await apiFetch(url, headers ? { headers } : undefined);
   return handleResponse<ProviderConnectionStatus[]>(res);
 }
 
 export async function listAzureSubscriptions(): Promise<CloudScopeSummary[]> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    const connections = await udfListConnections("azure");
-    return connections.map((conn) => ({
-      provider: "azure" as const,
-      scope_id: conn.scope_id || conn.id,
-      display_name: conn.name,
-      tenant_or_org_id: conn.tenant_or_org_id || null,
-      parent_scope_id: null,
-      state: conn.status,
-      data_source: conn.is_live ? ("live_authenticated" as const) : ("mock_fixture" as const),
-    }));
-  }
   const headers = await getHeaders();
   const url = `${API_BASE_URL}/inventory/azure/subscriptions`;
-  const res = headers ? await fetch(url, { headers }) : await fetch(url);
+  const res = await apiFetch(url, headers ? { headers } : undefined);
   return handleResponse<CloudScopeSummary[]>(res);
 }
 
@@ -355,48 +383,7 @@ export async function analyzeAzureSubscription(payload: {
   metric_window_days?: number;
   refresh_telemetry?: boolean;
 }): Promise<SubscriptionOrProjectAnalysis> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    const connectionId = payload.scope_id || "conn-default";
-    const [inv, waste] = await Promise.all([
-      udfGetInventory({ connection_id: connectionId }),
-      udfGetCostWaste({ connection_id: connectionId, force_refresh: payload.refresh_telemetry }),
-    ]);
-
-    const resources = inv.map((r) => ({
-      resource_id: r.resource_id,
-      name: r.name,
-      resource_type: r.resource_type,
-      location: r.location,
-      tags: r.tags || {},
-      monthly_cost_usd: String(r.monthly_cost_usd || "0.00"),
-    }));
-
-    return {
-      provider: "azure" as const,
-      scope_id: payload.scope_id || "azure-subscription",
-      scope_name: payload.scope_id || "Azure Subscription",
-      scope_type: "azure_subscription" as const,
-      tenant_or_org_id: null,
-      hierarchy_nodes: [],
-      data_source: "live_authenticated" as const,
-      spend_label: "actual_billed_spend" as const,
-      actual_billed_monthly_spend: String(waste.total_monthly_waste_usd),
-      resource_count: resources.length,
-      group_count: 1,
-      groups: [],
-      resources: resources as any,
-      cost_breakdown: {
-        total_monthly_usd: String(waste.total_monthly_waste_usd),
-        total_annual_usd: String(waste.total_annual_waste_usd),
-        compute_cost_usd: "0.00",
-        storage_cost_usd: "0.00",
-        network_cost_usd: "0.00",
-        database_cost_usd: "0.00",
-        other_cost_usd: "0.00",
-      },
-    };
-  }
-  const res = await fetch(`${API_BASE_URL}/inventory/azure/analyze`, {
+  const res = await apiFetch(`${API_BASE_URL}/inventory/azure/analyze`, {
     method: "POST",
     headers: await getHeaders(),
     body: JSON.stringify({
@@ -502,10 +489,7 @@ export async function getMonitoringSources(): Promise<MonitoringSourcesResponse>
 // ----------------------------------------------------------------------------
 
 export async function listConnections(): Promise<import("@/types").CloudConnection[]> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    return udfListConnections();
-  }
-  const res = await fetch(`${API_BASE_URL}/connections`, {
+  const res = await apiFetch(`${API_BASE_URL}/connections`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -515,29 +499,7 @@ export async function listConnections(): Promise<import("@/types").CloudConnecti
 export async function validateConnection(
   payload: import("@/types").ValidateConnectionRequest
 ): Promise<import("@/types").ConnectionValidationResponse> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    const res = await udfValidateConnection({
-      connection_id: payload.connection_id || undefined,
-      provider: payload.provider,
-      subscription_id: payload.scope_id,
-    });
-    return {
-      success: res.valid,
-      connection_id: payload.connection_id || "conn-val",
-      provider: payload.provider,
-      scope_id: payload.scope_id,
-      scope_name: payload.scope_id,
-      status: res.valid ? "connected" : "auth_failed",
-      details: res.message,
-      discovered_resource_count: 0,
-      discovered_resource_groups: [],
-      permissions_verified: ["Reader", "Cost Management Reader"],
-      is_live: true,
-      latency_ms: 100,
-      validated_at: new Date().toISOString(),
-    };
-  }
-  const res = await fetch(`${API_BASE_URL}/connections/validate`, {
+  const res = await apiFetch(`${API_BASE_URL}/connections/validate`, {
     method: "POST",
     headers: await getHeaders(),
     body: JSON.stringify(payload),
@@ -548,17 +510,7 @@ export async function validateConnection(
 export async function createConnection(
   payload: import("@/types").CreateConnectionRequest
 ): Promise<import("@/types").CloudConnection> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    return udfCreateConnection({
-      name: payload.name,
-      tenant_id: payload.azure_tenant_id || "",
-      subscription_id: payload.scope_id,
-      client_id: payload.azure_client_id || "",
-      client_secret: payload.azure_client_secret || "",
-      provider: payload.provider,
-    });
-  }
-  const res = await fetch(`${API_BASE_URL}/connections`, {
+  const res = await apiFetch(`${API_BASE_URL}/connections`, {
     method: "POST",
     headers: await getHeaders(),
     body: JSON.stringify(payload),
@@ -569,10 +521,7 @@ export async function createConnection(
 export async function deleteConnection(
   connectionId: string
 ): Promise<{ deleted: boolean; connection_id: string }> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    return udfDeleteConnection(connectionId);
-  }
-  const res = await fetch(`${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}`, {
     method: "DELETE",
     headers: await getHeaders(),
   });
@@ -588,60 +537,7 @@ export async function getTokenEconomics(
   payload: MonitoringQueryRequest,
   signal?: AbortSignal
 ): Promise<import("@/types").TokenEconomicsSummary> {
-  if (import.meta.env.VITE_USE_FABRIC_UDF === "true") {
-    const raw = await udfGetTokenEconomics({
-      connection_id: payload.scope_id || "default",
-      days: payload.time_window === "7d" ? 7 : 30,
-    });
-
-    const hasTokens = raw.total_tokens > 0;
-    return {
-      provider: payload.provider || "azure",
-      scope_id: payload.scope_id || "",
-      scope_name: payload.scope_id || "Connected Scope",
-      time_window: payload.time_window || "30d",
-      data_status: hasTokens ? "live_telemetry" : "no_data_available",
-      status_message: hasTokens
-        ? "Live telemetry observed from model invocations and Azure AI Foundry."
-        : "No token telemetry recorded in this interval.",
-      total_tokens: raw.total_tokens,
-      prompt_tokens: raw.total_prompt_tokens,
-      completion_tokens: raw.total_completion_tokens,
-      estimated_cost_usd: Number(raw.total_cost_usd),
-      unattributed_tokens: 0,
-      unattributed_percentage: 0,
-      active_models_count: raw.models_breakdown.length,
-      discovered_ai_resources_count: raw.models_breakdown.length > 0 ? 1 : 0,
-      discovered_ai_resources: raw.models_breakdown.map((m) => m.model_name),
-      trend_points: raw.daily_timeseries.map((d) => ({
-        timestamp: d.timestamp,
-        prompt_tokens: d.promptTokens,
-        completion_tokens: d.completionTokens,
-        total_tokens: d.totalTokens,
-        estimated_cost_usd: d.costUsd,
-      })),
-      model_breakdowns: raw.models_breakdown.map((m) => ({
-        model_name: m.model_name,
-        provider: "Azure OpenAI",
-        prompt_tokens: m.prompt_tokens,
-        completion_tokens: m.completion_tokens,
-        total_tokens: m.total_tokens,
-        prompt_rate_per_million: "2.5000",
-        completion_rate_per_million: "10.0000",
-        total_cost_usd: m.cost_usd,
-        percentage_of_total: raw.total_tokens > 0 ? (m.total_tokens / raw.total_tokens) * 100 : 0,
-      })),
-      workload_breakdowns: [],
-      usage_records: [],
-      diagnostic_setup_guide: [
-        "1. In Azure AI Foundry, ensure Diagnostic Settings route Metrics (TokenCount) to Log Analytics.",
-        "2. For platform LLM requests, real usage tokens are captured automatically upon completion.",
-      ],
-      generated_at: new Date().toISOString(),
-    };
-  }
-
-  const res = await fetch(`${API_BASE_URL}/monitoring/token-economics`, {
+  const res = await apiFetch(`${API_BASE_URL}/monitoring/token-economics`, {
     method: "POST",
     headers: await getHeaders(),
     body: JSON.stringify(payload),
@@ -799,7 +695,7 @@ export async function retryIngestionRun(
 // ---------------------------------------------------------------------------
 
 export async function listDatabricksConnections(): Promise<import("@/types").DatabricksConnection[]> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections`, {
+  const res = await apiFetch(`${API_BASE_URL}/databricks/connections`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -809,7 +705,7 @@ export async function listDatabricksConnections(): Promise<import("@/types").Dat
 export async function getDatabricksConnection(
   connectionId: string
 ): Promise<import("@/types").DatabricksConnection> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -819,7 +715,7 @@ export async function getDatabricksConnection(
 export async function testDatabricksConnection(
   connectionId: string
 ): Promise<import("@/types").DatabricksConnectionTestResponse> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/test`, {
+  const res = await apiFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/test`, {
     method: "POST",
     headers: await getHeaders(),
   });
@@ -829,7 +725,7 @@ export async function testDatabricksConnection(
 export async function getWorkspaceDiscovery(
   connectionId: string
 ): Promise<import("@/types").DatabricksWorkspaceDiscovery> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery`, {
+  const res = await apiFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -839,7 +735,7 @@ export async function getWorkspaceDiscovery(
 export async function refreshWorkspaceDiscovery(
   connectionId: string
 ): Promise<import("@/types").DatabricksWorkspaceDiscovery> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery/refresh`, {
+  const res = await apiFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/discovery/refresh`, {
     method: "POST",
     headers: await getHeaders(),
   });
@@ -849,7 +745,7 @@ export async function refreshWorkspaceDiscovery(
 export async function getWorkspaceHealth(
   connectionId: string
 ): Promise<import("@/types").DatabricksConnectionHealth> {
-  const res = await fetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/health`, {
+  const res = await apiFetch(`${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/health`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -867,7 +763,7 @@ export async function getFinOpsOverview(
 ): Promise<import("@/types").ExecutiveOverviewData> {
   const params = new URLSearchParams({ connection_id: connectionId, period });
   if (environment) params.append("environment", environment);
-  const res = await fetch(`${API_BASE_URL}/finops/overview?${params.toString()}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/overview?${params.toString()}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -877,7 +773,7 @@ export async function getFinOpsOverview(
 export async function getFinOpsCostExplorer(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").CostExplorerData> {
-  const res = await fetch(`${API_BASE_URL}/finops/cost-explorer?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/cost-explorer?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -887,7 +783,7 @@ export async function getFinOpsCostExplorer(
 export async function getFinOpsCostAllocation(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").CostAllocationData> {
-  const res = await fetch(`${API_BASE_URL}/finops/cost-allocation?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/cost-allocation?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -897,7 +793,7 @@ export async function getFinOpsCostAllocation(
 export async function getFinOpsComputeWarehouses(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").ComputeWarehousesData> {
-  const res = await fetch(`${API_BASE_URL}/finops/compute-warehouses?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/compute-warehouses?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -907,7 +803,7 @@ export async function getFinOpsComputeWarehouses(
 export async function getFinOpsAiEconomics(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").AiEconomicsData> {
-  const res = await fetch(`${API_BASE_URL}/finops/ai-economics?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/ai-economics?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -917,7 +813,7 @@ export async function getFinOpsAiEconomics(
 export async function getFinOpsDataStorage(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").DataStorageData> {
-  const res = await fetch(`${API_BASE_URL}/finops/data-storage?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/data-storage?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -927,7 +823,7 @@ export async function getFinOpsDataStorage(
 export async function getFinOpsNetworkCloud(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").NetworkCloudData> {
-  const res = await fetch(`${API_BASE_URL}/finops/network-cloud?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/network-cloud?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -937,7 +833,7 @@ export async function getFinOpsNetworkCloud(
 export async function getFinOpsOptimizationAdvisor(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").OptimizationAdvisorData> {
-  const res = await fetch(`${API_BASE_URL}/finops/optimization-advisor?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/optimization-advisor?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -949,7 +845,7 @@ export async function recordFinOpsRecommendationAction(
   action: string,
   notes?: string
 ): Promise<import("@/types").FinOpsDecisionItem> {
-  const res = await fetch(`${API_BASE_URL}/finops/optimization-advisor/${encodeURIComponent(decisionId)}/action`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/optimization-advisor/${encodeURIComponent(decisionId)}/action`, {
     method: "POST",
     headers: await getHeaders(),
     body: JSON.stringify({ action, notes }),
@@ -960,7 +856,7 @@ export async function recordFinOpsRecommendationAction(
 export async function getFinOpsForecastBudgets(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").ForecastBudgetsData> {
-  const res = await fetch(`${API_BASE_URL}/finops/forecast-budgets?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/forecast-budgets?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -972,7 +868,7 @@ export async function simulateFinOpsScenario(
   tokenSavePct: number,
   growthPct: number
 ): Promise<import("@/types").ScenarioSimulationResult> {
-  const res = await fetch(`${API_BASE_URL}/finops/forecast-budgets/simulate`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/forecast-budgets/simulate`, {
     method: "POST",
     headers: await getHeaders(),
     body: JSON.stringify({
@@ -987,7 +883,7 @@ export async function simulateFinOpsScenario(
 export async function getFinOpsAnomalyDetection(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").AnomalyDetectionData> {
-  const res = await fetch(`${API_BASE_URL}/finops/anomaly-detection?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/anomaly-detection?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -997,7 +893,7 @@ export async function getFinOpsAnomalyDetection(
 export async function getFinOpsGovernancePolicies(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").GovernancePoliciesData> {
-  const res = await fetch(`${API_BASE_URL}/finops/governance-policies?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/governance-policies?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -1007,7 +903,7 @@ export async function getFinOpsGovernancePolicies(
 export async function getFinOpsShowbackChargeback(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").ShowbackChargebackData> {
-  const res = await fetch(`${API_BASE_URL}/finops/showback-chargeback?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/showback-chargeback?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -1017,7 +913,7 @@ export async function getFinOpsShowbackChargeback(
 export async function getFinOpsWorkloadEconomics(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").WorkloadEconomicsData> {
-  const res = await fetch(`${API_BASE_URL}/finops/workload-economics?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/workload-economics?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -1027,7 +923,7 @@ export async function getFinOpsWorkloadEconomics(
 export async function getFinOpsReportsAudit(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").ReportsAuditData> {
-  const res = await fetch(`${API_BASE_URL}/finops/reports-audit?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/reports-audit?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
@@ -1037,9 +933,61 @@ export async function getFinOpsReportsAudit(
 export async function getFinOpsSettingsIntegrations(
   connectionId = "databricks-azure-dev"
 ): Promise<import("@/types").SettingsIntegrationsData> {
-  const res = await fetch(`${API_BASE_URL}/finops/settings-integrations?connection_id=${encodeURIComponent(connectionId)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/finops/settings-integrations?connection_id=${encodeURIComponent(connectionId)}`, {
     method: "GET",
     headers: await getHeaders(),
   });
   return handleResponse<import("@/types").SettingsIntegrationsData>(res);
 }
+
+export async function connectServicePrincipal(
+  request: ServicePrincipalConnectRequest
+): Promise<ServicePrincipalConnectResponse> {
+  const response = await apiFetch(`${API_BASE_URL}/auth/connect`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const detail =
+      errorData.error?.message ||
+      errorData.detail || {
+        error_code: "AUTH_FAILED",
+        message: `Authentication failed with status ${response.status}`,
+      };
+    throw new ApiError(response.status, detail, detail.message);
+  }
+
+  const data: ServicePrincipalConnectResponse = await response.json();
+  setSessionToken(data.session_token);
+  return data;
+}
+
+export async function getSessionInfo(): Promise<SessionInfoResponse> {
+  const res = await apiFetch(`${API_BASE_URL}/auth/session`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<SessionInfoResponse>(res);
+}
+
+export async function logoutSession(): Promise<LogoutResponse> {
+  try {
+    const res = await apiFetch(`${API_BASE_URL}/auth/logout`, {
+      method: "POST",
+      headers: await getHeaders(),
+    });
+    const data = await res.json().catch(() => ({
+      status: "logged_out",
+      message: "Application session terminated successfully.",
+    }));
+    return data;
+  } finally {
+    setSessionToken(null);
+  }
+}
+

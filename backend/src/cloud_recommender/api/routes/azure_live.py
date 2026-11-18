@@ -105,6 +105,35 @@ def _group(value: str | None) -> str | None:
     return value
 
 
+@router.get(
+    "",
+    response_model=list[AzureConnectionInfo],
+    summary="List active live Azure connections for the authenticated caller",
+)
+async def list_azure_connections(
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    store: Annotated[AzureSessionStore, Depends(get_session_store)],
+) -> list[AzureConnectionInfo]:
+    owner = owner_key_for(user)
+    sessions = store.list_for_owner(owner)
+    return [connection_info(s) for s in sessions]
+
+
+@router.get(
+    "/{connection_id}",
+    response_model=AzureConnectionInfo,
+    summary="Get details of an active live Azure connection",
+)
+async def get_azure_connection(
+    connection_id: str,
+    user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    store: Annotated[AzureSessionStore, Depends(get_session_store)],
+) -> AzureConnectionInfo:
+    owner = owner_key_for(user)
+    session = store.get(connection_id, owner)
+    return connection_info(session)
+
+
 @router.post(
     "",
     response_model=ConnectResponse,

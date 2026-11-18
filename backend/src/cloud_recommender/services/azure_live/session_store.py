@@ -105,6 +105,13 @@ class AzureSessionStore:
             raise not_found()
         return session
 
+    def list_for_owner(self, owner_key: str) -> list[AzureSession]:
+        """Return all active unexpired Azure sessions belonging to the specified owner."""
+        self._purge()
+        return [
+            s for s in self._sessions.values() if secrets.compare_digest(s.owner_key, owner_key)
+        ]
+
     def delete(self, connection_id: str, owner_key: str) -> None:
         self.get(connection_id, owner_key)
         del self._sessions[connection_id]

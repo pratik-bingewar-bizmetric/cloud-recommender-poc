@@ -20,11 +20,12 @@ from cloud_recommender.schemas.finops import KpiStatus
 from cloud_recommender.services.databricks.finops_analytics_service import (
     FinOpsAnalyticsService,
 )
+from tests.fixtures.live_inventory import make_analytics_service
 
 
 @pytest.fixture
 def service() -> FinOpsAnalyticsService:
-    return FinOpsAnalyticsService()
+    return make_analytics_service(with_billing=False, with_inventory=True)
 
 
 # -----------------------------------------------------------------------------
@@ -180,6 +181,15 @@ def test_valid_authenticated_discovered_resources(service: FinOpsAnalyticsServic
     app_cat, app_unknown = service._resolve_resource_filter("cement-demand-forecasting", "app")
     assert app_unknown is False
     assert app_cat == "app"
+
+
+def test_unpopulated_service_rejects_all_resources() -> None:
+    """Regression test: Unseeded service instance with empty discovery cache rejects even valid IDs."""
+    empty_service = FinOpsAnalyticsService()
+    empty_service.workspace_service._discovery_cache.clear()
+    cat, is_unknown = empty_service._resolve_resource_filter("05ed10a52697a344", "warehouse")
+    assert is_unknown is True
+    assert cat is None
 
 
 # -----------------------------------------------------------------------------

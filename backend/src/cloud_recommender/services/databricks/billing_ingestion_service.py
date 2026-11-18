@@ -760,6 +760,25 @@ class BillingIngestionService:
         priced_records = [
             rec for rec in target_records if rec.pricing_matched and rec.effective_cost is not None
         ]
+        matched_dbu_sum = sum(
+            (r.usage_quantity for r in priced_records if r.usage_quantity > 0), zero
+        )
+        unmatched_dbu_sum = sum(
+            (
+                r.usage_quantity
+                for r in target_records
+                if not r.pricing_matched and r.usage_quantity > 0
+            ),
+            zero,
+        )
+        rec_cov_pct = (
+            round(100.0 * len(priced_records) / len(target_records), 2) if target_records else None
+        )
+        qty_cov_pct = (
+            round(100.0 * float(matched_dbu_sum) / float(gross_dbu), 2)
+            if gross_dbu > 0
+            else (0.0 if target_records else None)
+        )
         total_spend: Decimal | None = (
             sum(
                 (rec.effective_cost for rec in priced_records if rec.effective_cost is not None),
@@ -796,7 +815,11 @@ class BillingIngestionService:
             retraction_dbu=float(round(retraction_dbu, 2)),
             total_spend_verified=float(_cents(total_spend)) if total_spend is not None else None,
             spend_complete=len(priced_records) == len(target_records) and not mixed,
-            pricing_coverage_pct=round(100.0 * len(priced_records) / len(target_records), 2),
+            pricing_coverage_pct=rec_cov_pct,
+            record_coverage_pct=rec_cov_pct,
+            quantity_coverage_pct=qty_cov_pct,
+            matched_dbu=float(round(matched_dbu_sum, 4)),
+            unmatched_dbu=float(round(unmatched_dbu_sum, 4)),
             cost_basis=(
                 CostBasis.LIST_PRICE_ESTIMATE
                 if total_spend is not None
@@ -869,6 +892,19 @@ class BillingIngestionService:
         matched = [r for r in recs if r.pricing_matched]
         unmatched = [r for r in recs if not r.pricing_matched]
         unmatched_dbu = [r for r in dbu_rows if not r.pricing_matched]
+        matched_dbu_rows = [r for r in dbu_rows if r.pricing_matched]
+        matched_dbu_sum = sum(
+            (r.usage_quantity for r in matched_dbu_rows if r.usage_quantity > 0), zero
+        )
+        unmatched_dbu_sum = sum(
+            (r.usage_quantity for r in unmatched_dbu if r.usage_quantity > 0), zero
+        )
+        rec_cov_pct = round(100.0 * len(matched) / len(recs), 2) if recs else None
+        qty_cov_pct = (
+            round(100.0 * float(matched_dbu_sum) / float(gross_dbu), 2)
+            if gross_dbu > 0
+            else (0.0 if recs else None)
+        )
         retractions = [r for r in recs if r.record_type == "retraction" or r.usage_quantity < 0]
         currencies = {r.currency for r in matched if r.currency}
 
@@ -914,12 +950,14 @@ class BillingIngestionService:
 
         notes = [
             f"Evaluated {len(recs)} total billing usage records for workspace {workspace_id}.",
-            f"{len(matched)} records matched against {len(self._price_store)} ingested list prices.",
-            f"{len(unmatched)} records unmatched or unpriced ({len(unmatched_dbu)} DBU rows).",
+            f"{len(matched)} records matched against {len(self._price_store)} ingested list prices ({float(round(matched_dbu_sum, 4))} DBU).",
+            f"{len(unmatched)} records unmatched or unpriced ({len(unmatched_dbu)} DBU rows, {float(round(unmatched_dbu_sum, 4))} DBU).",
+            f"Coverage breakdown: Quantity coverage = {qty_cov_pct}% ({float(round(matched_dbu_sum, 4))}/{float(round(gross_dbu, 4))} DBU); Record-count coverage = {rec_cov_pct}% ({len(matched)}/{len(recs)} records).",
             f"Preserved {len(retractions)} retractions with exact negative quantity accounting.",
             "Strict unit separation enforced: non-DBU units (BYTE_HOURS, TOKEN) isolated.",
             "Exact Decimal arithmetic; rounding applied only to the presented totals.",
             "Costs are LIST_PRICE_ESTIMATE (DBU x published list rate), not invoiced amounts.",
+            "Reconciliation note: Unmatched compute (Genie/AI_BI) is preserved without assigning $0.00 to prevent cost distortion under PARTIAL_PRICING.",
         ]
         if failed:
             notes.append(f"Failed checks: {', '.join(failed)}.")
@@ -934,6 +972,10 @@ class BillingIngestionService:
             gross_dbu=float(round(gross_dbu, 2)),
             retraction_dbu=float(round(retraction_dbu, 2)),
             net_dbu=float(round(net_dbu, 2)),
+            matched_dbu=float(round(matched_dbu_sum, 4)),
+            unmatched_dbu=float(round(unmatched_dbu_sum, 4)),
+            record_coverage_pct=rec_cov_pct,
+            quantity_coverage_pct=qty_cov_pct,
             gross_cost=float(_cents(gross_cost)) if costed and len(currencies) <= 1 else None,
             net_cost=float(_cents(net_cost)) if costed and len(currencies) <= 1 else None,
             currency=next(iter(currencies)) if len(currencies) == 1 else None,

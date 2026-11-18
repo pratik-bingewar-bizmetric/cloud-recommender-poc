@@ -5,18 +5,25 @@
 // </copyright>
 //-----------------------------------------------------------------------
 
-import { type ReactNode } from 'react';
-
-import { useAuth } from '@/hooks/auth.context';
+import { useEffect, useState, type ReactNode } from "react";
+import { CloudLoginForm } from "./CloudLoginForm";
+import { getSessionInfo, getSessionToken, setSessionToken } from "@/lib/api";
+import type { ServicePrincipalConnectResponse, SessionInfoResponse } from "@/types/auth";
+import { useAuth } from "@/hooks/auth.context";
 
 interface AuthGateProps {
   children: ReactNode;
 }
 
+/**
+ * Service Principal Application Auth Gate.
+ * Enforces Service Principal-only authentication before presenting the FinOps dashboard,
+ * while maintaining compatibility with Fabric host session resolution.
+ */
 export function AuthGate({ children }: AuthGateProps) {
   const {
-    isLoading,
-    isAuthenticated,
+    isLoading: isRayfinLoading,
+    isAuthenticated: isRayfinAuthenticated,
     canSignIn,
     signIn,
     isSigningIn,
@@ -25,7 +32,45 @@ export function AuthGate({ children }: AuthGateProps) {
     error,
   } = useAuth();
 
-  if (isLoading) {
+  const [activeSession, setActiveSession] = useState<
+    ServicePrincipalConnectResponse | SessionInfoResponse | null
+  >(null);
+  const [isCheckingSession, setIsCheckingSession] = useState<boolean>(
+    () => typeof window !== "undefined" && Boolean(getSessionToken())
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const token = getSessionToken();
+    if (!token) {
+      return;
+    }
+
+    getSessionInfo()
+      .then((session) => {
+        if (!cancelled) {
+          setActiveSession(session);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSessionToken(null);
+          setActiveSession(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsCheckingSession(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (isRayfinLoading || isCheckingSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="text-sm text-muted-foreground">
@@ -35,7 +80,8 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (config.kind === 'not-deployed') {
+  // Handle configuration issues from Fabric host if reported
+  if (config.kind === "not-deployed") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="w-full max-w-md text-center">
@@ -43,8 +89,8 @@ export function AuthGate({ children }: AuthGateProps) {
             Configure this app to sign in
           </h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            Signing in needs a Fabric backend. Start{' '}
-            <code className="rounded bg-muted px-1 py-0.5">npm run dev</code>{' '}
+            Signing in needs a Fabric backend. Start{" "}
+            <code className="rounded bg-muted px-1 py-0.5">npm run dev</code>{" "}
             with an approved workspace, or deploy this app, then reload.
           </p>
         </div>
@@ -52,7 +98,7 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (config.kind === 'incomplete') {
+  if (config.kind === "incomplete") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="w-full max-w-md text-center">
@@ -60,7 +106,7 @@ export function AuthGate({ children }: AuthGateProps) {
             This app is missing its Rayfin configuration
           </h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            The dev server started without {config.missing.join(', ')}. Check
+            The dev server started without {config.missing.join(", ")}. Check
             the warnings it printed, then restart it.
           </p>
         </div>
@@ -68,7 +114,7 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (config.kind === 'config-error') {
+  if (config.kind === "config-error") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background p-4">
         <div className="w-full max-w-md text-center">
@@ -86,87 +132,20 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (error && !canSignIn) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center shadow-lg">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary">
-            Fabric App
-          </p>
-          <h2 className="mb-2 text-lg font-semibold text-card-foreground">
-            Couldn't sign you in
-          </h2>
-          <p className="text-sm text-muted-foreground">{error.message}</p>
-        </div>
-      </div>
-    );
+  // Authenticated state: Either active Service Principal session or authenticated Rayfin session
+  if (isRayfinAuthenticated || activeSession) {
+    return <>{children}</>;
   }
 
-  if (!isAuthenticated && canSignIn) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center shadow-lg">
-          <div
-            aria-hidden="true"
-            className="mx-auto mb-4 grid h-10 w-10 grid-cols-2 gap-0.5"
-          >
-            <span className="bg-primary" />
-            <span className="bg-primary/80" />
-            <span className="bg-primary/70" />
-            <span className="bg-primary/90" />
-          </div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-primary">
-            Fabric App
-          </p>
-          <h2 className="mb-2 text-xl font-semibold text-card-foreground">
-            {error ? "Couldn't sign you in automatically" : 'Welcome back'}
-          </h2>
-          {error ? (
-            <p role="alert" className="mb-4 text-sm text-destructive">
-              {error.message}
-            </p>
-          ) : (
-            <p className="mb-6 text-sm text-muted-foreground">
-              Sign in with your Microsoft account to open this Fabric app.
-            </p>
-          )}
-          <button
-            type="button"
-            className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isSigningIn}
-            onClick={() => void signIn()}
-          >
-            {isSigningIn
-              ? 'Signing in…'
-              : error
-                ? 'Try Sign in with Microsoft'
-                : 'Sign in with Microsoft'}
-          </button>
-          {signInError ? (
-            <p role="alert" className="mt-4 text-sm text-destructive">
-              {signInError.message}
-            </p>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background p-4">
-        <div className="w-full max-w-md text-center">
-          <h2 className="mb-2 text-lg font-semibold text-foreground">
-            Sign-in is unavailable
-          </h2>
-          <p className="mb-4 text-sm text-muted-foreground">
-            This app requires an authenticated session. Check the authentication
-            configuration, then reload to try again.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  return <>{children}</>;
+  // Unauthenticated: Present the dedicated enterprise Service Principal Cloud Login form
+  return (
+    <CloudLoginForm
+      onSuccess={(session) => setActiveSession(session)}
+      canSignIn={canSignIn}
+      onSignInWithMicrosoft={signIn}
+      isSigningIn={isSigningIn}
+      signInError={signInError}
+      authError={error}
+    />
+  );
 }

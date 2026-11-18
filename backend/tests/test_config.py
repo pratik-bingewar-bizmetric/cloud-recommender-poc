@@ -78,3 +78,17 @@ def test_setup_logging_configurations() -> None:
 
     console_settings = Settings(log_format="console", log_level="INFO")
     setup_logging(console_settings)
+
+
+def test_cors_origins_normalization() -> None:
+    """Verify CORS_ORIGINS strips quotes and trailing slashes from comma-separated input."""
+    # Test comma-separated string with trailing slashes, whitespace, and quotes
+    raw = (
+        ' "https://app.fabric.microsoft.com/" , '
+        "'https://true-holly-e4e36b6da6-northcentralus.webapp.fabricapps.net/'"
+    )
+    settings = Settings(cors_origins=raw)  # type: ignore[arg-type]
+    assert settings.cors_origins == [
+        "https://app.fabric.microsoft.com",
+        "https://true-holly-e4e36b6da6-northcentralus.webapp.fabricapps.net",
+    ]

@@ -1391,7 +1391,6 @@ class CentralizedMonitoringService:
                 resource_group_filter=request.resource_group_filter,
                 metric_window_days=window_days,
             )
-            is_live = az_analysis.data_source == "live_authenticated"
 
             # Filter for Cognitive Services & Azure OpenAI accounts (exclude child project sub-resources)
             ai_resources = [
@@ -1405,7 +1404,7 @@ class CentralizedMonitoringService:
             ]
             discovered_names = [r.resource_name for r in ai_resources]
 
-            if not is_live or request.scope_id == "sub-prod-enterprise-01":
+            if request.scope_id in ("smart-expense-azure-prod", "sub-prod-enterprise-01"):
                 # Offline simulation reference benchmark
                 return self._generate_benchmark_token_summary(
                     provider=CloudProvider.AZURE,
@@ -1994,7 +1993,6 @@ class CentralizedMonitoringService:
                     metric_window_days=window_days,
                 )
                 scope_name = gcp_analysis.scope_name
-                is_live = gcp_analysis.data_source == "live_authenticated"
             except HTTPException as http_exc:
                 if http_exc.status_code == 403:
                     return TokenEconomicsSummary(
@@ -2029,7 +2027,6 @@ class CentralizedMonitoringService:
                 raise
             except Exception:
                 scope_name = request.scope_id
-                is_live = False
 
             return TokenEconomicsSummary(
                 provider=CloudProvider.GCP,

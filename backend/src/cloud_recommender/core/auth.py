@@ -1,6 +1,7 @@
 """Microsoft Entra ID cryptographic JWT authentication and role-based authorization."""
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
@@ -82,6 +83,9 @@ USER_NON_GET_ENDPOINTS: frozenset[str] = frozenset(
         f"{_ROUTES}.azure_live.connect_azure",
         f"{_ROUTES}.azure_live.validate_azure_connection",
         f"{_ROUTES}.azure_live.disconnect_azure",
+        # service-principal authentication and session management
+        f"{_ROUTES}.auth.connect",
+        f"{_ROUTES}.auth.logout",
         # owner-bound persistent connections (ownership enforced by the repository: 404 otherwise)
         f"{_ROUTES}.connections.create_connection",
         f"{_ROUTES}.connections.validate_connection",
@@ -128,6 +132,12 @@ class AuthenticatedUser(BaseModel):
     )
     is_development_identity: bool = Field(
         default=False, description="True only for the explicit local-development identity"
+    )
+    is_session_token: bool = Field(
+        default=False, description="True for application session bearer tokens"
+    )
+    session_id: str | None = Field(
+        default=None, description="Active session ID if authenticated via app session"
     )
     is_application_token: bool = Field(
         default=False,
@@ -368,6 +378,67 @@ def get_current_user(
     """
     token = credentials.credentials if credentials and credentials.credentials else None
     if token:
+        if token.startswith("finops_sess_"):
+            from cloud_recommender.core.app_sessions import get_app_session_store
+
+            session_store = get_app_session_store()
+            session = session_store.get_session_by_token(token)
+            if not session:
+                token_hash = session_store.hash_token(token)
+                cached = session_store.get_session_by_hash(token_hash)
+                if cached:
+                    if cached.revoked_at is not None:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail={
+                                "error_code": "SESSION_REVOKED",
+                                "message": "The application session has been revoked. Please reconnect.",
+                            },
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                    if datetime.now(UTC) >= cached.expires_at:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail={
+                                "error_code": "SESSION_EXPIRED",
+                                "message": "The application session has expired. Please reconnect.",
+                            },
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "error_code": "INVALID_SESSION_TOKEN",
+                        "message": "The application session token is invalid or does not exist.",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            return AuthenticatedUser(
+                sub=session.account_id,
+                oid=session.account_id,
+                tid=session.tenant_id,
+                name=session.account_name,
+                preferred_username=f"{session.client_id}@{session.tenant_id}",
+                roles=list(session.roles),
+                scopes=["access_as_user"],
+                raw_claims={
+                    "session_id": session.session_id,
+                    "account_id": session.account_id,
+                    "account_name": session.account_name,
+                    "subscription_id": session.subscription_id,
+                    "subscription_name": session.subscription_name,
+                    "connection_id": session.connection_id,
+                    "tenant_id": session.tenant_id,
+                    "client_id": session.client_id,
+                    "permissions": session.permissions,
+                },
+                is_authenticated=True,
+                client_id=session.client_id,
+                is_session_token=True,
+                session_id=session.session_id,
+            )
+
         return validator.validate_token(token)
 
     if settings.entra_auth_enabled:
@@ -470,7 +541,7 @@ def require_api_access(
     settings: Settings = Depends(get_settings),
 ) -> AuthenticatedUser:
     """Baseline authorization: approved client + scope (user tokens) or daemon permission."""
-    if user.is_development_identity:
+    if user.is_development_identity or user.is_session_token:
         return user
 
     allowed_clients = {c.lower() for c in settings.entra_allowed_client_ids}

@@ -76,8 +76,32 @@ async def test_cors_allows_only_the_configured_fabric_origin() -> None:
         allowed = await client.options(
             "/api/v1/azure/connections", headers={"Origin": fabric, **headers}
         )
+        allowed_delete = await client.options(
+            "/api/v1/azure/connections",
+            headers={
+                "Origin": fabric,
+                "Access-Control-Request-Method": "DELETE",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        allowed_patch = await client.options(
+            "/api/v1/azure/connections",
+            headers={
+                "Origin": fabric,
+                "Access-Control-Request-Method": "PATCH",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
         other = await client.options(
             "/api/v1/azure/connections", headers={"Origin": "https://evil.example.org", **headers}
         )
     assert allowed.status_code == 200 and allowed.headers["access-control-allow-origin"] == fabric
+    assert (
+        allowed_delete.status_code == 200
+        and allowed_delete.headers["access-control-allow-origin"] == fabric
+    )
+    assert (
+        allowed_patch.status_code == 200
+        and allowed_patch.headers["access-control-allow-origin"] == fabric
+    )
     assert other.status_code == 400

@@ -87,14 +87,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     # Configure CORS Middleware
-    # Production: only the verbs/headers the API actually uses (routes are GET/POST; the SPA sends
+    # Production: only the verbs/headers the API actually uses (routes are GET/POST/PATCH/DELETE; the SPA sends
     # a Bearer token and JSON). Development keeps permissive behaviour for local tooling.
     is_production = settings.app_env == "production"
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"] if is_production else ["*"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"] if is_production else ["*"],
         allow_headers=["Authorization", "Content-Type", "Accept"] if is_production else ["*"],
     )
 

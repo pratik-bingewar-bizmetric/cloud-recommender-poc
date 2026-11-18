@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from cloud_recommender.api.routes.analysis import router as analysis_router
 from cloud_recommender.api.routes.architecture import router as architecture_router
+from cloud_recommender.api.routes.auth import router as auth_router
 from cloud_recommender.api.routes.azure_live import router as azure_live_router
 from cloud_recommender.api.routes.catalog import router as catalog_router
 from cloud_recommender.api.routes.configuration import router as configuration_router
@@ -22,6 +23,9 @@ api_v1_router.include_router(health_router, prefix="", tags=["Health"])
 
 # Catalog endpoints mounted under /api/v1/catalog (Public service catalog)
 api_v1_router.include_router(catalog_router)
+
+# Service Principal-only authentication and application sessions mounted under /api/v1/auth
+api_v1_router.include_router(auth_router)
 
 # Protected routes: Entra authentication + client/scope/role policy (core.auth.enforce_route_policy)
 auth_deps = [Depends(enforce_route_policy)]

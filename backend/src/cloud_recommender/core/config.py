@@ -505,8 +505,14 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def validate_cors_origins(cls, v: object) -> list[str]:
-        """Support JSON arrays, comma-separated strings, or string lists for CORS origins."""
+        """Support JSON arrays, comma-separated strings, or string lists for CORS origins.
+
+        Normalizes origins by stripping surrounding whitespace, quotes, and trailing slashes.
+        """
         import json
+
+        def _normalize(origin: object) -> str:
+            return str(origin).strip().strip("'\"").rstrip("/")
 
         if isinstance(v, str):
             v_str = v.strip()
@@ -514,12 +520,12 @@ class Settings(BaseSettings):
                 try:
                     parsed = json.loads(v_str)
                     if isinstance(parsed, list):
-                        return [str(origin).strip() for origin in parsed if str(origin).strip()]
+                        return [_normalize(origin) for origin in parsed if _normalize(origin)]
                 except Exception:
                     pass
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
+            return [_normalize(origin) for origin in v.split(",") if _normalize(origin)]
         if isinstance(v, list):
-            return [str(origin).strip() for origin in v if str(origin).strip()]
+            return [_normalize(origin) for origin in v if _normalize(origin)]
         return []
 
     @field_validator("debug", mode="before")

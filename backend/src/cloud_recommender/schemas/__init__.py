@@ -7,6 +7,12 @@ from cloud_recommender.schemas.analysis import (
     RequirementsAnalysisResponse,
     WorkloadAssumptions,
 )
+from cloud_recommender.schemas.auth import (
+    LogoutResponse,
+    ServicePrincipalConnectRequest,
+    ServicePrincipalConnectResponse,
+    SessionInfoResponse,
+)
 from cloud_recommender.schemas.catalog import (
     CatalogService,
     CatalogServiceBase,
@@ -140,4 +146,8 @@ __all__ = [
     "DatabricksWorkspaceDiscoveryResponse",
     "DatabricksConnectionTestResponse",
     "DatabricksConnectionHealthResponse",
+    "ServicePrincipalConnectRequest",
+    "ServicePrincipalConnectResponse",
+    "SessionInfoResponse",
+    "LogoutResponse",
 ]
