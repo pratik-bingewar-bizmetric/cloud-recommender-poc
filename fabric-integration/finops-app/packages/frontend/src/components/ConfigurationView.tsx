@@ -49,6 +49,8 @@ import {
   listIngestionRuns,
   retryIngestionRun,
 } from "@/lib/api";
+import { FabricAuthPendingNotice } from "@/components/FabricAuthPendingNotice";
+import { isFabricAuthPendingError, isFabricUdfAuthPending } from "@/lib/fabric-udf-status";
 
 interface ConfigurationViewProps {
   activeConnection?: CloudConnection | null;
@@ -62,6 +64,9 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   // Provider and Connection State
   const [selectedProvider, setSelectedProvider] = useState<CloudProvider>("azure");
   const [availableConnections, setAvailableConnections] = useState<CloudConnection[]>([]);
+  // Entra authentication for Fabric UDFs not configured: shown explicitly, never as an empty list.
+  const [connectionsAuthPending, setConnectionsAuthPending] = useState<boolean>(() => isFabricUdfAuthPending());
+  const [connectionsError, setConnectionsError] = useState<string | null>(null);
   const [currentConnectionId, setCurrentConnectionId] = useState<string>(
     activeConnection?.id || "azure-f718c261"
   );
@@ -94,9 +99,18 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   useEffect(() => {
     let isMounted = true;
     async function fetchConnections() {
+      if (isFabricUdfAuthPending()) {
+        if (isMounted) {
+          setConnectionsAuthPending(true);
+          setAvailableConnections([]);
+        }
+        return;
+      }
       try {
         const conns = await listConnections();
         if (isMounted) {
+          setConnectionsAuthPending(false);
+          setConnectionsError(null);
           setAvailableConnections(conns);
           const matching = conns.find((c) => c.provider === selectedProvider);
           if (matching && (!currentConnectionId || !conns.some((c) => c.id === currentConnectionId))) {
@@ -105,6 +119,15 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
         }
       } catch (err: any) {
         console.warn("[ConfigurationView] Failed to load connections:", err);
+        if (isMounted) {
+          if (isFabricAuthPendingError(err)) {
+            setConnectionsAuthPending(true);
+            setAvailableConnections([]);
+          } else {
+            // A real failure is shown, not turned into an empty list.
+            setConnectionsError(err instanceof Error ? err.message : "Failed to load connections.");
+          }
+        }
       }
     }
     fetchConnections();
@@ -723,6 +746,13 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
         </div>
       )}
 
+      {connectionsAuthPending && <FabricAuthPendingNotice />}
+      {connectionsError && !connectionsAuthPending && (
+        <div role="alert" className="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs">
+          {connectionsError}
+        </div>
+      )}
+
       {/* Main Configuration Card */}
       {selectedProvider !== "aws" && (
         <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
@@ -748,7 +778,11 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                     </option>
                   ))}
                 {availableConnections.filter((c) => c.provider === selectedProvider).length === 0 && (
-                  <option value={currentConnectionId}>Default {selectedProvider} Scope</option>
+                  <option value={currentConnectionId}>
+                    {connectionsAuthPending
+                      ? "Connections unavailable (authentication pending)"
+                      : `Default ${selectedProvider} Scope`}
+                  </option>
                 )}
               </select>
             </div>

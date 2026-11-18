@@ -36,6 +36,7 @@ import { ENABLE_AI_ARCHITECT } from "@/config/features";
 import { MonitoringSubTab } from "./SectionCentralizedMonitoring";
 import { CloudScope, DatabricksModuleId } from "@/types/navigation";
 import { FinOpsModule } from "@/types";
+import type { ConnectionView } from "@/lib/connectionState";
 
 export type ViewMode =
   | "home"
@@ -64,6 +65,8 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
+  /** Single derived workspace connection state (same object the header and modules use). */
+  connectionView?: ConnectionView;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -81,9 +84,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   isMobileOpen = false,
   onCloseMobile,
+  connectionView,
 }) => {
   const [isMonitoringOpen, setIsMonitoringOpen] = useState<boolean>(true);
   const [isDatabricksOpen, setIsDatabricksOpen] = useState<boolean>(true);
+
+  const databricksConnectionError = connectionView?.reason ?? null;
+  const databricksBadge = (() => {
+    const tone = connectionView?.tone ?? "checking";
+    const label = connectionView?.label ?? "Checking";
+    const stale = connectionView?.stale ? " (stale)" : "";
+    switch (tone) {
+      case "ok":
+        return {
+          label: `${label}${stale}`,
+          dotClass: stale ? "bg-amber-500" : "bg-emerald-500 animate-pulse",
+          pillClass: stale
+            ? "text-amber-800 bg-amber-50 border-amber-200"
+            : "text-emerald-700 bg-emerald-50 border-emerald-200",
+        };
+      case "bad":
+        return { label, dotClass: "bg-rose-500", pillClass: "text-rose-700 bg-rose-50 border-rose-200" };
+      case "warn":
+        return { label, dotClass: "bg-amber-500", pillClass: "text-amber-800 bg-amber-50 border-amber-200" };
+      case "checking":
+        return { label, dotClass: "bg-blue-500 animate-pulse", pillClass: "text-blue-700 bg-blue-50 border-blue-200" };
+      default:
+        return { label, dotClass: "bg-slate-400", pillClass: "text-slate-600 bg-slate-100 border-slate-300" };
+    }
+  })();
 
   // Section A: WORKSPACE & OPERATIONS (Modules 1-11)
   const workspaceOperationsNav: {
@@ -554,9 +583,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {!isCollapsed && <span>Databricks Workspace</span>}
                 {!isCollapsed && (
                   <span className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className={`w-1.5 h-1.5 rounded-full ${databricksBadge.dotClass}`} />
                     <span className="text-[9px] font-bold text-orange-600 font-mono">
-                      {activeScope?.workspace_id || "642006393507276"}
+                      {connectionView?.workspaceId ?? activeScope?.workspace_id ?? "-"}
                     </span>
                   </span>
                 )}
@@ -576,7 +605,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     }
                   }
                 }}
-                title={isCollapsed ? "Databricks Workspace" : undefined}
+                title={
+                  isCollapsed
+                    ? "Databricks Workspace"
+                    : databricksConnectionError || `Databricks Workspace (${databricksBadge.label})`
+                }
                 className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${
                   isDatabricksActive
                     ? "bg-orange-50/80 text-orange-950 font-semibold border border-orange-200"
@@ -592,8 +625,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                 {!isCollapsed && (
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[9px] uppercase font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
-                      Connected
+                    <span
+                      className={`text-[9px] uppercase font-bold border px-1.5 py-0.5 rounded ${databricksBadge.pillClass}`}
+                      title={databricksConnectionError || databricksBadge.label}
+                    >
+                      {databricksBadge.label}
                     </span>
                     <ChevronDown
                       className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${

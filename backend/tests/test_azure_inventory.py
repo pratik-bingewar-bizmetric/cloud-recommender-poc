@@ -322,3 +322,83 @@ async def test_fetch_live_resource_metrics(mock_azure_service: AzureInventorySer
         assert metrics["avg_cpu_percent"] == 18.8
         assert metrics["p95_cpu_percent"] == 22.8
         assert metrics["metric_window_days"] == 14
+
+
+@pytest.mark.asyncio
+async def test_azure_inventory_skips_placeholder_sp_credentials() -> None:
+    """Verify placeholder or short SP values skip Entra POST and fall back to CLI or none."""
+    from cloud_recommender.core.config import has_valid_sp_credentials, is_valid_credential_value
+
+    assert is_valid_credential_value("your-client-id") is False
+    assert is_valid_credential_value("changeme") is False
+    assert is_valid_credential_value("xxx-1234567890") is False
+    assert is_valid_credential_value("short9") is False
+    assert is_valid_credential_value("1dc51b34-ba35-46c9-8f2a-71930fa5e9a7") is True
+    assert has_valid_sp_credentials("your_tenant", "your-client-id", "changeme") is False
+
+    settings = Settings(
+        azure_tenant_id="your_azure_tenant_id_here",
+        azure_client_id="your-client-id",
+        azure_client_secret="changeme",
+        offline_pricing_mode=True,
+    )
+    svc = AzureInventoryService(settings=settings)
+    with (
+        patch("httpx.AsyncClient.post") as mock_post,
+        patch("shutil.which", return_value=None),
+    ):
+        token, auth_method = await svc.get_access_token()
+        mock_post.assert_not_called()
+        assert token is None
+        assert auth_method == "none"
+
+
+def test_azure_cost_management_skips_placeholder_sp_credentials() -> None:
+    """Verify AzureCostManagementService skips Entra POST when SP credentials are placeholders."""
+    from cloud_recommender.services.azure.cost_management_service import AzureCostManagementService
+
+    settings = Settings(
+        azure_tenant_id="your_azure_tenant_id_here",
+        azure_client_id="your-client-id",
+        azure_client_secret="xxx",
+        catalog_offline_mode=False,
+    )
+    cm = AzureCostManagementService(settings=settings)
+    with patch("httpx.Client.post") as mock_post:
+        token, auth_method = cm.get_access_token()
+        mock_post.assert_not_called()
+        assert token is None
+        assert auth_method == "none"
+
+
+@pytest.mark.asyncio
+async def test_azure_inventory_strict_sp_verification_never_reports_cli_as_sp() -> None:
+    """Verify strict SP check never reports Azure CLI fallback as SP authentication success."""
+    from unittest.mock import MagicMock
+
+    settings = Settings(
+        azure_tenant_id="test-tenant-0000-0000",
+        azure_client_id="test-client-0000-0000",
+        azure_client_secret="wrong-secret-value-1234",
+        offline_pricing_mode=True,
+    )
+    svc = AzureInventoryService(settings=settings)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 401
+    mock_resp.json.return_value = {
+        "error": "invalid_client",
+        "error_description": "AADSTS7000215: Invalid client secret provided.",
+    }
+
+    with (
+        patch("httpx.AsyncClient.post", AsyncMock(return_value=mock_resp)),
+        patch("shutil.which", return_value="az"),
+    ):
+        sp_tok, status_code, detail = await svc.verify_sp_access_token()
+        assert sp_tok is None
+        assert status_code == 401
+        assert "AADSTS7000215" in detail
+
+        token, method = await svc.get_access_token(allow_cli_fallback=False)
+        assert token is None
+        assert method == "none"

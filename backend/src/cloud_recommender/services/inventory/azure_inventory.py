@@ -9,6 +9,7 @@ Strict adherence to architectural boundaries:
 - Generates evidence-based Mermaid architecture graphs and deterministic cost rollups.
 """
 
+import asyncio
 import json
 import re
 import shutil
@@ -20,7 +21,12 @@ from typing import Any
 import httpx
 import structlog
 
-from cloud_recommender.core.config import Settings, get_settings
+from cloud_recommender.core.config import (
+    Settings,
+    get_settings,
+    has_valid_sp_credentials,
+    reload_settings,
+)
 from cloud_recommender.schemas.analysis import WorkloadAssumptions
 from cloud_recommender.schemas.common import CloudProvider, ServiceCategory
 from cloud_recommender.schemas.inventory import (
@@ -46,6 +52,17 @@ logger = structlog.get_logger(__name__)
 ROUND_CENTS = Decimal("0.01")
 
 
+class AzureAuthenticationRequired(Exception):
+    """No usable Azure identity (e.g. expired 'az login'); fixtures are never substituted silently."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or "Azure authentication required: no valid Azure identity. Run 'az login' or configure "
+            "AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET."
+        )
+
+
 def _quantize_money(val: Decimal) -> Decimal:
     return val.quantize(ROUND_CENTS, rounding=ROUND_HALF_UP)
 
@@ -58,47 +75,89 @@ class AzureInventoryService:
         settings: Settings | None = None,
         pricing_engine: AzurePricingEngine | None = None,
     ) -> None:
+        self._explicit_settings = settings is not None
         self.settings = settings or get_settings()
         self.pricing_engine = pricing_engine or AzurePricingEngine(settings=self.settings)
+        # Outcome of every paginated ARM read (pages, records, completeness, exact error).
+        self.pagination_log: list[dict[str, Any]] = []
 
-    async def get_access_token(self) -> tuple[str | None, str]:
+    async def verify_sp_access_token(self) -> tuple[str | None, int | None, str]:
+        """Acquire an Azure ARM token strictly via Service Principal OAuth2 (no CLI fallback).
+
+        Returns (access_token_or_none, http_status_code, sanitized_detail).
+        """
+        active_settings = self.settings if self._explicit_settings else reload_settings()
+        if not self._explicit_settings:
+            self.settings = active_settings
+
+        tenant_id = (active_settings.azure_tenant_id or "").strip()
+        client_id = (active_settings.azure_client_id or "").strip()
+        client_secret = (active_settings.azure_client_secret or "").strip()
+
+        if not has_valid_sp_credentials(tenant_id, client_id, client_secret):
+            return (
+                None,
+                None,
+                "AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET missing or placeholders.",
+            )
+
+        token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "scope": "https://management.azure.com/.default",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(token_url, data=data)
+            if resp.status_code == 200:
+                payload = resp.json()
+                token = payload.get("access_token")
+                if token:
+                    return token, 200, "Azure Service Principal OAuth2 token acquired."
+                return None, 200, "Entra token endpoint returned 200 without access_token."
+
+            err_detail = f"HTTP {resp.status_code}"
+            try:
+                err_json = resp.json()
+                err_code = err_json.get("error", "")
+                err_desc = err_json.get("error_description", "")
+                if err_code or err_desc:
+                    err_detail = f"{err_code}: {err_desc}".strip(": ")
+            except Exception:
+                if resp.text:
+                    err_detail = resp.text[:300]
+            if client_secret and len(client_secret) >= 4:
+                err_detail = err_detail.replace(client_secret, "[REDACTED_SECRET]")
+            logger.warning("azure_sp_token_request_failed", status_code=resp.status_code)
+            return None, resp.status_code, err_detail
+        except Exception as exc:
+            err_msg = str(exc)
+            if client_secret and len(client_secret) >= 4:
+                err_msg = err_msg.replace(client_secret, "[REDACTED_SECRET]")
+            logger.warning("azure_sp_token_exception", error=err_msg)
+            return None, None, err_msg
+
+    async def get_access_token(self, allow_cli_fallback: bool = True) -> tuple[str | None, str]:
         """Obtain read-only Azure Resource Manager access token without exposing secrets.
 
         Returns (token, auth_method_description).
         """
-        tenant_id = (self.settings.azure_tenant_id or "").strip()
-        client_id = (self.settings.azure_client_id or "").strip()
-        client_secret = (self.settings.azure_client_secret or "").strip()
+        sp_token, _, _ = await self.verify_sp_access_token()
+        if sp_token:
+            return sp_token, "service_principal_oauth2"
 
-        # 1. Service Principal OAuth2 Client Credentials
-        if tenant_id and client_id and client_secret:
-            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-            data = {
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "scope": "https://management.azure.com/.default",
-            }
-            try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.post(token_url, data=data)
-                    if resp.status_code == 200:
-                        payload = resp.json()
-                        token = payload.get("access_token")
-                        if token:
-                            return token, "service_principal_oauth2"
-                    logger.warning(
-                        "azure_sp_token_request_failed",
-                        status_code=resp.status_code,
-                    )
-            except Exception as exc:
-                logger.warning("azure_sp_token_exception", error=str(exc))
+        if not allow_cli_fallback:
+            return None, "none"
 
         # 2. Azure CLI session (if az is installed and logged in)
         az_path = shutil.which("az") or shutil.which("az.cmd")
         if az_path:
             try:
-                proc = subprocess.run(
+                # Blocking CLI call: run in a worker thread so it cannot stall the event loop.
+                proc = await asyncio.to_thread(
+                    subprocess.run,
                     [
                         az_path,
                         "account",
@@ -162,10 +221,20 @@ class AzureInventoryService:
             access_limitations=limitations,
         )
 
+    # Pagination safety: bounded pages, bounded retries, loop detection.
+    _ARM_MAX_PAGES = 500
+    _ARM_MAX_RETRIES = 3
+    _ARM_RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
     async def _arm_get_all(
         self, url: str, token: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Query read-only ARM endpoint handling nextLink pagination."""
+        """Query a read-only ARM endpoint following every ``nextLink`` until the source ends.
+
+        Never reports partial data as complete: the outcome of every call (pages, records,
+        completeness, exact HTTP status and error) is appended to ``self.pagination_log`` so the
+        API layer can show INCOMPLETE / ACCESS_DENIED instead of a silently short list.
+        """
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -173,11 +242,43 @@ class AzureInventoryService:
         all_items: list[dict[str, Any]] = []
         current_url: str | None = url
         current_params = params
+        seen: set[str] = set()
+        pages = 0
+        entry: dict[str, Any] = {
+            "url": url.split("?", 1)[0],
+            "pages": 0,
+            "records": 0,
+            "complete": True,
+            "http_status": 200,
+            "error": None,
+        }
+
+        async def _get(client: httpx.AsyncClient, target: str, prm: Any) -> httpx.Response:
+            attempt = 0
+            while True:
+                resp = await client.get(target, headers=headers, params=prm)
+                if resp.status_code not in self._ARM_RETRYABLE or attempt >= self._ARM_MAX_RETRIES:
+                    return resp
+                attempt += 1
+                try:
+                    delay = (
+                        float(resp.headers.get("Retry-After", "")) if resp.status_code == 429 else 0
+                    )
+                except ValueError:
+                    delay = 0
+                await asyncio.sleep(min(max(delay, 0.5 * 2**attempt), 20.0))
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 while current_url:
-                    resp = await client.get(current_url, headers=headers, params=current_params)
+                    if current_url in seen or pages >= self._ARM_MAX_PAGES:
+                        entry.update(
+                            complete=False,
+                            error="Pagination stopped: repeated nextLink or page limit reached.",
+                        )
+                        break
+                    seen.add(current_url)
+                    resp = await _get(client, current_url, current_params)
                     current_params = None  # Params are encoded into nextLink URL
                     if resp.status_code != 200:
                         logger.warning(
@@ -186,15 +287,25 @@ class AzureInventoryService:
                             status_code=resp.status_code,
                             detail=resp.text[:300],
                         )
+                        entry.update(
+                            complete=False,
+                            http_status=resp.status_code,
+                            error=resp.text[:300],
+                        )
                         break
                     data = resp.json()
                     items = data.get("value", [])
                     if isinstance(items, list):
                         all_items.extend(items)
+                    pages += 1
                     current_url = data.get("nextLink")
         except (httpx.TimeoutException, httpx.RequestError) as err:
             logger.warning("arm_network_error", url=current_url, error=str(err))
+            entry.update(complete=False, http_status=None, error=f"{type(err).__name__}: {err}")
 
+        entry.update(pages=pages, records=len(all_items))
+        self.pagination_log.append(entry)
+        del self.pagination_log[:-200]  # bounded
         return all_items
 
     async def list_subscriptions(self, token: str | None = None) -> list[CloudScopeSummary]:
@@ -202,7 +313,9 @@ class AzureInventoryService:
         if not token:
             token, _ = await self.get_access_token()
         if not token:
-            # Fallback to demo fixture subscription if unauthenticated
+            if not self.settings.allow_demo_fixtures:
+                raise AzureAuthenticationRequired()
+            # Explicit opt-in only: labelled demo fixture subscription
             return [
                 CloudScopeSummary(
                     provider=CloudProvider.AZURE,
@@ -1260,6 +1373,9 @@ class AzureInventoryService:
         token, auth_method = await self.get_access_token()
 
         if not token:
+            if not self.settings.allow_demo_fixtures:
+                logger.warning("azure_token_unavailable_failing_closed")
+                raise AzureAuthenticationRequired()
             logger.info("azure_token_unavailable_using_mock_fixture")
             return self._get_demo_fixture_analysis(
                 subscription_id or "f718c261-ab85-49fd-907e-99c022cc2aeb", assumptions
@@ -1305,7 +1421,7 @@ class AzureInventoryService:
             sub_id, token=token, resource_group=resource_group_filter
         )
 
-        if not raw_rgs and not raw_resources:
+        if not raw_rgs and not raw_resources and self.settings.allow_demo_fixtures:
             logger.info(
                 "arm_discovery_returned_no_resources_falling_back_to_fixture", sub_id=sub_id
             )

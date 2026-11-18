@@ -9,7 +9,15 @@ import {
   TechnicalDebtItem,
 } from "@/types";
 import { FinancialKpiDrawer } from "@/components/FinancialKpiDrawer";
-import { buildCanonicalFinancialSummary } from "@/lib/financials";
+import {
+  buildCanonicalFinancialSummary,
+  financialUnavailableReason,
+  FINANCIAL_UNAVAILABLE_MESSAGES,
+  financialErrorFromStatus,
+  formatFinancialCurrency,
+  NO_DATA_LABEL,
+  periodSuffix,
+} from "@/lib/financials";
 import { FinancialKpiType } from "@/types/financials";
 import {
   TrendingDown,
@@ -33,6 +41,8 @@ interface SectionCostWasteProps {
   overview: MonitoringOverviewResponse | null;
   analysisData: SubscriptionOrProjectAnalysis | null;
   isLoading: boolean;
+  /** HTTP status of a failed analysis call (null = network error); absent = no failure. */
+  analysisError?: { status: number | null } | null;
   onRefresh: () => void;
   onInspectResource?: (resourceId: string) => void;
 }
@@ -44,6 +54,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
   overview,
   analysisData,
   isLoading,
+  analysisError,
   onRefresh,
   onInspectResource,
 }) => {
@@ -67,9 +78,21 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
     );
   }, [provider, scopeId, scopeName, overview, analysisData]);
 
-  const monthlySpend = canonicalFinancials.estimated_monthly_spend;
-  const monthlySavings = canonicalFinancials.potential_monthly_savings;
-  const annualSavings = canonicalFinancials.projected_annual_savings;
+  // null = the source did not provide the value: rendered as "No data available", never as $0.00.
+  const monthlySpend = canonicalFinancials?.estimated_monthly_spend ?? null;
+  const monthlySavings = canonicalFinancials?.potential_monthly_savings ?? null;
+  const annualSavings = canonicalFinancials?.projected_annual_savings ?? null;
+  // One user-facing status line. Server text is never shown: only a fixed message per HTTP status.
+  const financialNotice: string | null = analysisError
+    ? financialErrorFromStatus(analysisError.status, provider).message
+    : !canonicalFinancials
+    ? FINANCIAL_UNAVAILABLE_MESSAGES[financialUnavailableReason(overview, analysisData) ?? "NO_DATA"]
+    : monthlySpend === null
+    ? FINANCIAL_UNAVAILABLE_MESSAGES.NO_BILLING_DATA
+    : null;
+
+  // Counts and "nothing found" claims are only valid when the analysis actually returned.
+  const analysisAvailable = analysisData !== null;
 
   const rawFindings: ResourceWasteFinding[] =
     analysisData?.waste_findings && analysisData.waste_findings.length > 0
@@ -175,6 +198,12 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
         </button>
       </div>
 
+      {financialNotice && !isLoading && (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+          {financialNotice}
+        </div>
+      )}
+
       {/* 2. Four Executive FinOps KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {/* KPI 1: Estimated Monthly Spend */}
@@ -189,8 +218,8 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
             <DollarSign className="w-3.5 h-3.5 text-slate-400" />
           </div>
           <div className="text-xl font-bold text-navy-950 font-mono tracking-tight">
-            ${monthlySpend.toFixed(2)}
-            <span className="text-xs font-normal text-slate-400">/mo</span>
+            {formatFinancialCurrency(monthlySpend)}
+            <span className="text-xs font-normal text-slate-400">{periodSuffix(monthlySpend, "/mo")}</span>
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-0.5">
             <span>{provider === "gcp" ? "GCP Catalog list" : "Azure Retail Prices"}</span>
@@ -212,12 +241,12 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
             <TrendingDown className="w-3.5 h-3.5 text-emerald-600" />
           </div>
           <div className="text-xl font-bold text-emerald-700 font-mono tracking-tight">
-            ${monthlySavings.toFixed(2)}
-            <span className="text-xs font-normal text-emerald-600">/mo</span>
+            {formatFinancialCurrency(monthlySavings)}
+            <span className="text-xs font-normal text-emerald-600">{periodSuffix(monthlySavings, "/mo")}</span>
           </div>
           <div className="flex items-center justify-between text-[11px] text-emerald-700 font-semibold mt-0.5">
             <span>
-              {monthlySpend > 0
+              {monthlySpend !== null && monthlySavings !== null && monthlySpend > 0
                 ? `${((monthlySavings / monthlySpend) * 100).toFixed(1)}% spend reduction`
                 : "Identified optimization"}
             </span>
@@ -239,8 +268,8 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
             <Zap className="w-3.5 h-3.5 text-amber-500" />
           </div>
           <div className="text-xl font-bold text-navy-950 font-mono tracking-tight">
-            ${annualSavings.toFixed(2)}
-            <span className="text-xs font-normal text-slate-400">/yr</span>
+            {formatFinancialCurrency(annualSavings)}
+            <span className="text-xs font-normal text-slate-400">{periodSuffix(annualSavings, "/yr")}</span>
           </div>
           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-0.5">
             <span>Non-double-counted guarantee</span>
@@ -257,10 +286,12 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
             <Layers className="w-3.5 h-3.5 text-blue-500" />
           </div>
           <div className="text-xl font-bold text-navy-950 font-mono tracking-tight">
-            {rawFindings.length + techDebtItems.length}
+            {analysisAvailable ? rawFindings.length + techDebtItems.length : NO_DATA_LABEL}
           </div>
           <span className="text-[11px] text-slate-400 block mt-0.5">
-            {rawFindings.length} waste &bull; {techDebtItems.length} tech debt
+            {analysisAvailable
+              ? `${rawFindings.length} waste \u2022 ${techDebtItems.length} tech debt`
+              : "Analysis unavailable"}
           </span>
         </div>
       </div>
@@ -273,14 +304,14 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
               FinOps Waste Category Distribution
             </h4>
             <span className="text-xs font-mono text-slate-500">
-              Total Waste Pool: ${monthlySavings.toFixed(2)}/mo
+              Total Waste Pool: {formatFinancialCurrency(monthlySavings)}{periodSuffix(monthlySavings, "/mo")}
             </span>
           </div>
 
           {/* Stacked Progress Bar */}
           <div className="w-full bg-slate-100 rounded-lg h-3 flex overflow-hidden">
             {Object.entries(categoryTotals).map(([cat, val], idx) => {
-              const pct = monthlySavings > 0 ? (val / monthlySavings) * 100 : 0;
+              const pct = monthlySavings !== null && monthlySavings > 0 ? (val / monthlySavings) * 100 : 0;
               const colors = [
                 "bg-emerald-500",
                 "bg-blue-500",
@@ -303,7 +334,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
           {/* Category Legend Chips */}
           <div className="flex flex-wrap items-center gap-3 pt-1">
             {Object.entries(categoryTotals).map(([cat, val], idx) => {
-              const pct = monthlySavings > 0 ? (val / monthlySavings) * 100 : 0;
+              const pct = monthlySavings !== null && monthlySavings > 0 ? (val / monthlySavings) * 100 : 0;
               const dotColors = [
                 "bg-emerald-500",
                 "bg-blue-500",
@@ -359,7 +390,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
             </p>
           </div>
           <span className="text-xs font-mono text-slate-400">
-            {filteredFindings.length} findings
+            {analysisAvailable ? `${filteredFindings.length} findings` : NO_DATA_LABEL}
           </span>
         </div>
 
@@ -421,7 +452,9 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
           </div>
         ) : (
           <div className="p-8 text-center text-slate-400 italic">
-            Zero unattached disks, oversized compute, or idle storage detected in current scope.
+            {analysisAvailable
+              ? "Zero unattached disks, oversized compute, or idle storage detected in current scope."
+              : `Findings unavailable. ${financialNotice ?? NO_DATA_LABEL}`}
           </div>
         )}
       </div>
@@ -731,7 +764,7 @@ export const SectionCostWaste: React.FC<SectionCostWasteProps> = ({
       )}
 
       {/* 5. Interactive Canonical Financial KPI Drawer */}
-      {financialDrawerKpi && (
+      {financialDrawerKpi && canonicalFinancials && (
         <FinancialKpiDrawer
           isOpen={Boolean(financialDrawerKpi)}
           onClose={() => {

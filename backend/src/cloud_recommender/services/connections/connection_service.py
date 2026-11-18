@@ -81,8 +81,8 @@ class ConnectionService:
                     )
             except Exception as exc:
                 logger.warning("azure_list_connections_error", error=str(exc))
-        else:
-            # Fallback reference connection when unauthenticated
+        elif self.settings.allow_demo_fixtures:
+            # Explicit opt-in only: labelled reference connection when unauthenticated
             connections.append(
                 CloudConnection(
                     id="azure-ref-sub-prod",
@@ -130,8 +130,8 @@ class ConnectionService:
                     )
             except Exception as exc:
                 logger.warning("gcp_list_connections_error", error=str(exc))
-        else:
-            # Verified benchmark fixture
+        elif self.settings.allow_demo_fixtures:
+            # Explicit demo opt-in only: labelled reference benchmark fixture
             connections.append(
                 CloudConnection(
                     id="gcp-smart-expense-prod",
@@ -392,7 +392,7 @@ class ConnectionService:
             data = {
                 "grant_type": "client_credentials",
                 "client_id": req.azure_client_id.strip(),
-                "client_secret": req.azure_client_secret.strip(),
+                "client_secret": req.azure_client_secret.get_secret_value().strip(),
                 "scope": "https://management.azure.com/.default",
             }
             try:

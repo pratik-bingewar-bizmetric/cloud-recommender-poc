@@ -83,7 +83,7 @@ class DatabricksWorkspaceIngestor(BaseProviderIngestor):
                             region=matched_conn.region or "eastus",
                             status=ResourceIngestionStatus.SUCCESS,
                             inventory_extracted=True,
-                            cost_extracted=True,
+                            cost_extracted=False,
                             metrics_extracted=True,
                             extracted_records_count=total_discovered,
                             inventory_payload={
@@ -99,15 +99,8 @@ class DatabricksWorkspaceIngestor(BaseProviderIngestor):
                                     k: v.status.value for k, v in disc.categories.items()
                                 },
                             },
-                            cost_records=[
-                                {
-                                    "workspace_id": ws_id,
-                                    "date": "2026-11-05",
-                                    "sku_name": "STANDARD_ALL_PURPOSE_COMPUTE",
-                                    "estimated_cost_usd": 7.36,
-                                    "source": "workspace_contract_estimate",
-                                }
-                            ],
+                            # No cost record: spend comes only from approved system.billing ingestion.
+                            cost_records=[],
                             metric_records=[
                                 {
                                     "workspace_id": ws_id,

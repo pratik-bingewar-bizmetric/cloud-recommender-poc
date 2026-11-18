@@ -21,6 +21,7 @@ import {
   TrendingDown,
   SlidersHorizontal,
   Server,
+  Cloud,
 } from "lucide-react";
 
 import { ENABLE_AI_ARCHITECT } from "@/config/features";
@@ -30,6 +31,7 @@ import { FinOpsModule } from "@/types";
 export type ViewMode =
   | "home"
   | "dashboard"
+  | "azure-live"
   | "configuration"
   | "databricks"
   | "finops"
@@ -233,6 +235,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Home className="w-4 h-4" />
                 </span>
                 {!isCollapsed && <span className="truncate">Home</span>}
+              </div>
+            </button>
+
+            {/* Azure Live (user-supplied service principal) */}
+            <button
+              type="button"
+              onClick={() => handleNavClick("azure-live")}
+              title={isCollapsed ? "Azure Live" : undefined}
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${
+                currentView === "azure-live"
+                  ? "bg-brand-50 text-brand-700 font-semibold"
+                  : "text-navy-700 hover:bg-slate-50 hover:text-navy-900"
+              } ${isCollapsed ? "justify-center" : "justify-between"}`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={currentView === "azure-live" ? "text-brand-600" : "text-slate-500"}>
+                  <Cloud className="w-4 h-4" />
+                </span>
+                {!isCollapsed && <span className="truncate">Azure Live</span>}
               </div>
             </button>
 

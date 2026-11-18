@@ -11,6 +11,7 @@ import { Root } from './Root';
 import { bootstrapAuth } from './services/rayfin-auth.service';
 
 import './global.css';
+import './lib/build-info';
 
 const rayfinAuthService = await bootstrapAuth();
 

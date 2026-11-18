@@ -7,7 +7,10 @@ import {
   ConnectionValidationResponse,
   CreateConnectionRequest,
 } from "@/types";
-import { listConnections, validateConnection, createConnection } from "@/lib/api";
+import { listConnections, validateConnection, createConnection, deleteConnection } from "@/lib/api";
+import { describeConnectionError } from "@/lib/connectionErrors";
+import { FabricAuthPendingNotice } from "@/components/FabricAuthPendingNotice";
+import { isFabricAuthPendingError, isFabricUdfAuthPending } from "@/lib/fabric-udf-status";
 import {
   ShieldCheck,
   CheckCircle2,
@@ -38,6 +41,8 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   const [connections, setConnections] = useState<CloudConnection[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  // Entra authentication for Fabric UDFs is not configured yet: an explicit state, not an empty list.
+  const [authPending, setAuthPending] = useState<boolean>(() => isFabricUdfAuthPending());
 
   // Selected existing connection per provider
   const [selectedAzureId, setSelectedAzureId] = useState<string>("");
@@ -69,8 +74,16 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
 
   // Fetch configured connections on mount
   const loadConnections = useCallback(async () => {
-    setIsLoading(true);
     setFetchError(null);
+    if (isFabricUdfAuthPending()) {
+      // No request is made and nothing is faked: the lists stay unknown, not empty.
+      setAuthPending(true);
+      setConnections([]);
+      setIsLoading(false);
+      return;
+    }
+    setAuthPending(false);
+    setIsLoading(true);
     try {
       const data = await listConnections();
       setConnections(data);
@@ -81,6 +94,11 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
       const firstGcp = data.find((c) => c.provider === "gcp");
       if (firstGcp) setSelectedGcpId(firstGcp.id);
     } catch (err: unknown) {
+      if (isFabricAuthPendingError(err)) {
+        setAuthPending(true);
+        setConnections([]);
+        return;
+      }
       setFetchError(
         err instanceof Error ? err.message : "Failed to load configured cloud connections."
       );
@@ -140,8 +158,19 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   // 2. Add New Azure Connection Flow
   const handleCreateAzure = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAzName || !newAzSubId || !newAzTenantId || !newAzClientId || !newAzSecret) {
-      setValidationError("All fields are required to validate Azure Service Principal.");
+    const missing = [
+      ["Connection name", newAzName],
+      ["Subscription ID", newAzSubId],
+      ["Tenant ID", newAzTenantId],
+      ["Client ID", newAzClientId],
+      ["Client secret", newAzSecret],
+    ]
+      .filter(([, value]) => !value)
+      .map(([label]) => label);
+    if (missing.length > 0) {
+      setValidationError(`Required to validate the Azure service principal: ${missing.join(", ")}.`);
+      setActiveValidatingProvider("azure"); // the status panel that shows the error needs both
+      setValidationStep("failed");
       return;
     }
 
@@ -152,6 +181,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     try {
       const req: CreateConnectionRequest = {
         provider: "azure",
+        auth_method: "service_principal",
         name: newAzName,
         scope_id: newAzSubId,
         azure_tenant_id: newAzTenantId,
@@ -159,6 +189,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
         azure_client_secret: newAzSecret,
       };
       const created = await createConnection(req);
+      setNewAzSecret(""); // the secret is not kept in the page after the backend stored it encrypted
 
       setValidationStep("discovering");
       const val = await validateConnection({
@@ -172,12 +203,21 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
       await new Promise((r) => setTimeout(r, 800));
       onConnectionSelected(created, val);
     } catch (err: unknown) {
+      // Non-secret fields stay filled so the user can correct them; the secret is re-entered.
+      setNewAzSecret("");
       setValidationStep("failed");
-      setValidationError(
-        err instanceof Error
-          ? err.message
-          : "Failed to create and validate Azure connection. Verify credentials."
-      );
+      const view = describeConnectionError(err);
+      setValidationError(`${view.title}: ${view.message}`);
+    }
+  };
+
+  const handleDeleteSaved = async (conn: CloudConnection) => {
+    try {
+      await deleteConnection(conn.id); // also removes the stored (encrypted) credential
+      await loadConnections();
+    } catch (err: unknown) {
+      const view = describeConnectionError(err);
+      setValidationError(`${view.title}: ${view.message}`);
     }
   };
 
@@ -249,6 +289,8 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
             </span>
           </div>
         </div>
+
+        {authPending && <FabricAuthPendingNotice />}
 
         {/* Global Error Banner */}
         {fetchError && (
@@ -399,6 +441,8 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                       <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-brand-600" />
                       <span>Discovering configured Azure subscriptions...</span>
                     </div>
+                  ) : authPending ? (
+                    <FabricAuthPendingNotice compact />
                   ) : azureConnections.length === 0 ? (
                     <div className="p-6 text-center border border-dashed border-slate-200 rounded-xl text-xs text-slate-500">
                       <p className="font-medium text-navy-800 mb-1">No saved connections yet</p>
@@ -445,6 +489,35 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                               Auth: {conn.auth_method} &bull; Read-Only (Reader)
                             </p>
                           </div>
+                          {conn.ownership === "owned" && (
+                            <div className="mt-2 flex flex-wrap items-center gap-1" data-testid={`integrations-${conn.id}`}>
+                              {(conn.integrations ?? []).map((i) => (
+                                <span
+                                  key={i.integration}
+                                  title={i.message ?? undefined}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                                    i.state === "connected"
+                                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                      : i.state === "not_configured"
+                                        ? "bg-slate-50 text-slate-500 border-slate-200"
+                                        : "bg-amber-50 text-amber-800 border-amber-200"
+                                  }`}
+                                >
+                                  {i.integration.replace(/_/g, " ")}: {i.state.replace(/_/g, " ")}
+                                </span>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDeleteSaved(conn);
+                                }}
+                                className="ml-auto px-2 py-0.5 rounded border border-rose-200 text-rose-700 text-[10px] font-semibold hover:bg-rose-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })
@@ -536,7 +609,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
 
                   <button
                     type="submit"
-                    disabled={validationStep === "validating" || validationStep === "discovering"}
+                    disabled={authPending || validationStep === "validating" || validationStep === "discovering"}
                     className="w-full py-2 px-4 rounded-lg bg-navy-900 hover:bg-navy-800 text-white font-medium text-xs shadow-2xs transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                   >
                     {validationStep === "validating" ? (
@@ -555,7 +628,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
               <div className="pt-4 border-t border-slate-100 mt-4">
                 <button
                   type="button"
-                  disabled={!selectedAzureId || validationStep === "connecting" || validationStep === "validating" || validationStep === "discovering"}
+                  disabled={authPending || !selectedAzureId || validationStep === "connecting" || validationStep === "validating" || validationStep === "discovering"}
                   onClick={() => {
                     const conn = azureConnections.find((c) => c.id === selectedAzureId);
                     if (conn) handleConnectExisting(conn);
@@ -638,6 +711,8 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                       <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-amber-600" />
                       <span>Discovering configured Google Cloud scopes...</span>
                     </div>
+                  ) : authPending ? (
+                    <FabricAuthPendingNotice compact />
                   ) : gcpConnections.length === 0 ? (
                     <div className="p-6 text-center border border-dashed border-slate-200 rounded-xl text-xs text-slate-500">
                       <p className="font-medium text-navy-800 mb-1">No saved connections yet</p>
@@ -744,7 +819,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
 
                   <button
                     type="submit"
-                    disabled={validationStep === "validating" || validationStep === "discovering"}
+                    disabled={authPending || validationStep === "validating" || validationStep === "discovering"}
                     className="w-full py-2 px-4 rounded-lg bg-navy-900 hover:bg-navy-800 text-white font-medium text-xs shadow-2xs transition flex items-center justify-center gap-1.5 disabled:opacity-50"
                   >
                     {validationStep === "validating" ? (
@@ -763,7 +838,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
               <div className="pt-4 border-t border-slate-100 mt-4">
                 <button
                   type="button"
-                  disabled={!selectedGcpId || validationStep === "connecting" || validationStep === "validating" || validationStep === "discovering"}
+                  disabled={authPending || !selectedGcpId || validationStep === "connecting" || validationStep === "validating" || validationStep === "discovering"}
                   onClick={() => {
                     const conn = gcpConnections.find((c) => c.id === selectedGcpId);
                     if (conn) handleConnectExisting(conn);

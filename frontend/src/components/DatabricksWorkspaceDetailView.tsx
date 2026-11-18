@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import {
   DatabricksConnection,
+  DatabricksConnectionHealth,
   DatabricksWorkspaceDiscovery,
   CategoryDiscoveryStatus,
   DiscoveredResourceItem,
@@ -12,6 +13,10 @@ import {
 } from "@/types";
 import { DatabricksModuleId, CloudScope, ChildResourceScope } from "@/types/navigation";
 import { getFinOpsSystemTables, getFinOpsQueryHistory } from "@/lib/api";
+import { dateInputToMs } from "@/lib/finopsProvenance";
+import type { ConnectionView } from "@/lib/connectionState";
+import { formatUpdatedAt } from "@/lib/refreshScheduler";
+import { ProvenanceBanner } from "@/components/shared/FinOpsProvenance";
 import { formatDeterministicTime, formatDeterministicDateTime } from "@/lib/dateTimeFormat";
 import { ResourceDetailDrawer } from "@/components/shared/ResourceDetailDrawer";
 import { QueryDurationHistogram } from "@/components/shared/QueryDurationHistogram";
@@ -47,6 +52,11 @@ import {
 
 interface DatabricksWorkspaceDetailViewProps {
   connection: DatabricksConnection;
+  connectionHealth?: DatabricksConnectionHealth | null;
+  /** The single derived connection state (same object as header/sidebar/FinOps). */
+  connectionView?: ConnectionView;
+  lastRefreshedAt?: number | null;
+  availableConnections?: DatabricksConnection[];
   discovery: DatabricksWorkspaceDiscovery | null;
   activeModuleId?: DatabricksModuleId;
   onSelectModule?: (moduleId: DatabricksModuleId) => void;
@@ -60,6 +70,10 @@ interface DatabricksWorkspaceDetailViewProps {
 
 export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailViewProps> = ({
   connection,
+  connectionHealth = null,
+  connectionView,
+  lastRefreshedAt = null,
+  availableConnections = [],
   discovery,
   activeModuleId = "overview",
   onSelectModule,
@@ -88,6 +102,10 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   const [isLoadingQueryHistory, setIsLoadingQueryHistory] = useState<boolean>(false);
   const [queryStatusFilter, setQueryStatusFilter] = useState<string>("all");
   const [querySearch, setQuerySearch] = useState<string>("");
+  const [queryStartDate, setQueryStartDate] = useState<string>("");
+  const [queryEndDate, setQueryEndDate] = useState<string>("");
+  const [queryPageTokens, setQueryPageTokens] = useState<string[]>([]); // tokens of pages already visited
+  const [queryPageToken, setQueryPageToken] = useState<string | null>(null);
   const [selectedDurationBucket, setSelectedDurationBucket] = useState<string | null>(null);
   const [selectedQuery, setSelectedQuery] = useState<QueryHistoryItem | null>(null);
   const [isQueryModalOpen, setIsQueryModalOpen] = useState<boolean>(false);
@@ -157,7 +175,11 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
         connection.workspace_id,
         undefined,
         undefined,
-        statusParam
+        statusParam,
+        50,
+        queryPageToken,
+        dateInputToMs(queryStartDate),
+        dateInputToMs(queryEndDate, true)
       );
       setQueryHistoryData(data);
     } catch (err) {
@@ -165,192 +187,66 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
     } finally {
       setIsLoadingQueryHistory(false);
     }
-  }, [connection.connection_id, connection.workspace_id, queryStatusFilter]);
+  }, [connection.connection_id, connection.workspace_id, queryStatusFilter, queryPageToken, queryStartDate, queryEndDate]);
 
   useEffect(() => {
     if (currentTab === "query_history") {
       loadQueryHistory();
     }
-  }, [currentTab, queryStatusFilter, loadQueryHistory]);
+  }, [currentTab, queryStatusFilter, queryPageToken, queryStartDate, queryEndDate, loadQueryHistory]);
 
   const categories = discovery?.categories || {};
   const resources = discovery?.resources || [];
+  const view = connectionView;
+  const isAuthOrConnectionFailed =
+    view?.state === "AUTHENTICATION_REQUIRED" || view?.state === "ACCESS_DENIED" || view?.state === "ERROR";
+  const effectiveErrorMessage =
+    view?.reason ||
+    connectionHealth?.last_error ||
+    categories.workspace?.error_message ||
+    connectionHealth?.limitations?.[0] ||
+    null;
+  const toneClasses: Record<string, string> = {
+    ok: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    warn: "bg-amber-50 text-amber-800 border-amber-300",
+    bad: "bg-rose-50 text-rose-700 border-rose-200",
+    neutral: "bg-slate-100 text-slate-700 border-slate-300",
+    checking: "bg-blue-50 text-blue-700 border-blue-200",
+  };
+  const statusBadgeInfo = {
+    label: view?.label ?? "Checking",
+    classes: toneClasses[view?.tone ?? "checking"],
+  };
+  // Inventory counts are only real when discovery produced a result; otherwise "-" (never 0).
+  const inventoryKnown = !!discovery && discovery.overall_status !== "failed";
+  // A real 0 requires that category's own query to have succeeded (available / confirmed empty).
+  const categoryOk = (cat: string): boolean => {
+    const st = categories[cat]?.status;
+    return st === "available" || st === "no_resources_found";
+  };
+  const count = (n: number, cat: string): string | number => (inventoryKnown && categoryOk(cat) ? n : "-");
 
-  const makeResource = (
-    id: string,
-    name: string,
-    resource_type: string,
-    status: string,
-    creator: string,
-    metadata: Record<string, unknown>
-  ): DiscoveredResourceItem => ({
-    id,
-    name,
-    resource_type,
-    workspace_id: connection.workspace_id,
-    status,
-    creator,
-    source_api: "databricks-rest",
-    metadata,
-    discovered_at: new Date().toISOString(),
-  });
-
-  const clusters: DiscoveredResourceItem[] =
-    resources.filter((r) => r.resource_type === "cluster").length > 0
-      ? resources.filter((r) => r.resource_type === "cluster")
-      : [
-          makeResource(
-            "1102-081455-7t3bqp3v",
-            "adf-deaccelator-compute",
-            "cluster",
-            "TERMINATED",
-            "admin",
-            {
-              node_type_id: "Standard_D4s_v5",
-              autoscale: true,
-              min_workers: 2,
-              max_workers: 8,
-              spark_version: "14.3.x-scala2.12",
-              auto_termination_minutes: 20,
-            }
-          ),
-        ];
-
-  const warehouses: DiscoveredResourceItem[] =
-    resources.filter((r) => r.resource_type === "warehouse").length > 0
-      ? resources.filter((r) => r.resource_type === "warehouse")
-      : [
-          makeResource(
-            "05ed10a52697a344",
-            "Serverless Starter Warehouse",
-            "warehouse",
-            "STOPPED",
-            "admin",
-            {
-              cluster_size: "2X-Small",
-              auto_stop_mins: 10,
-              enable_serverless_compute: true,
-              num_clusters: 0,
-              channel: "CHANNEL_NAME_CURRENT",
-            }
-          ),
-        ];
-
-  const jobs: DiscoveredResourceItem[] =
-    resources.filter((r) => r.resource_type === "job").length > 0
-      ? resources.filter((r) => r.resource_type === "job")
-      : [
-          makeResource(
-            "job-88412",
-            "finops-daily-cost-rollup",
-            "job",
-            "ACTIVE",
-            "finops-automation",
-            {
-              schedule: "Daily at 02:00 UTC (cron)",
-              tasks_count: 3,
-              cluster_spec: "adf-deaccelator-compute",
-            }
-          ),
-          makeResource(
-            "job-99120",
-            "telemetry-sync-lakehouse",
-            "job",
-            "PAUSED",
-            "admin",
-            {
-              schedule: "Hourly (0 * * * *)",
-              tasks_count: 1,
-              cluster_spec: "Serverless Job Cluster",
-            }
-          ),
-        ];
-
-  const pipelines: DiscoveredResourceItem[] =
-    resources.filter((r) => r.resource_type === "pipeline").length > 0
-      ? resources.filter((r) => r.resource_type === "pipeline")
-      : [
-          makeResource(
-            "dlt-pipeline-c812",
-            "billing-telemetry-dlt",
-            "pipeline",
-            "IDLE",
-            "admin",
-            {
-              mode: "Triggered",
-              target: "bronze_telemetry",
-              continuous: false,
-              edition: "Advanced",
-            }
-          ),
-        ];
-
-  const defaultServingEndpoints: DiscoveredResourceItem[] = [
-    makeResource("ep-dbrx-instruct", "databricks-dbrx-instruct", "serving_endpoint", "READY", "admin", {
-      model: "dbrx-instruct",
-      type: "Foundation",
-      scale: "Scale-to-Zero",
-      tokens_today: "1.4M",
-      latency_p95: "142ms",
-    }),
-    makeResource("ep-llama-3-70b", "databricks-meta-llama-3-70b-instruct", "serving_endpoint", "READY", "admin", {
-      model: "llama-3-70b-instruct",
-      type: "Foundation",
-      scale: "Dedicated Small",
-      tokens_today: "3.8M",
-      latency_p95: "195ms",
-    }),
-    makeResource("ep-mixtral-8x7b", "databricks-mixtral-8x7b-instruct", "serving_endpoint", "READY", "admin", {
-      model: "mixtral-8x7b-instruct",
-      type: "Foundation",
-      scale: "Scale-to-Zero",
-      tokens_today: "920K",
-      latency_p95: "115ms",
-    }),
-    makeResource("ep-bge-large-en", "databricks-bge-large-en", "serving_endpoint", "READY", "admin", {
-      model: "bge-large-en",
-      type: "Embeddings",
-      scale: "Scale-to-Zero",
-      tokens_today: "12.4M",
-      latency_p95: "24ms",
-    }),
-    makeResource("ep-gte-large", "databricks-gte-large-en", "serving_endpoint", "READY", "admin", {
-      model: "gte-large-en",
-      type: "Embeddings",
-      scale: "Dedicated Small",
-      tokens_today: "6.1M",
-      latency_p95: "28ms",
-    }),
-  ];
-
-  const servingEndpoints: DiscoveredResourceItem[] =
-    resources.filter((r) => r.resource_type === "serving_endpoint").length > 0
-      ? resources.filter((r) => r.resource_type === "serving_endpoint")
-      : defaultServingEndpoints;
-
-  const defaultApps: DiscoveredResourceItem[] = [
-    makeResource("app-cement-forecasting", "cement-demand-forecasting", "app", "DEPLOYED", "finops-team", {
-      runtime: "Python 3.11 / Streamlit",
-      desc: "Live enterprise demand forecasting and operational telemetry.",
-      unattributed_cost_note: "Shared app compute is isolated in the Unattributed cost bucket under FinOps Cost Allocation.",
-    }),
-    makeResource("app-mcp-ppt", "mcp-generate-ppt", "app", "DEPLOYED", "ai-eng", {
-      runtime: "Python 3.11 / FastAPI",
-      desc: "Model Context Protocol presentation generator assistant.",
-    }),
-    makeResource("app-wonder-cement", "wonder-cement-app", "app", "DEPLOYED", "data-admin", {
-      runtime: "Dash / Plotly",
-      desc: "Enterprise operational intelligence portal.",
-    }),
-  ];
-
-  const apps: DiscoveredResourceItem[] =
-    resources.filter((r) => r.resource_type === "app").length > 0
-      ? resources.filter((r) => r.resource_type === "app")
-      : defaultApps;
+  const clusters: DiscoveredResourceItem[] = resources.filter(
+    (r) => r.resource_type === "cluster"
+  );
+  const warehouses: DiscoveredResourceItem[] = resources.filter(
+    (r) => r.resource_type === "warehouse"
+  );
+  const jobs: DiscoveredResourceItem[] = resources.filter(
+    (r) => r.resource_type === "job"
+  );
+  const pipelines: DiscoveredResourceItem[] = resources.filter(
+    (r) => r.resource_type === "pipeline"
+  );
+  const servingEndpoints: DiscoveredResourceItem[] = resources.filter(
+    (r) => r.resource_type === "serving_endpoint"
+  );
+  const apps: DiscoveredResourceItem[] = resources.filter(
+    (r) => r.resource_type === "app"
+  );
 
   const filteredClusters = clusters.filter((c) => {
-    if (clusterStatusFilter !== "all" && (c.status || "TERMINATED") !== clusterStatusFilter) return false;
+    if (clusterStatusFilter !== "all" && (c.status || "-") !== clusterStatusFilter) return false;
     if (clusterSearch) {
       const q = clusterSearch.toLowerCase();
       if (!c.name.toLowerCase().includes(q) && !c.id.toLowerCase().includes(q)) return false;
@@ -359,7 +255,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   });
 
   const filteredWarehouses = warehouses.filter((w) => {
-    if (whStateFilter !== "all" && (w.status || "STOPPED") !== whStateFilter) return false;
+    if (whStateFilter !== "all" && (w.status || "-") !== whStateFilter) return false;
     if (whSearch) {
       const q = whSearch.toLowerCase();
       if (!w.name.toLowerCase().includes(q) && !w.id.toLowerCase().includes(q)) return false;
@@ -368,7 +264,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   });
 
   const filteredJobs = jobs.filter((j) => {
-    if (jobStatusFilter !== "all" && (j.status || "SUCCESS") !== jobStatusFilter) return false;
+    if (jobStatusFilter !== "all" && (j.status || "-") !== jobStatusFilter) return false;
     if (jobSearch) {
       const q = jobSearch.toLowerCase();
       if (!j.name.toLowerCase().includes(q) && !j.id.toLowerCase().includes(q)) return false;
@@ -377,7 +273,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   });
 
   const filteredPipelines = pipelines.filter((p) => {
-    if (pipelineStateFilter !== "all" && (p.status || "ACTIVE") !== pipelineStateFilter) return false;
+    if (pipelineStateFilter !== "all" && (p.status || "-") !== pipelineStateFilter) return false;
     if (pipelineSearch) {
       const q = pipelineSearch.toLowerCase();
       if (!p.name.toLowerCase().includes(q) && !p.id.toLowerCase().includes(q)) return false;
@@ -386,7 +282,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   });
 
   const filteredServingEndpoints = servingEndpoints.filter((s) => {
-    if (servingStatusFilter !== "all" && (s.status || "READY") !== servingStatusFilter) return false;
+    if (servingStatusFilter !== "all" && (s.status || "-") !== servingStatusFilter) return false;
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
       if (!s.name.toLowerCase().includes(q) && !s.id.toLowerCase().includes(q)) return false;
@@ -395,7 +291,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
   });
 
   const filteredApps = apps.filter((a) => {
-    if (appStatusFilter !== "all" && (a.status || "DEPLOYED") !== appStatusFilter) return false;
+    if (appStatusFilter !== "all" && (a.status || "-") !== appStatusFilter) return false;
     if (appSearch) {
       const q = appSearch.toLowerCase();
       if (!a.name.toLowerCase().includes(q) && !a.id.toLowerCase().includes(q)) return false;
@@ -465,180 +361,13 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
       default:
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
-            Verified
+            {String(status ?? "-")}
           </span>
         );
     }
   };
 
-  // Fallback 10 System Tables Definition
-  const fallbackSystemTables = [
-    {
-      table_name: "system.billing.usage",
-      catalog: "system",
-      schema_name: "billing",
-      description: "Historical compute, storage, serverless and token usage records",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 28,
-      notes: "Catalog schema verified via Unity Catalog API; query execution requires active SQL warehouse.",
-      columns: [
-        { name: "account_id", type: "STRING", comment: "Databricks customer account identifier" },
-        { name: "workspace_id", type: "STRING", comment: "Numeric identifier of source workspace" },
-        { name: "record_id", type: "STRING", comment: "Unique billing event UUID" },
-        { name: "sku_name", type: "STRING", comment: "Standard/Premium SKU designation" },
-        { name: "usage_start_time", type: "TIMESTAMP", comment: "Start of meter billing interval" },
-        { name: "usage_end_time", type: "TIMESTAMP", comment: "End of meter billing interval" },
-        { name: "usage_date", type: "DATE", comment: "Accounting ledger date" },
-        { name: "usage_quantity", type: "DECIMAL(18,4)", comment: "Measured consumption volume" },
-        { name: "usage_unit", type: "STRING", comment: "Always DBU for compute; never tokens" },
-        { name: "cloud", type: "STRING", comment: "Underlying cloud (AZURE / AWS / GCP)" },
-        { name: "billing_origin_product", type: "STRING", comment: "ALL_PURPOSE, JOBS, SQL, APPS, DLTS" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.billing.list_prices",
-      catalog: "system",
-      schema_name: "billing",
-      description: "Published list prices and DBU commercial rate cards",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 16,
-      notes: "Schema verified; live query offline fallback active.",
-      columns: [
-        { name: "sku_name", type: "STRING", comment: "Commercial billing SKU code" },
-        { name: "pricing", type: "MAP<STRING, STRING>", comment: "Tiered pricing rates" },
-        { name: "currency_code", type: "STRING", comment: "USD rate standard" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.access.audit",
-      catalog: "system",
-      schema_name: "access",
-      description: "Security events, identity logins, cluster changes, and ACL updates",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 22,
-      notes: "Security events schema verified; read-only access confirmed.",
-      columns: [
-        { name: "event_time", type: "TIMESTAMP", comment: "Timestamp of audit event" },
-        { name: "user_identity", type: "STRING", comment: "Calling user or SPN principal" },
-        { name: "action_name", type: "STRING", comment: "REST or UI operation triggered" },
-        { name: "service_name", type: "STRING", comment: "clusters, unityCatalog, jobs" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.compute.clusters",
-      catalog: "system",
-      schema_name: "compute",
-      description: "Cluster configuration history, node types, and autoscale states",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 31,
-      notes: "Compute metadata schema verified.",
-      columns: [
-        { name: "cluster_id", type: "STRING", comment: "Unique cluster identifier" },
-        { name: "cluster_name", type: "STRING", comment: "Descriptive label" },
-        { name: "owned_by", type: "STRING", comment: "Creator principal" },
-        { name: "node_type_id", type: "STRING", comment: "VM SKU (e.g. Standard_D4s_v5)" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.compute.warehouses",
-      catalog: "system",
-      schema_name: "compute",
-      description: "SQL warehouse sizing, auto-stop durations, and uptime events",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 19,
-      notes: "SQL warehouse metadata schema verified.",
-      columns: [
-        { name: "warehouse_id", type: "STRING", comment: "16-hex warehouse identifier" },
-        { name: "warehouse_name", type: "STRING", comment: "Warehouse name" },
-        { name: "warehouse_type", type: "STRING", comment: "PRO, CLASSIC, SERVERLESS" },
-        { name: "size", type: "STRING", comment: "2X-Small to 4X-Large" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.compute.node_timeline",
-      catalog: "system",
-      schema_name: "compute",
-      description: "Granular VM allocation and deallocation timeline across clusters",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 14,
-      notes: "Timeline schema verified.",
-      columns: [
-        { name: "cluster_id", type: "STRING", comment: "Parent cluster ID" },
-        { name: "node_id", type: "STRING", comment: "VM instance ID" },
-        { name: "start_time", type: "TIMESTAMP", comment: "Allocation timestamp" },
-        { name: "end_time", type: "TIMESTAMP", comment: "Deallocation timestamp" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.lakeflow.jobs",
-      catalog: "system",
-      schema_name: "lakeflow",
-      description: "Multi-task workflow run executions, triggers, and failure reasons",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 25,
-      notes: "Workflow events schema verified.",
-      columns: [
-        { name: "job_id", type: "BIGINT", comment: "Job workflow identifier" },
-        { name: "run_id", type: "BIGINT", comment: "Run execution ID" },
-        { name: "state", type: "STRING", comment: "SUCCESS, FAILED, RUNNING" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.lakeflow.pipelines",
-      catalog: "system",
-      schema_name: "lakeflow",
-      description: "Delta Live Tables updates, data quality expectations, and state transitions",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 21,
-      notes: "DLT pipeline events schema verified.",
-      columns: [
-        { name: "pipeline_id", type: "STRING", comment: "DLT pipeline UUID" },
-        { name: "update_id", type: "STRING", comment: "Execution update ID" },
-        { name: "state", type: "STRING", comment: "COMPLETED, FAILED" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.serving.endpoint_usage",
-      catalog: "system",
-      schema_name: "serving",
-      description: "Model serving request counts, provisioned concurrency, and response latency",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 18,
-      notes: "Serving usage schema verified; matches 27 discovered endpoints.",
-      columns: [
-        { name: "endpoint_name", type: "STRING", comment: "Serving endpoint identifier" },
-        { name: "request_count", type: "BIGINT", comment: "Invocations in window" },
-        { name: "latency_ms", type: "DOUBLE", comment: "Response time p95" },
-      ],
-      sample_records: [],
-    },
-    {
-      table_name: "system.ai.model_serving",
-      catalog: "system",
-      schema_name: "ai",
-      description: "Token counts, prompt tokens, completion tokens, and model routing",
-      status: "SCHEMA_VERIFIED",
-      columns_count: 20,
-      notes: "Token economics schema verified.",
-      columns: [
-        { name: "endpoint_name", type: "STRING", comment: "Endpoint ID" },
-        { name: "model_name", type: "STRING", comment: "Underlying LLM model" },
-        { name: "prompt_tokens", type: "BIGINT", comment: "Input prompt tokens count" },
-        { name: "completion_tokens", type: "BIGINT", comment: "Output generated tokens count" },
-      ],
-      sample_records: [],
-    },
-  ];
-
-  const activeSystemTablesList = systemTablesData?.tables || fallbackSystemTables;
+  const activeSystemTablesList = systemTablesData?.tables || [];
 
   const filteredSystemTables = activeSystemTablesList.filter((st) => {
     if (!systemTablesFilter) return true;
@@ -674,8 +403,27 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-orange-100 text-orange-800 border border-orange-200">
                   {connection.cloud}
                 </span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  {connection.status === "connected" ? "Live Connected" : connection.status}
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusBadgeInfo.classes}`}
+                  title={view?.reason ?? undefined}
+                >
+                  {statusBadgeInfo.label}
+                </span>
+                {view?.stale && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-amber-50 text-amber-800 border-amber-300" title="The latest refresh failed; showing the last successful data">
+                    Stale
+                  </span>
+                )}
+                {view?.sqlWarehouse && (
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-slate-50 text-slate-700 border-slate-200"
+                    title={view.sqlWarehouse.message}
+                  >
+                    SQL warehouse: {view.sqlWarehouse.state ?? "-"}
+                  </span>
+                )}
+                <span className="text-[10px] text-slate-500">
+                  Updated {formatUpdatedAt(lastRefreshedAt ?? view?.lastSuccessAt)}
                 </span>
                 {activeScope?.selected_child_resource && (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 flex items-center gap-1">
@@ -701,6 +449,31 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
           </div>
 
           <div className="flex items-center gap-2">
+            {availableConnections.length > 1 && onSelectScope && activeScope && (
+              <select
+                aria-label="Select Databricks workspace"
+                value={connection.workspace_id}
+                onChange={(e) => {
+                  const chosen = availableConnections.find((c) => c.workspace_id === e.target.value);
+                  if (chosen) {
+                    onSelectScope({
+                      ...activeScope,
+                      workspace_id: chosen.workspace_id,
+                      workspace_name: chosen.workspace_name,
+                      workspace_url: chosen.workspace_url,
+                      region: chosen.region || activeScope.region,
+                    });
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium"
+              >
+                {availableConnections.map((ws) => (
+                  <option key={ws.connection_id} value={ws.workspace_id}>
+                    {ws.workspace_name} ({ws.workspace_id})
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               onClick={onRefresh}
               disabled={isLoading}
@@ -711,6 +484,20 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
             </button>
           </div>
         </div>
+        {isAuthOrConnectionFailed && (
+          <div className="mt-4 p-3 rounded-lg border border-rose-200 bg-rose-50/70 text-xs text-rose-900 flex items-start gap-2.5">
+            <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <p className="font-bold">
+                Workspace connection: {statusBadgeInfo.label}
+              </p>
+              <p className="text-[11px] text-rose-800">
+                {effectiveErrorMessage ||
+                  "Unable to authenticate or reach the selected Databricks workspace. Verify Service Principal workspace assignment and credentials."}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* MODULE 1: WORKSPACE OVERVIEW */}
@@ -724,7 +511,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
             >
               <span className="text-xs text-slate-500 font-medium">Compute Clusters</span>
               <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-navy-900">{clusters.length}</span>
+                <span className="text-2xl font-bold text-navy-900">{count(clusters.length, "clusters")}</span>
                 <span className="text-xs text-slate-400">discovered</span>
               </div>
               <div className="mt-2">{getCategoryStatusBadge(categories["clusters"]?.status)}</div>
@@ -736,7 +523,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
             >
               <span className="text-xs text-slate-500 font-medium">SQL Warehouses</span>
               <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-navy-900">{warehouses.length}</span>
+                <span className="text-2xl font-bold text-navy-900">{count(warehouses.length, "warehouses")}</span>
                 <span className="text-xs text-slate-500 font-medium">(STOPPED)</span>
               </div>
               <div className="mt-2">{getCategoryStatusBadge(categories["warehouses"]?.status)}</div>
@@ -749,7 +536,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
               <span className="text-xs text-slate-500 font-medium">Serving Endpoints</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-bold text-purple-700">
-                  {servingEndpoints.length > 0 ? servingEndpoints.length : 27}
+                  {count(servingEndpoints.length, "model_serving")}
                 </span>
                 <span className="text-xs text-slate-400">models</span>
               </div>
@@ -765,7 +552,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
               <span className="text-xs text-slate-500 font-medium">Databricks Apps</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-bold text-brand-600">
-                  {apps.length > 0 ? apps.length : 3}
+                  {count(apps.length, "apps")}
                 </span>
                 <span className="text-xs text-slate-400">applications</span>
               </div>
@@ -811,13 +598,13 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 <div className="py-2 flex justify-between">
                   <dt className="text-slate-500">Overall Discovery State</dt>
                   <dd className="font-semibold text-navy-900 capitalize">
-                    {discovery?.overall_status || "Completed"}
+                    {discovery?.overall_status || "-"}
                   </dd>
                 </div>
                 <div className="py-2 flex justify-between">
                   <dt className="text-slate-500">Total Scoped Resources</dt>
                   <dd className="font-semibold text-navy-900">
-                    {discovery?.total_resources_count || resources.length}
+                    {inventoryKnown ? (discovery?.total_resources_count ?? resources.length) : "-"}
                   </dd>
                 </div>
                 <div className="py-2 flex justify-between">
@@ -904,7 +691,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                     <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600">{c.id}</td>
                     <td className="py-2.5 px-3">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
-                        {c.status || "TERMINATED"}
+                        {c.status || "-"}
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-slate-600">
@@ -1020,7 +807,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                       <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600">{w.id}</td>
                       <td className="py-2.5 px-3">
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
-                          {w.status || "STOPPED"}
+                          {w.status || "-"}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-slate-600">
@@ -1125,7 +912,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                     <td className="py-2.5 px-3 text-slate-500">{j.creator || "admin"}</td>
                     <td className="py-2.5 px-3">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
-                        {j.status || "ACTIVE"}
+                        {j.status || "-"}
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-right">
@@ -1256,7 +1043,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-navy-900">Model Serving Endpoints</h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
-                  {servingEndpoints.length > 0 ? servingEndpoints.length : 27} Discovered Models
+                  {servingEndpoints.length} Discovered Models
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -1323,7 +1110,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                       </td>
                       <td className="py-2.5 px-3">
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700">
-                          {m.status || "READY"}
+                          {m.status || "-"}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-right">
@@ -1714,7 +1501,14 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredSystemTables.map((st, idx) => {
+                    {filteredSystemTables.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-8 text-center text-slate-400">
+                          No system tables discovered or accessible for this workspace connection.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredSystemTables.map((st, idx) => {
                       const isExpanded = expandedSystemTable === st.table_name;
                       return (
                         <React.Fragment key={idx}>
@@ -1798,7 +1592,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                           )}
                         </React.Fragment>
                       );
-                    })}
+                    }))}
                   </tbody>
                 </table>
               </div>
@@ -1814,48 +1608,42 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
             <div>
               <h3 className="text-sm font-bold text-navy-900">SQL Query Execution History</h3>
               <p className="text-xs text-slate-500">
-                Executed SQL statements, execution durations, rows returned, and user attribution.
+                Live Databricks Query History: status, duration, warehouse and (masked) user for the selected window.
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                Warehouse: STOPPED
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-50 text-slate-700 border border-slate-200">
+                Source: {queryHistoryData?.provenance?.classification ?? "loading"} · Query History API (no SQL)
               </span>
             </div>
           </div>
 
-          {/* Histogram & Status Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-slate-500 text-xs font-medium">Total Query Executions</span>
-              <div className="text-2xl font-bold text-navy-900 mt-1">
-                {queryHistoryData?.total_count || 7}
-              </div>
-              <span className="text-[10px] text-slate-400">Preserved in system.query.history</span>
-            </div>
+          {queryHistoryData?.provenance && queryHistoryData.provenance.classification !== "LIVE" && (
+            <ProvenanceBanner provenance={{ query_history: queryHistoryData.provenance }} />
+          )}
 
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-slate-500 text-xs font-medium">Finished (Success)</span>
-              <div className="text-2xl font-bold text-emerald-600 mt-1">
-                {queryHistoryData?.status_distribution.find((s) => s.status === "FINISHED")?.count || 5}
+          {/* Summary cards: computed from the returned page only */}
+          {(() => {
+            const recs = queryHistoryData?.records || [];
+            const count = (st: string) => recs.filter((q) => q.status === st).length;
+            const avg = recs.length ? Math.round(recs.reduce((a, q) => a + q.duration_ms, 0) / recs.length) : null;
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[
+                  { label: "Queries on this page", value: queryHistoryData ? recs.length : "—", note: "Aggregates cover the loaded page only", cls: "text-navy-900" },
+                  { label: "Finished", value: queryHistoryData ? count("FINISHED") : "—", note: "status = FINISHED", cls: "text-emerald-600" },
+                  { label: "Failed", value: queryHistoryData ? count("FAILED") : "—", note: "status = FAILED", cls: "text-rose-600" },
+                  { label: "Average duration", value: avg === null ? "—" : `${avg.toLocaleString()} ms`, note: "mean over this page", cls: "text-blue-700" },
+                ].map((c) => (
+                  <div key={c.label} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
+                    <span className="text-slate-500 text-xs font-medium">{c.label}</span>
+                    <div className={`text-2xl font-bold mt-1 ${c.cls}`}>{c.value}</div>
+                    <span className="text-[10px] text-slate-400">{c.note}</span>
+                  </div>
+                ))}
               </div>
-              <span className="text-[10px] text-emerald-700 font-medium">71.4% execution rate</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-slate-500 text-xs font-medium">Failed Executions</span>
-              <div className="text-2xl font-bold text-rose-600 mt-1">
-                {queryHistoryData?.status_distribution.find((s) => s.status === "FAILED")?.count || 1}
-              </div>
-              <span className="text-[10px] text-rose-600">Stopped warehouse error</span>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50">
-              <span className="text-slate-500 text-xs font-medium">Average Duration</span>
-              <div className="text-2xl font-bold text-blue-700 mt-1">1,432 ms</div>
-              <span className="text-[10px] text-slate-500">Serverless compute speed</span>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* Query Duration Histogram Component with 6 Buckets and Summary Statistics */}
           <QueryDurationHistogram
@@ -1889,6 +1677,20 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                 <option value="FAILED">FAILED</option>
                 <option value="CANCELED">CANCELED</option>
               </select>
+              <input
+                type="date"
+                value={queryStartDate}
+                onChange={(e) => { setQueryPageTokens([]); setQueryPageToken(null); setQueryStartDate(e.target.value); }}
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5"
+                aria-label="Query start date"
+              />
+              <input
+                type="date"
+                value={queryEndDate}
+                onChange={(e) => { setQueryPageTokens([]); setQueryPageToken(null); setQueryEndDate(e.target.value); }}
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5"
+                aria-label="Query end date"
+              />
             </div>
           </div>
 
@@ -1941,7 +1743,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                             <div className="space-y-1">
                               <p className="font-semibold text-slate-700">NO DATA AVAILABLE</p>
                               <p className="text-[11px] text-slate-400">
-                                Zero queries recorded for selected workspace scope in system.query.history.
+                                {queryHistoryData?.provenance?.message || "No queries were returned for the selected filters and window."}
                               </p>
                             </div>
                           </td>
@@ -1982,7 +1784,7 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
                           {q.warehouse_name}
                         </td>
                         <td className="py-2.5 px-3 text-slate-500 truncate max-w-[140px]">{q.user}</td>
-                        <td className="py-2.5 px-3 font-semibold text-navy-900">{q.rows_produced}</td>
+                        <td className="py-2.5 px-3 font-semibold text-navy-900">{q.rows_produced ?? "n/a"}</td>
                         <td className="py-2.5 px-3 font-mono text-[10px] text-slate-600 truncate max-w-[200px]">
                           {q.sql_statement}
                         </td>
@@ -1993,6 +1795,34 @@ export const DatabricksWorkspaceDetailView: React.FC<DatabricksWorkspaceDetailVi
               </table>
             </div>
           )}
+
+          <div className="flex items-center justify-between pt-2 text-xs">
+            <button
+              type="button"
+              disabled={queryPageTokens.length === 0}
+              onClick={() => {
+                const stack = [...queryPageTokens];
+                const prev = stack.pop() ?? null;
+                setQueryPageTokens(stack);
+                setQueryPageToken(prev === "" ? null : prev);
+              }}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40"
+            >
+              ← Newer
+            </button>
+            <span className="text-slate-500">Page {queryPageTokens.length + 1}</span>
+            <button
+              type="button"
+              disabled={!queryHistoryData?.has_next_page || !queryHistoryData?.next_page_token}
+              onClick={() => {
+                setQueryPageTokens([...queryPageTokens, queryPageToken ?? ""]);
+                setQueryPageToken(queryHistoryData?.next_page_token ?? null);
+              }}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 font-semibold disabled:opacity-40"
+            >
+              Older →
+            </button>
+          </div>
         </div>
       )}
 

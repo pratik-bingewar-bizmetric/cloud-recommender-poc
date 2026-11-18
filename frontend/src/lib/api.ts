@@ -1,9 +1,11 @@
 import { globalLoadingManager } from "./loadingManager";
+import { normalizePricePage, normalizeUsagePage } from "./billing";
 
 import {
   ApiErrorDetail,
   ArchitectureComponent,
   ClarifyingAnswer,
+  CloudConnection,
   CostSimulationResponse,
   LogSearchRequest,
   LogSearchResponse,
@@ -14,8 +16,11 @@ import {
   RequirementsAnalysisResponse,
   ResourceDetailMonitoringResponse,
   WorkloadAssumptions,
+  UpdateConnectionRequest,
   WorkloadProfile,
 } from "@/types";
+
+import { describeAuthFailure } from "./authErrors";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -66,9 +71,41 @@ async function handleResponse<T>(res: Response): Promise<T> {
     } catch {
       detail = { message: res.statusText };
     }
-    throw new ApiError(res.status, detail);
+    // 401/403 get an explicit, actionable explanation instead of a bare status.
+    throw new ApiError(res.status, detail, describeAuthFailure(res.status, detail.message) ?? undefined);
   }
   return res.json() as Promise<T>;
+}
+
+/** Edit / reconnect / rotate the credential of one of YOUR connections (validated before saving). */
+export async function updateConnection(
+  connectionId: string,
+  payload: UpdateConnectionRequest
+): Promise<CloudConnection> {
+  const res = await appFetch(`${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<CloudConnection>(res);
+}
+
+/** Re-validate one of your connections with its stored credential. */
+export async function revalidateConnection(connectionId: string): Promise<CloudConnection> {
+  const res = await appFetch(
+    `${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}/validate`,
+    { method: "POST", headers: { "Content-Type": "application/json" } }
+  );
+  return handleResponse<CloudConnection>(res);
+}
+
+/** Delete one of your connections and its stored credential. */
+export async function deleteConnection(connectionId: string): Promise<void> {
+  const res = await appFetch(`${API_BASE_URL}/connections/${encodeURIComponent(connectionId)}`, {
+    method: "DELETE",
+  });
+  if (res.status === 204) return;
+  await handleResponse<unknown>(res);
 }
 
 export async function checkBackendHealth(): Promise<{ status: string }> {
@@ -160,6 +197,80 @@ export async function getProvidersStatus(): Promise<ProviderConnectionStatus[]> 
 export async function listAzureSubscriptions(): Promise<CloudScopeSummary[]> {
   const res = await appFetch(`${API_BASE_URL}/inventory/azure/subscriptions`);
   return handleResponse<CloudScopeSummary[]>(res);
+}
+
+export type AzureDiscoveryStatus =
+  | "OK"
+  | "EMPTY"
+  | "UNAUTHENTICATED"
+  | "FORBIDDEN"
+  | "NOT_FOUND"
+  | "ERROR";
+
+export interface AzureDiscoveryMeta {
+  subscription_id: string;
+  subscription_state: string | null;
+  status: AzureDiscoveryStatus;
+  status_message: string;
+  http_status: number | null;
+  page_count: number;
+  auth_method: string;
+  retrieved_at: string | null;
+  last_success_at: string | null;
+  stale: boolean;
+}
+
+export interface AzureResourceGroupItem {
+  id: string;
+  name: string;
+  subscription_id: string;
+  location: string | null;
+  provisioning_state: string | null;
+  managed_by: string | null;
+  tags: Record<string, string>;
+}
+
+export interface AzureResourceGroupsResponse extends AzureDiscoveryMeta {
+  count: number | null;
+  items: AzureResourceGroupItem[];
+}
+
+export interface AzureResourceItem {
+  id: string;
+  name: string;
+  type: string;
+  subscription_id: string;
+  resource_group: string | null;
+  location: string | null;
+  kind: string | null;
+  provisioning_state: string | null;
+  tags: Record<string, string>;
+}
+
+export interface AzureResourcesResponse extends AzureDiscoveryMeta {
+  resource_group: string | null;
+  count: number | null;
+  items: AzureResourceItem[];
+}
+
+/** Real ARM resource groups of a subscription (all pages). Never fabricated: failures carry a status. */
+export async function listAzureResourceGroups(subscriptionId: string): Promise<AzureResourceGroupsResponse> {
+  const res = await appFetch(
+    `${API_BASE_URL}/inventory/azure/subscriptions/${encodeURIComponent(subscriptionId)}/resource-groups`
+  );
+  return handleResponse<AzureResourceGroupsResponse>(res);
+}
+
+/** Real ARM resource inventory of a subscription or one resource group (all pages). */
+export async function listAzureResources(
+  subscriptionId: string,
+  resourceGroup?: string
+): Promise<AzureResourcesResponse> {
+  const qs = resourceGroup ? `?resource_group=${encodeURIComponent(resourceGroup)}` : "";
+  const res = await appFetch(
+    `${API_BASE_URL}/inventory/azure/subscriptions/${encodeURIComponent(subscriptionId)}/resources${qs}`
+  );
+  return handleResponse<AzureResourcesResponse>(res);
 }
 
 export async function analyzeAzureSubscription(payload: {
@@ -490,6 +601,105 @@ export async function getWorkspaceHealth(
   return handleResponse<import("@/types").DatabricksConnectionHealth>(res);
 }
 
+export async function getWorkspaceCategoryResources(
+  connectionId: string,
+  category: string,
+  limit = 50,
+  offset = 0,
+  forceRefresh = false,
+  jobId?: number,
+  pageToken?: string
+): Promise<import("@/types").DatabricksCategoryPageResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    force_refresh: String(forceRefresh),
+  });
+  if (jobId) params.append("job_id", String(jobId));
+  if (pageToken) params.append("page_token", pageToken);
+  const res = await appFetch(
+    `${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/categories/${encodeURIComponent(category)}?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  return handleResponse<import("@/types").DatabricksCategoryPageResponse>(res);
+}
+
+export async function getWorkspaceUnityCatalog(
+  connectionId: string,
+  catalogName?: string,
+  includePermissions = true,
+  forceRefresh = false
+): Promise<import("@/types").UnityCatalogMetadataResponse> {
+  const params = new URLSearchParams({
+    include_permissions: String(includePermissions),
+    force_refresh: String(forceRefresh),
+  });
+  if (catalogName) params.append("catalog_name", catalogName);
+  const res = await appFetch(
+    `${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/unity-catalog?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  return handleResponse<import("@/types").UnityCatalogMetadataResponse>(res);
+}
+
+export async function getWorkspaceSystemTables(
+  connectionId: string,
+  forceRefresh = false
+): Promise<import("@/types").SystemTablesMetadataResponse> {
+  const params = new URLSearchParams({ force_refresh: String(forceRefresh) });
+  const res = await appFetch(
+    `${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/system-tables?${params.toString()}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  return handleResponse<import("@/types").SystemTablesMetadataResponse>(res);
+}
+
+export async function getWorkspaceQueryHistory(
+  connectionId: string,
+  options?: {
+    warehouseId?: string;
+    status?: string;
+    startTimeMs?: number;
+    endTimeMs?: number;
+    querySource?: string;
+    maxResults?: number;
+    pageToken?: string;
+  }
+): Promise<import("@/types").LiveQueryHistoryResponse> {
+  const params = new URLSearchParams();
+  if (options?.warehouseId) params.append("warehouse_id", options.warehouseId);
+  if (options?.status && options.status !== "all") params.append("status", options.status);
+  if (options?.startTimeMs !== undefined && options.startTimeMs !== null) {
+    params.append("start_time_ms", String(options.startTimeMs));
+  }
+  if (options?.endTimeMs !== undefined && options.endTimeMs !== null) {
+    params.append("end_time_ms", String(options.endTimeMs));
+  }
+  if (options?.querySource && options.querySource !== "all") {
+    params.append("query_source", options.querySource);
+  }
+  if (options?.maxResults) params.append("max_results", String(options.maxResults));
+  if (options?.pageToken) params.append("page_token", options.pageToken);
+  const qs = params.toString();
+  const res = await appFetch(
+    `${API_BASE_URL}/databricks/connections/${encodeURIComponent(connectionId)}/query-history${qs ? `?${qs}` : ""}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  return handleResponse<import("@/types").LiveQueryHistoryResponse>(res);
+}
+
 // ----------------------------------------------------------------------------
 // Milestone 3B/3D: FinOps Command Center 15-Module API Functions
 // ----------------------------------------------------------------------------
@@ -537,9 +747,15 @@ export async function getFinOpsQueryHistory(
   warehouseId?: string,
   user?: string,
   status?: string,
-  limit = 50
+  limit = 50,
+  pageToken?: string | null,
+  startTimeMs?: number | null,
+  endTimeMs?: number | null
 ): Promise<import("@/types").QueryHistoryData> {
   const params = new URLSearchParams({ connection_id: connectionId, limit: String(limit) });
+  if (pageToken) params.append("page_token", pageToken);
+  if (startTimeMs != null) params.append("start_time_ms", String(startTimeMs));
+  if (endTimeMs != null) params.append("end_time_ms", String(endTimeMs));
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (warehouseId) params.append("warehouse_id", warehouseId);
   if (user) params.append("user", user);
@@ -931,11 +1147,13 @@ export async function getFinOpsBillingUsage(
   if (workspaceId) params.append("workspace_id", workspaceId);
   if (resourceId) params.append("resource_id", resourceId);
   if (recordType) params.append("record_type", recordType);
+  params.append("envelope", "true");
   const res = await appFetch(`${API_BASE_URL}/finops/billing/usage?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
-  return handleResponse<{ total: number; offset: number; limit: number; records: import("@/types").BillingUsageRecord[] }>(res);
+  // Tolerates both the paginated envelope and a legacy bare list.
+  return normalizeUsagePage(await handleResponse<unknown>(res), offset, limit);
 }
 
 export async function getFinOpsBillingPricing(
@@ -945,11 +1163,12 @@ export async function getFinOpsBillingPricing(
 ): Promise<{ total: number; records: import("@/types").BillingPriceRecord[] }> {
   const params = new URLSearchParams({ connection_id: connectionId, limit: String(limit) });
   if (skuName) params.append("sku_name", skuName);
+  params.append("envelope", "true");
   const res = await appFetch(`${API_BASE_URL}/finops/billing/pricing?${params.toString()}`, {
     method: "GET",
     headers: { "Content-Type": "application/json" },
   });
-  return handleResponse<{ total: number; records: import("@/types").BillingPriceRecord[] }>(res);
+  return normalizePricePage(await handleResponse<unknown>(res));
 }
 
 export async function getFinOpsBillingReconciliation(

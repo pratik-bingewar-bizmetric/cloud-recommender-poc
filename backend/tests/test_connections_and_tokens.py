@@ -119,6 +119,33 @@ async def test_token_economics_azure_live_or_instrumentation_guide() -> None:
 
 
 @pytest.mark.asyncio
+async def test_token_economics_unauthenticated_subscription_never_returns_simulation_benchmark() -> (
+    None
+):
+    """Regression test: Unauthenticated Azure subscription scopes must report unavailable_permission_required, never simulated benchmark usage."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/monitoring/token-economics",
+            json={
+                "provider": "azure",
+                "scope_id": "f718c261-ab85-49fd-907e-99c022cc2aeb",
+                "time_window": "7d",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["data_status"] in (
+            "no_data_available",
+            "unavailable_permission_required",
+        )
+        assert data["data_status"] != "simulation_benchmark"
+        assert data["total_tokens"] == 0
+        assert data["prompt_tokens"] == 0
+        assert data["completion_tokens"] == 0
+
+
+@pytest.mark.asyncio
 async def test_token_economics_distinguishes_empty_datapoints_from_measured_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

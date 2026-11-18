@@ -45,22 +45,12 @@ async def get_configuration_service(
         )
         return
 
+    # Fallback to memory applies ONLY when the session factory cannot be built (before the first
+    # yield). An error raised by the route body is thrown back into this generator at the yield and
+    # must propagate: a second yield raised "generator didn't stop after athrow()" and turned a
+    # database outage into a generic HTTP 500 instead of the 503 DATABASE_UNAVAILABLE handler.
     try:
         session_factory = get_session_factory()
-        async with session_factory() as session:
-            try:
-                repo = ResourceConfigurationRepository(session=session)
-                yield ConfigurationService(
-                    repository=repo,
-                    settings=settings,
-                    azure_service=azure_service,
-                    gcp_service=gcp_service,
-                )
-            except BaseException:
-                await session.rollback()
-                raise
-            finally:
-                await session.close()
     except Exception as exc:
         logger.warning("db_session_failed_falling_back_to_memory", error=str(exc))
         yield ConfigurationService(
@@ -69,6 +59,28 @@ async def get_configuration_service(
             azure_service=azure_service,
             gcp_service=gcp_service,
         )
+        return
+
+    async with session_factory() as session:
+        try:
+            repo = ResourceConfigurationRepository(session=session)
+            yield ConfigurationService(
+                repository=repo,
+                settings=settings,
+                azure_service=azure_service,
+                gcp_service=gcp_service,
+            )
+        except BaseException:
+            try:
+                await session.rollback()
+            except Exception:  # connection already gone: keep the original error
+                logger.warning("db_session_rollback_failed")
+            raise
+        finally:
+            try:
+                await session.close()
+            except Exception:
+                logger.warning("db_session_close_failed")
 
 
 @router.get(

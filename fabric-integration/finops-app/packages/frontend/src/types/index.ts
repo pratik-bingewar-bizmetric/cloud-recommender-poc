@@ -728,6 +728,15 @@ export interface CloudConnection {
   is_live: boolean;
   capabilities: string[];
   access_limitations: string[];
+  /** 'owned' = created by the signed-in user (persistent, encrypted); otherwise organization. */
+  ownership?: "owned" | "organization";
+  integrations?: {
+    integration: string;
+    state: "connected" | "permission_denied" | "not_configured" | "unavailable" | "error";
+    message?: string | null;
+    required_permission?: string | null;
+  }[];
+  warnings?: string[];
 }
 
 export interface ValidateConnectionRequest {
@@ -754,11 +763,15 @@ export interface ConnectionValidationResponse {
 
 export interface CreateConnectionRequest {
   provider: CloudProvider;
+  auth_method?: "service_principal" | "azure_cli" | "managed_identity";
   name: string;
   scope_id: string;
   azure_tenant_id?: string;
   azure_client_id?: string;
   azure_client_secret?: string;
+  databricks_workspace_url?: string;
+  databricks_workspace_id?: string;
+  fabric_workspace_id?: string;
   gcp_project_id?: string;
   gcp_service_account_json?: string;
   gcp_access_token?: string;

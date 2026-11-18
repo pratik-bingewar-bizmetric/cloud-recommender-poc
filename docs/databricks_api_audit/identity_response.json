@@ -1,0 +1,317 @@
+[
+  {
+    "module_name": "identity",
+    "operation_name": "get_current_user",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/preview/scim/v2/Me",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/preview/scim/v2/Me",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:31:54.255673+00:00",
+    "duration_ms": 232.85,
+    "records_count": 2,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "emails": [
+        {
+          "type": "work",
+          "value": "pratik.bingewar@bizmetric.com",
+          "primary": true
+        }
+      ],
+      "entitlements": [
+        {
+          "value": "workspace-access"
+        },
+        {
+          "value": "databricks-sql-access"
+        },
+        {
+          "value": "workspace-consume"
+        }
+      ],
+      "displayName": "Pratik Bingewar",
+      "schemas": [
+        "urn:ietf:params:scim:schemas:core:2.0:User",
+        "urn:ietf:params:scim:schemas:extension:workspace:2.0:User"
+      ],
+      "name": {
+        "familyName": "Bingewar",
+        "givenName": "Pratik"
+      },
+      "externalId": "9979f831-788d-4678-afa0-06596815d3ab",
+      "active": true,
+      "groups": [
+        {
+          "display": "users",
+          "type": "direct",
+          "value": "785505502346408",
+          "$ref": "Groups/785505502346408"
+        }
+      ],
+      "id": "146809578344068",
+      "userName": "pratik.bingewar@bizmetric.com"
+    }
+  },
+  {
+    "module_name": "identity",
+    "operation_name": "list_workspace_users",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/preview/scim/v2/Users",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/preview/scim/v2/Users",
+    "query_parameters": {
+      "count": 10
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:31:54.489559+00:00",
+    "duration_ms": 116.98,
+    "records_count": 10,
+    "pagination_info": {
+      "totalResults": 30
+    },
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "totalResults": 30,
+      "startIndex": 1,
+      "itemsPerPage": 10,
+      "schemas": [
+        "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+      ],
+      "Resources": [
+        {
+          "displayName": "VAISHNAVI PAWAR",
+          "active": true,
+          "id": "141088566745429",
+          "userName": "vaishnavi.pawar@bizmetric.com"
+        },
+        {
+          "displayName": "Roshan Kashyap",
+          "active": true,
+          "id": "142084910928616",
+          "userName": "roshan.kashyap@bizmetric.com"
+        },
+        {
+          "displayName": "Vismay Chawla",
+          "active": true,
+          "id": "143173727140986",
+          "userName": "vismay.chawla@bizmetric.com"
+        },
+        {
+          "displayName": "Omkar Khese",
+          "active": true,
+          "id": "143332324670137",
+          "userName": "omkar.khese@bizmetric.com"
+        },
+        {
+          "displayName": "Amit Gour",
+          "active": true,
+          "id": "144606790543779",
+          "userName": "amit.gour@bizmetric.com"
+        },
+        {
+          "displayName": "Sumit Panda",
+          "active": true,
+          "id": "144807029728747",
+          "userName": "sumit.panda@bizmetric.com"
+        },
+        {
+          "displayName": "Jonah Balenene",
+          "active": true,
+          "id": "144849534782191",
+          "userName": "jonah.balenene@bizmetric.com"
+        },
+        {
+          "displayName": "Mohammeduzair Sayyed",
+          "active": true,
+          "id": "145133401968999",
+          "userName": "mohammeduzair.sayyed@bizmetric.com"
+        },
+        {
+          "displayName": "Shreeya Jain",
+          "active": true,
+          "id": "145389323678490",
+          "userName": "shreeya.jain@bizmetric.com"
+        },
+        {
+          "displayName": "Akshay Patil",
+          "active": true,
+          "id": "145645096504803",
+          "userName": "akshay.patil@bizmetric.com"
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "identity",
+    "operation_name": "list_workspace_service_principals",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/preview/scim/v2/ServicePrincipals",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/preview/scim/v2/ServicePrincipals",
+    "query_parameters": {
+      "count": 10
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:31:54.608248+00:00",
+    "duration_ms": 134.56,
+    "records_count": 8,
+    "pagination_info": {
+      "totalResults": 8
+    },
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "Resources": [
+        {
+          "displayName": "app-1qa7sz mcp-generate-ppt",
+          "active": true,
+          "id": "141025460831224",
+          "applicationId": "73503081-1d6b-4369-a045-c4f0123c292f"
+        },
+        {
+          "displayName": "DBXGenieFabric",
+          "active": true,
+          "id": "142292881361510",
+          "applicationId": "af6a1b8c-8f28-4fde-b2ae-b9052ec5d55b"
+        },
+        {
+          "displayName": "app-1qa7sz wonder-cement-app",
+          "active": true,
+          "id": "142710450845916",
+          "applicationId": "10eec9ef-f679-489e-8cd8-79f139aa6de0"
+        },
+        {
+          "displayName": "sp-selfservice-powerbi",
+          "active": true,
+          "id": "146160990760513",
+          "applicationId": "6269c787-0f70-469d-a80e-cbf460f17a16"
+        },
+        {
+          "displayName": "app-1qa7sz cement-demand-forecasting",
+          "active": true,
+          "id": "147237298982347",
+          "applicationId": "0eefe7e2-8eef-422c-8f77-bb0e478e828f"
+        },
+        {
+          "displayName": "sp-tf-deacceleator-dev",
+          "active": true,
+          "id": "2108149778844049",
+          "applicationId": "8fa3e180-a5a4-4145-be56-58de18d36dae"
+        },
+        {
+          "displayName": "adf-deaccelerator-dev",
+          "active": true,
+          "id": "3170027895446611",
+          "applicationId": "13156b46-2e78-41a6-a3ef-8f73e800efa9"
+        },
+        {
+          "displayName": "sp-deaccelerator-dev",
+          "active": true,
+          "id": "4187907066648628",
+          "applicationId": "161a0b0d-2102-4e35-a57d-b10c81338913"
+        }
+      ],
+      "totalResults": 8,
+      "startIndex": 1,
+      "itemsPerPage": 8,
+      "schemas": [
+        "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+      ]
+    }
+  },
+  {
+    "module_name": "identity",
+    "operation_name": "list_workspace_groups",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/preview/scim/v2/Groups",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/preview/scim/v2/Groups",
+    "query_parameters": {
+      "count": 10
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:31:54.741792+00:00",
+    "duration_ms": 94.25,
+    "records_count": 10,
+    "pagination_info": {
+      "totalResults": 11
+    },
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "totalResults": 11,
+      "startIndex": 1,
+      "itemsPerPage": 10,
+      "schemas": [
+        "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+      ],
+      "Resources": [
+        {
+          "displayName": "grp_data_engineers",
+          "id": "150400742544280"
+        },
+        {
+          "displayName": "users-usecompute",
+          "id": "151123925818934"
+        },
+        {
+          "displayName": "metrobank-poc",
+          "id": "152362535077132"
+        },
+        {
+          "displayName": "adb-poc-canrestart",
+          "id": "152482302314573"
+        },
+        {
+          "displayName": "grp_read_only",
+          "id": "152929539014438"
+        },
+        {
+          "displayName": "grp_analysts",
+          "id": "155697929336101"
+        },
+        {
+          "displayName": "grp_north_region",
+          "id": "157994904634852"
+        },
+        {
+          "displayName": "de-accelerator-dev",
+          "id": "231324245656163"
+        },
+        {
+          "displayName": "users",
+          "id": "785505502346408"
+        },
+        {
+          "displayName": "admins",
+          "id": "1098557944109426"
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "identity",
+    "operation_name": "get_user_permission_assignments",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/preview/permissionassignments/principals/146809578344068",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/preview/permissionassignments/principals/146809578344068",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 404,
+    "response_timestamp_utc": "2026-11-11T11:31:54.835415+00:00",
+    "duration_ms": 54.71,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "NOT_FOUND_404",
+    "error_message": "No API found for 'GET /preview/permissionassignments/principals/146809578344068'",
+    "response_body": {
+      "error": "NotFound",
+      "detail": "No API found for 'GET /preview/permissionassignments/principals/146809578344068'"
+    }
+  }
+]

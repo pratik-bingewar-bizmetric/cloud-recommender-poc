@@ -38,6 +38,21 @@ class GcpProviderIngestor(BaseProviderIngestor):
             resource_count=len(scope.effective_resource_ids),
         )
 
+        if not self.settings.allow_demo_fixtures:
+            # Live GCP extraction is not implemented here; never fabricate results.
+            for res_id in scope.effective_resource_ids:
+                results.append(
+                    ResourceExtractionResult(
+                        resource_id=res_id,
+                        status=ResourceIngestionStatus.SKIPPED,
+                        error_message=(
+                            "Live GCP ingestion is not available; no data was fabricated. "
+                            "(Demo fixtures are disabled.)"
+                        ),
+                    )
+                )
+            return results
+
         for res_id in scope.effective_resource_ids:
             try:
                 res_name = res_id.split("/")[-1] if "/" in res_id else res_id

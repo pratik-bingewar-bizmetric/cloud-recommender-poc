@@ -7,6 +7,7 @@ import pytest
 from httpx import AsyncClient
 from pydantic import ValidationError
 
+from cloud_recommender.core.config import Settings
 from cloud_recommender.schemas.configuration import (
     ConfiguredScopeItemCreate,
     ScopeDiscoveryNode,
@@ -79,12 +80,17 @@ async def test_configuration_service_azure_discovery_simulation_with_databricks(
     """Verify simulation discovery returns Azure subscriptions with Databricks workspaces."""
     mock_azure = AsyncMock(spec=AzureInventoryService)
     mock_azure.get_access_token.return_value = (None, "none")
-    service = ConfigurationService(azure_service=mock_azure)
+    # The fabricated topology is reachable only through the explicit demo-fixture opt-in.
+    service = ConfigurationService(
+        azure_service=mock_azure, settings=Settings(allow_demo_fixtures=True)
+    )
 
     resp = await service.discover_scopes("azure-conn-01", provider="azure")
 
     assert resp.provider == "azure"
     assert resp.status == "ready"
+    assert resp.data_source == "demo_fixture"
+    assert "DEMO FIXTURE" in resp.status_message
     assert resp.total_discovered_resources >= 4
     assert resp.databricks_workspaces_count >= 1
 

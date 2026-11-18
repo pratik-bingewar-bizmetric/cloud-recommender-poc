@@ -1,0 +1,1148 @@
+[
+  {
+    "module_name": "alerts",
+    "operation_name": "list_alerts",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/sql/alerts",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/sql/alerts",
+    "query_parameters": {},
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:04.593683+00:00",
+    "duration_ms": 58.06,
+    "records_count": 0,
+    "pagination_info": {},
+    "access_status": "SUCCESS_EMPTY",
+    "error_message": null,
+    "response_body": {}
+  },
+  {
+    "module_name": "dashboards",
+    "operation_name": "list_dashboards",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/lakeview/dashboards",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/lakeview/dashboards",
+    "query_parameters": {
+      "page_size": 10
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:04.138102+00:00",
+    "duration_ms": 456.07,
+    "records_count": 10,
+    "pagination_info": {
+      "next_page_token": "bXVsdGlWZXJ0aWNhbCBzZWFyY2hJZD02ZmE2N2IzMy05MTkwLTRkN2MtYTJkNC0wMWY2NTMzMTkzNWU7cGFnZUtleT17IkRBU0hCT0FSRF9MQUtFVklFVyI6ImMzRmxMVzl3WVhGMVpTMTJNVHA3SW5ObFlYSmphRUZtZEdWeVNXUWlPbHNpZEdNdE1UZ3pMWFZ6WVdkbFgyUmhjMmhpYjJGeVpDNXNkbVJoYzJndWFuTnZiaUlzSWpFdU1EQXdOVGczTmlJc0lqWTBNakF3TmpNNU16VXdOekkzTmlJc0lqWXdOVFF4T1RZeE5EQXhORFV6TkNKZExDSjFjSE4wY21WaGJWQmhaMlZVYjJ0bGJpSTZJbVY1U25waU0wb3dVVE5LY0dSSFZubGhWMFZwVDJsS2FHTXpUbXhrUXpWMVdWY3hiRXh0ZUhaa01sWjVXVEpHZWxwV09UQmFXR2d3U1VkR2VsbDVlR1pqTWs1MlkyMVZaMXBIVm5wWmVYaG9Zek5PYkdSRE5UTmlNMHB5WXpOQ2FGa3lWbVpoVjFGbldWaE9ha3hIUm5wak1sWXdURzFHZW1NeVZqQllNbXhyU1VkR2VsbDVTWE5KYmtwc1kwZDRjRmt5UmxSYVdFNTZZVmM1ZFZOWFVXbFBhVWxwVEVOS2VscFhSbmxaTW1oQ1dtNVNiR05yYkd0SmFuQmlTVzVTYWt4VVJUUk5lVEV4WXpKR2JscFdPV3RaV0U1dldXMDVhR050VVhWaVNGcHJXVmhPYjB4dGNIcGlNalJwVEVOSmVFeHFRWGROUkZVMFRucFphVXhEU1RKT1JFbDNUVVJaZWs5VVRURk5SR041VG5wWmFVeERTVEpOUkZVd1RWUnJNazFVVVhkTlZGRXhUWHBSYVZoVGQybGpiVlozWWtkc2FsbFdUbXhqTTA1d1lqSTFWRmt5T1hkYVUwazJTV2xKYzBsdVRteFpXRXBxWVVWc2EwbHFiMmxPYlZwb1RtcGthVTE2VFhSUFZFVTFUVU13TUZwRVpHcE1WMFY1V2tSUmRFMUVSbTFPYWxWNlRYcEZOVTE2Vm14SmJqQTlJbjA9In0="
+    },
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "dashboards": [
+        {
+          "dashboard_id": "01f071b76a1a1d5998964573f9634b91",
+          "display_name": "Account Usage Dashboard",
+          "create_time": "2025-08-05T04:48:22.158Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f153a7a1bd1c0e80ea65ef2357eda2",
+          "display_name": "AIBI 360 Dashboard",
+          "create_time": "2026-05-19T17:24:46.360Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f13d90b82e10bfaf0b36b4f27b7ad3",
+          "display_name": "AIBI IT Operation Dashboard",
+          "create_time": "2026-04-21T14:45:19.988Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f120f962fc1873bf66e734dc5466ba",
+          "display_name": "fraud_drift_scored Monitoring Dashboard",
+          "create_time": "2026-03-16T05:31:30.508Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f120f9847f16d691f93f9997bc1ab6",
+          "display_name": "Geospatial Analysis Dashboard",
+          "create_time": "2026-03-16T05:32:26.715Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f071bdd7ec1be8a75e64c341496a8d",
+          "display_name": "history 2025-08-05 11:04:22",
+          "create_time": "2025-08-05T05:34:23.385Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f120f9947b1e0296d377c8130ff747",
+          "display_name": "Page Rank Score",
+          "create_time": "2026-03-16T05:32:53.548Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f120f9a06d1cd79e79d6d58535eb79",
+          "display_name": "Statistical Test Outcomes",
+          "create_time": "2026-03-16T05:33:13.607Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f133f5f648156ea7867ab20fb464cb",
+          "display_name": "System Monitoring",
+          "create_time": "2026-04-09T09:24:51.741Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        },
+        {
+          "dashboard_id": "01f120edf48917e2ba68b902c0c7c2c0",
+          "display_name": "TC-183-usage_dashboard",
+          "create_time": "2026-03-16T04:09:40.765Z",
+          "warehouse_id": "05ed10a52697a344",
+          "lifecycle_state": "ACTIVE"
+        }
+      ],
+      "next_page_token": "[REDACTED_CONFIDENTIAL]"
+    }
+  },
+  {
+    "module_name": "mlflow",
+    "operation_name": "search_experiments",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/mlflow/experiments/search",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/mlflow/experiments/search",
+    "query_parameters": {
+      "max_results": 10
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:03.585966+00:00",
+    "duration_ms": 190.65,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "experiments": [
+        {
+          "experiment_id": "3943022488441360",
+          "name": "/Shared/wonder_cement_demand_forecasting",
+          "artifact_location": "dbfs:/databricks/mlflow-tracking/3943022488441360",
+          "lifecycle_stage": "active",
+          "last_update_time": 1779873949053,
+          "creation_time": 1779175482607,
+          "tags": [
+            {
+              "key": "mlflow.experiment.sourceName",
+              "value": "/Shared/wonder_cement_demand_forecasting"
+            },
+            {
+              "key": "mlflow.ownerId",
+              "value": "145645096504803"
+            },
+            {
+              "key": "mlflow.ownerEmail",
+              "value": "akshay.patil@bizmetric.com"
+            },
+            {
+              "key": "mlflow.experimentType",
+              "value": "MLFLOW_EXPERIMENT"
+            },
+            {
+              "key": "mlflow.experimentKind",
+              "value": "custom_model_development"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "module_name": "mlflow",
+    "operation_name": "search_runs",
+    "http_method": "POST",
+    "endpoint_path": "/api/2.0/mlflow/runs/search",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/mlflow/runs/search",
+    "query_parameters": {},
+    "request_payload": {
+      "experiment_ids": [
+        "3943022488441360"
+      ],
+      "max_results": 5
+    },
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:03.777598+00:00",
+    "duration_ms": 88.85,
+    "records_count": 5,
+    "pagination_info": {
+      "next_page_token": "ChAzOTQzMDIyNDg4NDQxMzYwKlt7InJ1bl9pZCI6IjQxZDAwYWFhYTFhZjRhMGQ5NmYzNTgzYmU2Y2ZiMzA3Iiwic3RhcnRfdGltZSI6MTc3OTI2MTA5MjU4Miwib3JkZXJfYnlfY29scyI6e319"
+    },
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "runs": [
+        {
+          "info": {
+            "run_id": "1e1b2d0965ef4f7db6aeaad8b453518d",
+            "run_uuid": "1e1b2d0965ef4f7db6aeaad8b453518d",
+            "experiment_id": "3943022488441360",
+            "run_name": "wonder_cement_demand_random_forest_config",
+            "status": "FINISHED",
+            "start_time": 1779873949053,
+            "end_time": 1779874050932,
+            "artifact_uri": "dbfs:/databricks/mlflow-tracking/3943022488441360/1e1b2d0965ef4f7db6aeaad8b453518d/artifacts",
+            "lifecycle_stage": "active"
+          },
+          "data": {
+            "metrics": [
+              {
+                "key": "mape",
+                "value": 8.459402169303571,
+                "timestamp": 1779873986546,
+                "step": 0
+              },
+              {
+                "key": "r2",
+                "value": 0.9006670001311892,
+                "timestamp": 1779873986429,
+                "step": 0
+              },
+              {
+                "key": "rmse",
+                "value": 10.334108708002473,
+                "timestamp": 1779873986115,
+                "step": 0
+              },
+              {
+                "key": "mae",
+                "value": 7.187290105857658,
+                "timestamp": 1779873986269,
+                "step": 0
+              }
+            ],
+            "params": [
+              {
+                "key": "feature_table",
+                "value": "wonder_cement_ai_ml.demand_forecasting.cement_demand_features_v1"
+              },
+              {
+                "key": "model_type",
+                "value": "random_forest"
+              },
+              {
+                "key": "target_col",
+                "value": "daily_demand_tons"
+              },
+              {
+                "key": "test_end_date",
+                "value": "2025-12-31"
+              },
+              {
+                "key": "test_start_date",
+                "value": "2025-01-01"
+              },
+              {
+                "key": "train_end_date",
+                "value": "2024-12-31"
+              },
+              {
+                "key": "train_start_date",
+                "value": "2021-01-01"
+              },
+              {
+                "key": "feature_count",
+                "value": "40"
+              }
+            ],
+            "tags": [
+              {
+                "key": "mlflow.databricks.cluster.info",
+                "value": "{\"cluster_name\":\"WonderCement\",\"spark_version\":\"15.4.x-scala2.12\",\"node_type_id\":\"Standard_D4ds_v5\",\"driver_node_type_id\":\"Standard_D4ds_v5\",\"autotermination_minutes\":120,\"disk_spec\":{},\"num_workers\":0}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.id",
+                "value": "0520-055911-81y5r63f"
+              },
+              {
+                "key": "sparkDatasourceInfo",
+                "value": "path=abfss:REDACTED_LOCAL_PART@sadeacceleratordev.dfs.core.windows.net/__unitystorage/catalogs/da37d917-3c80-485d-80b1-4e0bfb747e51/tables/9946e512-4673-44fb-b4c5-be3583e61c40,version=16,format=delta"
+              },
+              {
+                "key": "mlflow.user",
+                "value": "akshay.patil@bizmetric.com"
+              },
+              {
+                "key": "mlflow.source.type",
+                "value": "JOB"
+              },
+              {
+                "key": "mlflow.source.name",
+                "value": "jobs/1082952919798851/run/904589333567800"
+              },
+              {
+                "key": "mlflow.runName",
+                "value": "wonder_cement_demand_random_forest_config"
+              },
+              {
+                "key": "mlflow.runColor",
+                "value": "#e87b9f"
+              },
+              {
+                "key": "mlflow.log-model.history",
+                "value": "[{\"artifact_path\":\"model\",\"flavors\":{\"spark\":{\"pyspark_version\":\"3.5.0\",\"model_data\":\"sparkml\",\"code\":null,\"model_class\":\"pyspark.ml.pipeline.PipelineModel\"},\"python_function\":{\"loader_module\":\"mlflow.spark\",\"python_version\":\"3.11.11\",\"data\":\"sparkml\",\"env\":{\"conda\":\"conda.yaml\",\"virtualenv\":\"python_env.yaml\"}}},\"utc_time_created\":\"2026-05-27 09:26:41.755130\"}]"
+              },
+              {
+                "key": "mlflow.databricks.workspaceURL",
+                "value": "https://adb-642006393507276.16.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.databricks.workspaceID",
+                "value": "642006393507276"
+              },
+              {
+                "key": "mlflow.databricks.notebookRevisionID",
+                "value": "1780302298442"
+              },
+              {
+                "key": "mlflow.databricks.notebookPath",
+                "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Model_Test/04_model_training_register_prod"
+              },
+              {
+                "key": "mlflow.databricks.notebookID",
+                "value": "2250204694183987"
+              },
+              {
+                "key": "mlflow.databricks.notebook.commandID",
+                "value": "1779873234424_7734716226018154704_job-1082952919798851-run-904589333567800-action-7007014026408650"
+              },
+              {
+                "key": "mlflow.databricks.jobType",
+                "value": "notebook"
+              },
+              {
+                "key": "mlflow.databricks.jobRunID",
+                "value": "904589333567800"
+              },
+              {
+                "key": "mlflow.databricks.jobID",
+                "value": "1082952919798851"
+              },
+              {
+                "key": "mlflow.databricks.cluster.libraries",
+                "value": "{\"installable\":[],\"redacted\":[]}"
+              },
+              {
+                "key": "mlflow.databricks.webappURL",
+                "value": "https://centralindia.azuredatabricks.net"
+              }
+            ]
+          },
+          "inputs": {},
+          "outputs": {}
+        },
+        {
+          "info": {
+            "run_id": "329a4f7cabd5472d802bfa55b3357142",
+            "run_uuid": "329a4f7cabd5472d802bfa55b3357142",
+            "experiment_id": "3943022488441360",
+            "run_name": "cement_demand_random_forest_config",
+            "status": "FINISHED",
+            "start_time": 1779873575167,
+            "end_time": 1779873691634,
+            "artifact_uri": "dbfs:/databricks/mlflow-tracking/3943022488441360/329a4f7cabd5472d802bfa55b3357142/artifacts",
+            "lifecycle_stage": "active"
+          },
+          "data": {
+            "metrics": [
+              {
+                "key": "mae",
+                "value": 7.239933585221742,
+                "timestamp": 1779873611369,
+                "step": 0
+              },
+              {
+                "key": "mape",
+                "value": 8.524778754737868,
+                "timestamp": 1779873611633,
+                "step": 0
+              },
+              {
+                "key": "r2",
+                "value": 0.8993100515362756,
+                "timestamp": 1779873611514,
+                "step": 0
+              },
+              {
+                "key": "rmse",
+                "value": 10.404454355918258,
+                "timestamp": 1779873611163,
+                "step": 0
+              }
+            ],
+            "params": [
+              {
+                "key": "test_end_date",
+                "value": "2025-12-31"
+              },
+              {
+                "key": "train_start_date",
+                "value": "2021-01-01"
+              },
+              {
+                "key": "train_end_date",
+                "value": "2024-12-31"
+              },
+              {
+                "key": "test_start_date",
+                "value": "2025-01-01"
+              },
+              {
+                "key": "target_col",
+                "value": "daily_demand_tons"
+              },
+              {
+                "key": "model_type",
+                "value": "random_forest"
+              },
+              {
+                "key": "feature_table",
+                "value": "wonder_cement_ai_ml.demand_forecasting.cement_demand_features_v1"
+              },
+              {
+                "key": "feature_count",
+                "value": "40"
+              }
+            ],
+            "tags": [
+              {
+                "key": "mlflow.databricks.workspaceURL",
+                "value": "https://adb-642006393507276.16.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.log-model.history",
+                "value": "[{\"artifact_path\":\"model\",\"flavors\":{\"spark\":{\"pyspark_version\":\"3.5.0\",\"model_data\":\"sparkml\",\"code\":null,\"model_class\":\"pyspark.ml.pipeline.PipelineModel\"},\"python_function\":{\"loader_module\":\"mlflow.spark\",\"python_version\":\"3.11.11\",\"data\":\"sparkml\",\"env\":{\"conda\":\"conda.yaml\",\"virtualenv\":\"python_env.yaml\"}}},\"utc_time_created\":\"2026-05-27 09:20:37.185984\"}]"
+              },
+              {
+                "key": "mlflow.runColor",
+                "value": "#7d54b2"
+              },
+              {
+                "key": "mlflow.runName",
+                "value": "cement_demand_random_forest_config"
+              },
+              {
+                "key": "mlflow.source.name",
+                "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Model_Test/04_model_training_register_prod"
+              },
+              {
+                "key": "mlflow.source.type",
+                "value": "NOTEBOOK"
+              },
+              {
+                "key": "mlflow.user",
+                "value": "akshay.patil@bizmetric.com"
+              },
+              {
+                "key": "sparkDatasourceInfo",
+                "value": "path=abfss:REDACTED_LOCAL_PART@sadeacceleratordev.dfs.core.windows.net/__unitystorage/catalogs/da37d917-3c80-485d-80b1-4e0bfb747e51/tables/9946e512-4673-44fb-b4c5-be3583e61c40,version=15,format=delta"
+              },
+              {
+                "key": "mlflow.databricks.webappURL",
+                "value": "https://centralindia.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.databricks.notebookRevisionID",
+                "value": "1779873692022"
+              },
+              {
+                "key": "mlflow.databricks.notebookPath",
+                "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Model_Test/04_model_training_register_prod"
+              },
+              {
+                "key": "mlflow.databricks.notebookID",
+                "value": "2250204694183987"
+              },
+              {
+                "key": "mlflow.databricks.notebook.commandID",
+                "value": "1779873234421_9149534033614363667_e6a00fdd9fe6495c842c2201c1aed425"
+              },
+              {
+                "key": "mlflow.databricks.cluster.libraries",
+                "value": "{\"installable\":[],\"redacted\":[]}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.info",
+                "value": "{\"cluster_name\":\"WonderCement\",\"spark_version\":\"15.4.x-scala2.12\",\"node_type_id\":\"Standard_D4ds_v5\",\"driver_node_type_id\":\"Standard_D4ds_v5\",\"autotermination_minutes\":120,\"disk_spec\":{},\"num_workers\":0}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.id",
+                "value": "0520-055911-81y5r63f"
+              },
+              {
+                "key": "mlflow.databricks.workspaceID",
+                "value": "642006393507276"
+              }
+            ]
+          },
+          "inputs": {},
+          "outputs": {}
+        },
+        {
+          "info": {
+            "run_id": "8eba95c031064390a14eb90bfbba4a01",
+            "run_uuid": "8eba95c031064390a14eb90bfbba4a01",
+            "experiment_id": "3943022488441360",
+            "run_name": "cement_demand_random_forest_config",
+            "status": "FINISHED",
+            "start_time": 1779343627701,
+            "end_time": 1779343719724,
+            "artifact_uri": "dbfs:/databricks/mlflow-tracking/3943022488441360/8eba95c031064390a14eb90bfbba4a01/artifacts",
+            "lifecycle_stage": "active"
+          },
+          "data": {
+            "metrics": [
+              {
+                "key": "rmse",
+                "value": 10.688702545823269,
+                "timestamp": 1779343658875,
+                "step": 0
+              },
+              {
+                "key": "r2",
+                "value": 0.8954942728354534,
+                "timestamp": 1779343659180,
+                "step": 0
+              },
+              {
+                "key": "mape",
+                "value": 8.589304816242326,
+                "timestamp": 1779343659309,
+                "step": 0
+              },
+              {
+                "key": "mae",
+                "value": 7.491724760377869,
+                "timestamp": 1779343659030,
+                "step": 0
+              }
+            ],
+            "params": [
+              {
+                "key": "train_start_date",
+                "value": "2021-01-01"
+              },
+              {
+                "key": "train_end_date",
+                "value": "2024-12-31"
+              },
+              {
+                "key": "test_start_date",
+                "value": "2025-01-01"
+              },
+              {
+                "key": "test_end_date",
+                "value": "2025-12-31"
+              },
+              {
+                "key": "target_col",
+                "value": "daily_demand_tons"
+              },
+              {
+                "key": "model_type",
+                "value": "random_forest"
+              },
+              {
+                "key": "feature_table",
+                "value": "wonder_cement_ai_ml.demand_forecasting.cement_demand_features_v1"
+              },
+              {
+                "key": "feature_count",
+                "value": "40"
+              }
+            ],
+            "tags": [
+              {
+                "key": "mlflow.databricks.notebookPath",
+                "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Cement_Forcasting_Model_Test/04_model_training_register_prod"
+              },
+              {
+                "key": "mlflow.source.name",
+                "value": "jobs/711733734757023/run/102787294693299"
+              },
+              {
+                "key": "mlflow.runName",
+                "value": "cement_demand_random_forest_config"
+              },
+              {
+                "key": "mlflow.runColor",
+                "value": "#479a5f"
+              },
+              {
+                "key": "mlflow.log-model.history",
+                "value": "[{\"artifact_path\":\"model\",\"flavors\":{\"spark\":{\"pyspark_version\":\"3.5.0\",\"model_data\":\"sparkml\",\"code\":null,\"model_class\":\"pyspark.ml.pipeline.PipelineModel\"},\"python_function\":{\"loader_module\":\"mlflow.spark\",\"python_version\":\"3.11.11\",\"data\":\"sparkml\",\"env\":{\"conda\":\"conda.yaml\",\"virtualenv\":\"python_env.yaml\"}}},\"utc_time_created\":\"2026-05-21 06:07:57.917181\"}]"
+              },
+              {
+                "key": "mlflow.databricks.workspaceURL",
+                "value": "https://adb-642006393507276.16.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.databricks.workspaceID",
+                "value": "642006393507276"
+              },
+              {
+                "key": "mlflow.databricks.webappURL",
+                "value": "https://centralindia.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.databricks.notebookRevisionID",
+                "value": "1779343720021"
+              },
+              {
+                "key": "mlflow.user",
+                "value": "akshay.patil@bizmetric.com"
+              },
+              {
+                "key": "mlflow.databricks.notebookID",
+                "value": "2250204694183817"
+              },
+              {
+                "key": "mlflow.databricks.notebook.commandID",
+                "value": "1779343438847_4894580312918714372_job-711733734757023-run-102787294693299-action-7887976134865557"
+              },
+              {
+                "key": "mlflow.databricks.jobType",
+                "value": "notebook"
+              },
+              {
+                "key": "mlflow.databricks.jobRunID",
+                "value": "102787294693299"
+              },
+              {
+                "key": "mlflow.databricks.jobID",
+                "value": "711733734757023"
+              },
+              {
+                "key": "mlflow.databricks.cluster.libraries",
+                "value": "{\"installable\":[],\"redacted\":[]}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.info",
+                "value": "{\"cluster_name\":\"WonderCement\",\"spark_version\":\"15.4.x-scala2.12\",\"node_type_id\":\"Standard_D4ds_v5\",\"driver_node_type_id\":\"Standard_D4ds_v5\",\"autotermination_minutes\":120,\"disk_spec\":{},\"num_workers\":0}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.id",
+                "value": "0520-055911-81y5r63f"
+              },
+              {
+                "key": "mlflow.source.type",
+                "value": "JOB"
+              },
+              {
+                "key": "sparkDatasourceInfo",
+                "value": "path=abfss:REDACTED_LOCAL_PART@sadeacceleratordev.dfs.core.windows.net/__unitystorage/catalogs/da37d917-3c80-485d-80b1-4e0bfb747e51/tables/9946e512-4673-44fb-b4c5-be3583e61c40,version=10,format=delta"
+              }
+            ]
+          },
+          "inputs": {},
+          "outputs": {}
+        },
+        {
+          "info": {
+            "run_id": "fafa1cd46aad4f0698e3552588f28ba2",
+            "run_uuid": "fafa1cd46aad4f0698e3552588f28ba2",
+            "experiment_id": "3943022488441360",
+            "run_name": "cement_demand_random_forest_config",
+            "status": "FINISHED",
+            "start_time": 1779265144383,
+            "end_time": 1779265240531,
+            "artifact_uri": "dbfs:/databricks/mlflow-tracking/3943022488441360/fafa1cd46aad4f0698e3552588f28ba2/artifacts",
+            "lifecycle_stage": "active"
+          },
+          "data": {
+            "metrics": [
+              {
+                "key": "mae",
+                "value": 7.491724760377869,
+                "timestamp": 1779265177545,
+                "step": 0
+              },
+              {
+                "key": "mape",
+                "value": 8.589304816242326,
+                "timestamp": 1779265177834,
+                "step": 0
+              },
+              {
+                "key": "r2",
+                "value": 0.8954942728354534,
+                "timestamp": 1779265177704,
+                "step": 0
+              },
+              {
+                "key": "rmse",
+                "value": 10.688702545823269,
+                "timestamp": 1779265177379,
+                "step": 0
+              }
+            ],
+            "params": [
+              {
+                "key": "feature_count",
+                "value": "40"
+              },
+              {
+                "key": "feature_table",
+                "value": "wonder_cement_ai_ml.demand_forecasting.cement_demand_features_v1"
+              },
+              {
+                "key": "model_type",
+                "value": "random_forest"
+              },
+              {
+                "key": "target_col",
+                "value": "daily_demand_tons"
+              },
+              {
+                "key": "test_end_date",
+                "value": "2025-12-31"
+              },
+              {
+                "key": "test_start_date",
+                "value": "2025-01-01"
+              },
+              {
+                "key": "train_end_date",
+                "value": "2024-12-31"
+              },
+              {
+                "key": "train_start_date",
+                "value": "2021-01-01"
+              }
+            ],
+            "tags": [
+              {
+                "key": "mlflow.databricks.notebookPath",
+                "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Cement_Forcasting_Model_Test/04_model_training_register_prod"
+              },
+              {
+                "key": "mlflow.databricks.cluster.id",
+                "value": "0520-055911-81y5r63f"
+              },
+              {
+                "key": "mlflow.databricks.cluster.info",
+                "value": "{\"cluster_name\":\"WonderCement\",\"spark_version\":\"15.4.x-scala2.12\",\"node_type_id\":\"Standard_D4ds_v5\",\"driver_node_type_id\":\"Standard_D4ds_v5\",\"autotermination_minutes\":120,\"disk_spec\":{},\"num_workers\":0}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.libraries",
+                "value": "{\"installable\":[],\"redacted\":[]}"
+              },
+              {
+                "key": "mlflow.databricks.jobID",
+                "value": "711733734757023"
+              },
+              {
+                "key": "mlflow.databricks.jobRunID",
+                "value": "1088898139517383"
+              },
+              {
+                "key": "mlflow.databricks.jobType",
+                "value": "notebook"
+              },
+              {
+                "key": "mlflow.databricks.notebook.commandID",
+                "value": "1779264946120_8716846922665903271_job-711733734757023-run-1088898139517383-action-514549395447136"
+              },
+              {
+                "key": "mlflow.databricks.notebookID",
+                "value": "2250204694183817"
+              },
+              {
+                "key": "mlflow.runName",
+                "value": "cement_demand_random_forest_config"
+              },
+              {
+                "key": "mlflow.databricks.notebookRevisionID",
+                "value": "1779265240810"
+              },
+              {
+                "key": "mlflow.databricks.webappURL",
+                "value": "https://centralindia.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.databricks.workspaceID",
+                "value": "642006393507276"
+              },
+              {
+                "key": "mlflow.databricks.workspaceURL",
+                "value": "https://adb-642006393507276.16.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.log-model.history",
+                "value": "[{\"artifact_path\":\"model\",\"flavors\":{\"spark\":{\"pyspark_version\":\"3.5.0\",\"model_data\":\"sparkml\",\"code\":null,\"model_class\":\"pyspark.ml.pipeline.PipelineModel\"},\"python_function\":{\"loader_module\":\"mlflow.spark\",\"python_version\":\"3.11.11\",\"data\":\"sparkml\",\"env\":{\"conda\":\"conda.yaml\",\"virtualenv\":\"python_env.yaml\"}}},\"utc_time_created\":\"2026-05-20 08:19:55.580622\"}]"
+              },
+              {
+                "key": "mlflow.runColor",
+                "value": "#da4c4c"
+              },
+              {
+                "key": "sparkDatasourceInfo",
+                "value": "path=abfss:REDACTED_LOCAL_PART@sadeacceleratordev.dfs.core.windows.net/__unitystorage/catalogs/da37d917-3c80-485d-80b1-4e0bfb747e51/tables/9946e512-4673-44fb-b4c5-be3583e61c40,version=9,format=delta"
+              },
+              {
+                "key": "mlflow.user",
+                "value": "akshay.patil@bizmetric.com"
+              },
+              {
+                "key": "mlflow.source.type",
+                "value": "JOB"
+              },
+              {
+                "key": "mlflow.source.name",
+                "value": "jobs/711733734757023/run/1088898139517383"
+              }
+            ]
+          },
+          "inputs": {},
+          "outputs": {}
+        },
+        {
+          "info": {
+            "run_id": "41d00aaaa1af4a0d96f3583be6cfb307",
+            "run_uuid": "41d00aaaa1af4a0d96f3583be6cfb307",
+            "experiment_id": "3943022488441360",
+            "run_name": "cement_demand_random_forest_config",
+            "status": "FINISHED",
+            "start_time": 1779261092582,
+            "end_time": 1779261173193,
+            "artifact_uri": "dbfs:/databricks/mlflow-tracking/3943022488441360/41d00aaaa1af4a0d96f3583be6cfb307/artifacts",
+            "lifecycle_stage": "active"
+          },
+          "data": {
+            "metrics": [
+              {
+                "key": "rmse",
+                "value": 10.671518430198168,
+                "timestamp": 1779261123007,
+                "step": 0
+              },
+              {
+                "key": "r2",
+                "value": 0.8958300282587098,
+                "timestamp": 1779261123311,
+                "step": 0
+              },
+              {
+                "key": "mape",
+                "value": 8.552175692051387,
+                "timestamp": 1779261123445,
+                "step": 0
+              },
+              {
+                "key": "mae",
+                "value": 7.446797943122426,
+                "timestamp": 1779261123176,
+                "step": 0
+              }
+            ],
+            "params": [
+              {
+                "key": "train_start_date",
+                "value": "2021-01-01"
+              },
+              {
+                "key": "train_end_date",
+                "value": "2024-12-31"
+              },
+              {
+                "key": "test_start_date",
+                "value": "2025-01-01"
+              },
+              {
+                "key": "test_end_date",
+                "value": "2025-12-31"
+              },
+              {
+                "key": "target_col",
+                "value": "daily_demand_tons"
+              },
+              {
+                "key": "model_type",
+                "value": "random_forest"
+              },
+              {
+                "key": "feature_table",
+                "value": "wonder_cement_ai_ml.demand_forecasting.cement_demand_features_v1"
+              },
+              {
+                "key": "feature_count",
+                "value": "40"
+              }
+            ],
+            "tags": [
+              {
+                "key": "mlflow.databricks.webappURL",
+                "value": "https://centralindia.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.runName",
+                "value": "cement_demand_random_forest_config"
+              },
+              {
+                "key": "mlflow.databricks.notebookRevisionID",
+                "value": "1779261173512"
+              },
+              {
+                "key": "mlflow.databricks.notebookPath",
+                "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Cement_Forcasting_Model_Test/04_model_training_register_prod"
+              },
+              {
+                "key": "mlflow.databricks.notebookID",
+                "value": "2250204694183817"
+              },
+              {
+                "key": "mlflow.databricks.notebook.commandID",
+                "value": "1779257057761_5081585043863046398_a86a9f151c7e4534973dd431a04d09d1"
+              },
+              {
+                "key": "mlflow.databricks.cluster.libraries",
+                "value": "{\"installable\":[],\"redacted\":[]}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.info",
+                "value": "{\"cluster_name\":\"WonderCement\",\"spark_version\":\"15.4.x-scala2.12\",\"node_type_id\":\"Standard_D4ds_v5\",\"driver_node_type_id\":\"Standard_D4ds_v5\",\"autotermination_minutes\":120,\"disk_spec\":{},\"num_workers\":0}"
+              },
+              {
+                "key": "mlflow.databricks.cluster.id",
+                "value": "0520-055911-81y5r63f"
+              },
+              {
+                "key": "mlflow.databricks.workspaceID",
+                "value": "642006393507276"
+              },
+              {
+                "key": "mlflow.databricks.workspaceURL",
+                "value": "https://adb-642006393507276.16.azuredatabricks.net"
+              },
+              {
+                "key": "mlflow.log-model.history",
+                "value": "[{\"artifact_path\":\"model\",\"flavors\":{\"spark\":{\"pyspark_version\":\"3.5.0\",\"model_data\":\"sparkml\",\"code\":null,\"model_class\":\"pyspark.ml.pipeline.PipelineModel\"},\"python_function\":{\"loader_module\":\"mlflow.spark\",\"python_version\":\"3.11.11\",\"data\":\"sparkml\",\"env\":{\"conda\":\"conda.yaml\",\"virtualenv\":\"python_env.yaml\"}}},\"utc_time_created\":\"2026-05-20 07:12:17.757961\"}]"
+              },
+              {
+                "key": "mlflow.runColor",
+                "value": "#5387dd"
+              },
+              {
+                "key": "mlflow.source.name",
+                "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Cement_Forcasting_Model_Test/04_model_training_register_prod"
+              },
+              {
+                "key": "mlflow.source.type",
+                "value": "NOTEBOOK"
+              },
+              {
+                "key": "mlflow.user",
+                "value": "akshay.patil@bizmetric.com"
+              },
+              {
+                "key": "sparkDatasourceInfo",
+                "value": "path=abfss:REDACTED_LOCAL_PART@sadeacceleratordev.dfs.core.windows.net/__unitystorage/catalogs/da37d917-3c80-485d-80b1-4e0bfb747e51/tables/9946e512-4673-44fb-b4c5-be3583e61c40,version=8,format=delta"
+              }
+            ]
+          },
+          "inputs": {},
+          "outputs": {}
+        }
+      ],
+      "next_page_token": "[REDACTED_CONFIDENTIAL]"
+    }
+  },
+  {
+    "module_name": "mlflow",
+    "operation_name": "get_run_details",
+    "http_method": "GET",
+    "endpoint_path": "/api/2.0/mlflow/runs/get",
+    "complete_url": "https://adb-642006393507276.16.azuredatabricks.net/api/2.0/mlflow/runs/get",
+    "query_parameters": {
+      "run_id": "1e1b2d0965ef4f7db6aeaad8b453518d"
+    },
+    "request_payload": {},
+    "http_status_code": 200,
+    "response_timestamp_utc": "2026-11-11T11:32:03.868517+00:00",
+    "duration_ms": 82.53,
+    "records_count": 1,
+    "pagination_info": {},
+    "access_status": "SUCCESS",
+    "error_message": null,
+    "response_body": {
+      "run": {
+        "info": {
+          "run_id": "1e1b2d0965ef4f7db6aeaad8b453518d",
+          "run_uuid": "1e1b2d0965ef4f7db6aeaad8b453518d",
+          "experiment_id": "3943022488441360",
+          "run_name": "wonder_cement_demand_random_forest_config",
+          "status": "FINISHED",
+          "start_time": 1779873949053,
+          "end_time": 1779874050932,
+          "artifact_uri": "dbfs:/databricks/mlflow-tracking/3943022488441360/1e1b2d0965ef4f7db6aeaad8b453518d/artifacts",
+          "lifecycle_stage": "active"
+        },
+        "data": {
+          "metrics": [
+            {
+              "key": "mae",
+              "value": 7.187290105857658,
+              "timestamp": 1779873986269,
+              "step": 0
+            },
+            {
+              "key": "mape",
+              "value": 8.459402169303571,
+              "timestamp": 1779873986546,
+              "step": 0
+            },
+            {
+              "key": "r2",
+              "value": 0.9006670001311892,
+              "timestamp": 1779873986429,
+              "step": 0
+            },
+            {
+              "key": "rmse",
+              "value": 10.334108708002473,
+              "timestamp": 1779873986115,
+              "step": 0
+            }
+          ],
+          "params": [
+            {
+              "key": "feature_count",
+              "value": "40"
+            },
+            {
+              "key": "feature_table",
+              "value": "wonder_cement_ai_ml.demand_forecasting.cement_demand_features_v1"
+            },
+            {
+              "key": "model_type",
+              "value": "random_forest"
+            },
+            {
+              "key": "target_col",
+              "value": "daily_demand_tons"
+            },
+            {
+              "key": "test_end_date",
+              "value": "2025-12-31"
+            },
+            {
+              "key": "test_start_date",
+              "value": "2025-01-01"
+            },
+            {
+              "key": "train_end_date",
+              "value": "2024-12-31"
+            },
+            {
+              "key": "train_start_date",
+              "value": "2021-01-01"
+            }
+          ],
+          "tags": [
+            {
+              "key": "mlflow.databricks.cluster.id",
+              "value": "0520-055911-81y5r63f"
+            },
+            {
+              "key": "mlflow.databricks.cluster.info",
+              "value": "{\"cluster_name\":\"WonderCement\",\"spark_version\":\"15.4.x-scala2.12\",\"node_type_id\":\"Standard_D4ds_v5\",\"driver_node_type_id\":\"Standard_D4ds_v5\",\"autotermination_minutes\":120,\"disk_spec\":{},\"num_workers\":0}"
+            },
+            {
+              "key": "mlflow.databricks.cluster.libraries",
+              "value": "{\"installable\":[],\"redacted\":[]}"
+            },
+            {
+              "key": "mlflow.databricks.jobID",
+              "value": "1082952919798851"
+            },
+            {
+              "key": "mlflow.databricks.jobRunID",
+              "value": "904589333567800"
+            },
+            {
+              "key": "mlflow.databricks.jobType",
+              "value": "notebook"
+            },
+            {
+              "key": "mlflow.databricks.notebook.commandID",
+              "value": "1779873234424_7734716226018154704_job-1082952919798851-run-904589333567800-action-7007014026408650"
+            },
+            {
+              "key": "mlflow.databricks.notebookID",
+              "value": "2250204694183987"
+            },
+            {
+              "key": "mlflow.databricks.notebookPath",
+              "value": "/Users/akshay.patil@bizmetric.com/Wonder_Cement_AI_&_ML/Model_Test/04_model_training_register_prod"
+            },
+            {
+              "key": "mlflow.databricks.notebookRevisionID",
+              "value": "1780302298442"
+            },
+            {
+              "key": "mlflow.databricks.webappURL",
+              "value": "https://centralindia.azuredatabricks.net"
+            },
+            {
+              "key": "mlflow.databricks.workspaceID",
+              "value": "642006393507276"
+            },
+            {
+              "key": "mlflow.databricks.workspaceURL",
+              "value": "https://adb-642006393507276.16.azuredatabricks.net"
+            },
+            {
+              "key": "mlflow.log-model.history",
+              "value": "[{\"artifact_path\":\"model\",\"flavors\":{\"spark\":{\"pyspark_version\":\"3.5.0\",\"model_data\":\"sparkml\",\"code\":null,\"model_class\":\"pyspark.ml.pipeline.PipelineModel\"},\"python_function\":{\"loader_module\":\"mlflow.spark\",\"python_version\":\"3.11.11\",\"data\":\"sparkml\",\"env\":{\"conda\":\"conda.yaml\",\"virtualenv\":\"python_env.yaml\"}}},\"utc_time_created\":\"2026-05-27 09:26:41.755130\"}]"
+            },
+            {
+              "key": "mlflow.runColor",
+              "value": "#e87b9f"
+            },
+            {
+              "key": "mlflow.runName",
+              "value": "wonder_cement_demand_random_forest_config"
+            },
+            {
+              "key": "mlflow.source.name",
+              "value": "jobs/1082952919798851/run/904589333567800"
+            },
+            {
+              "key": "mlflow.source.type",
+              "value": "JOB"
+            },
+            {
+              "key": "mlflow.user",
+              "value": "akshay.patil@bizmetric.com"
+            },
+            {
+              "key": "sparkDatasourceInfo",
+              "value": "path=abfss:REDACTED_LOCAL_PART@sadeacceleratordev.dfs.core.windows.net/__unitystorage/catalogs/da37d917-3c80-485d-80b1-4e0bfb747e51/tables/9946e512-4673-44fb-b4c5-be3583e61c40,version=16,format=delta"
+            },
+            {
+              "key": "mlflow.artifacts.spn",
+              "value": "/WorkspaceInternal/Mlflow/Artifacts/3943022488441360/Runs/1e1b2d0965ef4f7db6aeaad8b453518d/"
+            }
+          ]
+        },
+        "inputs": {},
+        "outputs": {}
+      }
+    }
+  }
+]

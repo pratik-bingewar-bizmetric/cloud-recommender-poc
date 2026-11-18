@@ -13,12 +13,30 @@ from cloud_recommender.db.session import check_db_health
 router = APIRouter(tags=["Health"])
 
 
+def _public_environment(settings: Settings) -> str | None:
+    """Expose the environment label everywhere except production."""
+    return None if settings.app_env == "production" else settings.app_env
+
+
+def _sanitize_db_status(db_status: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a database probe to a status flag.
+
+    Hosts, database names, drivers, DSN targets and raw driver errors (which can embed
+    usernames or hostnames) are never returned from a public probe; details go to server logs.
+    """
+    if db_status.get("status") == "connected":
+        return {"status": "connected"}
+    return {"status": "disconnected", "error": "database_unreachable"}
+
+
 class LivenessResponse(BaseModel):
     """Liveness probe response model."""
 
     status: str = Field(default="ok", description="Liveness status indicator")
     service: str = Field(description="Service identifier")
-    environment: str = Field(description="Configured deployment environment")
+    environment: str | None = Field(
+        default=None, description="Deployment environment (omitted in production)"
+    )
     version: str = Field(description="Application release version")
     timestamp: str = Field(description="ISO 8601 UTC timestamp of check")
 
@@ -28,7 +46,9 @@ class ReadinessResponse(BaseModel):
 
     status: str = Field(description="Overall readiness: 'ready' or 'not_ready'")
     service: str = Field(description="Service identifier")
-    environment: str = Field(description="Configured deployment environment")
+    environment: str | None = Field(
+        default=None, description="Deployment environment (omitted in production)"
+    )
     timestamp: str = Field(description="ISO 8601 UTC timestamp of check")
     dependencies: dict[str, Any] = Field(description="Status of individual external dependencies")
 
@@ -47,7 +67,7 @@ async def liveness(
     return LivenessResponse(
         status="ok",
         service=settings.app_name,
-        environment=settings.app_env,
+        environment=_public_environment(settings),
         version=__version__,
         timestamp=datetime.now(UTC).isoformat(),
     )
@@ -73,7 +93,7 @@ async def readiness(
 
     # Compile dependency audit
     dependencies: dict[str, Any] = {
-        "database": db_status,
+        "database": _sanitize_db_status(db_status),
         "azure_integration": {
             "status": "unconfigured" if not settings.azure_tenant_id else "configured_read_only",
             "checked": False,
@@ -105,7 +125,7 @@ async def readiness(
     return ReadinessResponse(
         status=overall_status,
         service=settings.app_name,
-        environment=settings.app_env,
+        environment=_public_environment(settings),
         timestamp=datetime.now(UTC).isoformat(),
         dependencies=dependencies,
     )

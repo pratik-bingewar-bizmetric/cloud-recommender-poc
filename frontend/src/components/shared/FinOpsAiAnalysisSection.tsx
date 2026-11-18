@@ -92,13 +92,14 @@ export const FinOpsAiAnalysisSection: React.FC<FinOpsAiAnalysisSectionProps> = (
 
   // Categorize decisions into 4 priority tiers
   const getDecisionTier = (d: FinOpsDecisionItem): "Critical" | "Requires Approval" | "Recommended" | "Informational" => {
-    if (d.priority === 1 || d.impact === "High" || d.estimated_savings_monthly >= 8000) {
+    const savings = d.estimated_savings_monthly ?? 0; // null = not calculable, never treated as a saving
+    if (d.priority === 1 || d.impact === "High" || savings >= 8000) {
       return "Critical";
     }
     if (d.status === "Pending" || d.status === "PENDING" || d.impact === "Medium") {
       return "Requires Approval";
     }
-    if (d.estimated_savings_monthly > 0) {
+    if (savings > 0) {
       return "Recommended";
     }
     return "Informational";
@@ -123,14 +124,14 @@ export const FinOpsAiAnalysisSection: React.FC<FinOpsAiAnalysisSectionProps> = (
                 AI FinOps Intelligence &amp; Cost Analysis
               </h3>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-brand-100 text-brand-800 border border-brand-200">
-                {analysis.is_ai_live ? "Azure AI Foundry Live" : "Deterministic Engine Certified"}
+                {analysis.is_ai_live ? "Azure AI Foundry Live" : "Deterministic summary"}
               </span>
               <span className="text-[10px] font-semibold text-slate-500">
-                Confidence: {(analysis.confidence_score * 100).toFixed(0)}%
+                Data coverage: {(analysis.confidence_score * 100).toFixed(0)}% of metrics live/calculated
               </span>
             </div>
             <p className="text-[11px] text-slate-500 font-mono mt-0.5">
-              Scope: Workspace {workspaceId} · Verified System Tables Lineage
+              Scope: Workspace {workspaceId} · Sources: {analysis.source_references.join(", ") || "-"}
             </p>
           </div>
         </div>

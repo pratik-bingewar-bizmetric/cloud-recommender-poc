@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { formatFinancialCurrency, toFiniteNumber } from "@/lib/financials";
 import {
   CloudProvider,
   ProviderConnectionStatus,
@@ -522,10 +523,7 @@ export function SectionCloudScopeInventory() {
                 <TrendingDown className="w-3.5 h-3.5 text-emerald-600" />
               </span>
               <span className="text-lg font-bold font-mono text-emerald-700 block mt-0.5">
-                ${parseFloat(analysis.total_potential_monthly_savings || "0.00").toLocaleString("en-US", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {formatFinancialCurrency(toFiniteNumber(analysis.total_potential_monthly_savings))}
                 <span className="text-xs font-normal text-emerald-600">/mo</span>
               </span>
               <span className="text-[10px] text-emerald-700 font-medium block mt-0.5">
@@ -539,10 +537,7 @@ export function SectionCloudScopeInventory() {
                 Projected Annual Savings
               </span>
               <span className="text-lg font-bold font-mono text-emerald-700 block mt-0.5">
-                ${parseFloat(analysis.total_potential_annual_savings || "0.00").toLocaleString("en-US", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {formatFinancialCurrency(toFiniteNumber(analysis.total_potential_annual_savings))}
                 <span className="text-xs font-normal text-slate-500">/yr</span>
               </span>
               <span className="text-[10px] text-slate-400 block mt-0.5">12-Month Projected Run-Rate</span>

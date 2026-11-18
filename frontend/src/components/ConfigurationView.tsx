@@ -18,7 +18,14 @@ import {
   CloudScope,
   DatabricksModuleId,
 } from "@/types/navigation";
-import { CloudConnection } from "@/types";
+import { CloudConnection, DatabricksConnection } from "@/types";
+import {
+  AzureDiscoveryStatus,
+  AzureResourceItem,
+  listAzureResourceGroups,
+  listAzureResources,
+  listAzureSubscriptions,
+} from "@/lib/api";
 import { GlobalLoadingIndicator, GlobalLoadingState } from "./shared/GlobalLoadingIndicator";
 
 interface DiscoveredSubscriptionItem {
@@ -28,14 +35,16 @@ interface DiscoveredSubscriptionItem {
   tenant_id: string;
   status: "Enabled" | "Disabled" | "Warned";
   resource_groups: DiscoveredRgItem[];
-  resource_count: number;
+  resource_count: number | null;
+  /** ARM discovery outcome for this subscription (undefined until the RG call returns). */
+  discovery?: { status: AzureDiscoveryStatus; message: string; stale: boolean; retrievedAt: string | null };
 }
 
 interface DiscoveredRgItem {
   name: string;
   subscription_id: string;
   region: string;
-  resource_count: number;
+  resource_count: number | null;
   workspaces: DiscoveredWorkspaceItem[];
   other_resources: Array<{ id: string; name: string; type: string }>;
 }
@@ -80,6 +89,9 @@ interface ConfigurationViewProps {
   onNavigateToDatabricksModule?: (moduleId: DatabricksModuleId) => void;
   onSwitchAccount?: () => void;
   onContinueToDashboard?: () => void;
+  /** Real Databricks workspace registry from the backend (single source of workspaces). */
+  databricksConnections?: DatabricksConnection[];
+  onRefreshDatabricks?: () => Promise<void>;
 }
 
 export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
@@ -88,6 +100,8 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   onSelectScope,
   onSwitchAccount,
   onContinueToDashboard,
+  databricksConnections = [],
+  onRefreshDatabricks,
 }) => {
   // Navigation active tab within Configuration (Structured multi-section or single-page layout)
   const [activeSection, setActiveSection] = useState<"all" | "subscriptions" | "rgs" | "databricks" | "fabric" | "other">("all");
@@ -96,31 +110,27 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   const [selectedSubIds, setSelectedSubIds] = useState<string[]>(() => {
     if (activeScope?.subscription_ids?.length) return activeScope.subscription_ids;
     if (activeScope?.subscription_id) return [activeScope.subscription_id];
-    return ["f718c261-ab85-49fd-907e-99c022cc2aeb"];
+    return [];
   });
 
   const [selectedRgNames, setSelectedRgNames] = useState<string[]>(() => {
     if (activeScope?.resource_groups?.length) return activeScope.resource_groups;
     if (activeScope?.resource_group) return [activeScope.resource_group];
-    return ["rg-finops-eastus", "rg-analytics-core"];
+    return [];
   });
 
   const [selectedWorkspaceIds, setSelectedWorkspaceIds] = useState<string[]>(() => {
     if (activeScope?.workspace_ids?.length) return activeScope.workspace_ids;
     if (activeScope?.workspace_id) return [activeScope.workspace_id];
-    return ["642006393507276"];
+    return [];
   });
 
   const [selectedFabricWorkspaceIds, setSelectedFabricWorkspaceIds] = useState<string[]>(() => {
     if (activeScope?.fabric_workspace_ids?.length) return activeScope.fabric_workspace_ids;
-    return ["ws-fabric-analytics-01"];
+    return [];
   });
 
-  const [selectedOtherResources, setSelectedOtherResources] = useState<string[]>([
-    "vm-driver-01",
-    "vm-worker-01",
-    "stfinopseastus01",
-  ]);
+  const [selectedOtherResources, setSelectedOtherResources] = useState<string[]>([]);
 
   // Confirmation Modals
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState<boolean>(false);
@@ -134,147 +144,94 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     progressPct: null,
   });
 
-  // Authoritative Discovered Subscriptions Dataset
-  const subscriptionsData: DiscoveredSubscriptionItem[] = useMemo(
-    () => [
-      {
-        id: "sub-prod-01",
-        subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-        name: "Azure Production Subscription",
-        tenant_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-        status: "Enabled",
-        resource_count: 98,
-        resource_groups: [
-          {
-            name: "rg-finops-eastus",
-            subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-            region: "eastus",
-            resource_count: 48,
-            workspaces: [
-              {
-                workspace_id: "642006393507276",
-                name: "adb-lakehouse-eastus",
-                azure_resource_id: "/subscriptions/f718c261-ab85-49fd-907e-99c022cc2aeb/resourceGroups/rg-finops-eastus/providers/Microsoft.Databricks/workspaces/adb-lakehouse-eastus",
-                subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-                resource_group: "rg-finops-eastus",
-                region: "eastus",
-                workspace_url: "https://adb-642006393507276.16.azuredatabricks.net",
-                pricing_tier: "Premium",
-                provisioning_status: "Succeeded",
-                auth_status: "verified",
-                discovery_status: "connected",
-              },
-            ],
-            other_resources: [
-              { id: "vm-driver-01", name: "vm-driver-prod-01", type: "Microsoft.Compute/virtualMachines" },
-              { id: "stfinopseastus01", name: "stfinopseastus01", type: "Microsoft.Storage/storageAccounts" },
-            ],
-          },
-          {
-            name: "rg-analytics-core",
-            subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-            region: "eastus",
-            resource_count: 32,
-            workspaces: [],
-            other_resources: [
-              { id: "vnet-analytics-hub", name: "vnet-analytics-hub", type: "Microsoft.Network/virtualNetworks" },
-            ],
-          },
-          {
-            name: "rg-networking-hub",
-            subscription_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-            region: "eastus",
-            resource_count: 18,
-            workspaces: [],
-            other_resources: [],
-          },
-        ],
-      },
-      {
-        id: "sub-dev-02",
-        subscription_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
-        name: "Azure Analytics & Dev Subscription",
-        tenant_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-        status: "Enabled",
-        resource_count: 56,
-        resource_groups: [
-          {
-            name: "rg-analytics-databricks",
-            subscription_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
-            region: "eastus",
-            resource_count: 36,
-            workspaces: [
-              {
-                workspace_id: "7840192837148901",
-                name: "adb-lakehouse-prod",
-                azure_resource_id: "/subscriptions/e827a192-3bc1-49e0-812d-11c033bb1fea/resourceGroups/rg-analytics-databricks/providers/Microsoft.Databricks/workspaces/adb-lakehouse-prod",
-                subscription_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
-                resource_group: "rg-analytics-databricks",
-                region: "eastus",
-                workspace_url: "https://adb-7840192837.14.azuredatabricks.net",
-                pricing_tier: "Premium",
-                provisioning_status: "Succeeded",
-                auth_status: "service_principal",
-                discovery_status: "connected",
-              },
-            ],
-            other_resources: [
-              { id: "vm-worker-01", name: "vm-worker-d4ds-01", type: "Microsoft.Compute/virtualMachines" },
-            ],
-          },
-          {
-            name: "rg-sandbox-eval",
-            subscription_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
-            region: "eastus",
-            resource_count: 20,
-            workspaces: [],
-            other_resources: [],
-          },
-        ],
-      },
-    ],
-    []
-  );
+  // Azure subscriptions come from the backend (live ARM when authenticated). Resource-group,
+  // Fabric and VM-level inventory are not exposed by any backend endpoint yet, so they stay empty.
+  const [subscriptionsData, setSubscriptionsData] = useState<DiscoveredSubscriptionItem[]>([]);
+  const [subscriptionsError, setSubscriptionsError] = useState<string | null>(null);
+  const loadSubscriptions = React.useCallback(async (): Promise<number> => {
+    try {
+      const subs = await listAzureSubscriptions();
+      setSubscriptionsData(
+        subs.map((x) => ({
+          id: x.scope_id,
+          name: x.display_name,
+          subscription_id: x.scope_id,
+          tenant_id: x.tenant_or_org_id ?? "-",
+          status: (["Enabled", "Disabled", "Warned"].includes(x.state) ? x.state : "Enabled") as "Enabled" | "Disabled" | "Warned",
+          resource_groups: [],
+          resource_count: null,
+        }))
+      );
+      setSubscriptionsError(null);
+      // Real ARM resource groups + resources per subscription, loaded in parallel. A failed
+      // call keeps the previously loaded inventory for that subscription (marked stale by the API).
+      await Promise.all(
+        subs.map(async (s) => {
+          const [rgRes, resRes] = await Promise.allSettled([
+            listAzureResourceGroups(s.scope_id),
+            listAzureResources(s.scope_id),
+          ]);
+          setSubscriptionsData((prev) =>
+            prev.map((p) => {
+              if (p.subscription_id !== s.scope_id) return p;
+              if (rgRes.status === "rejected") {
+                return {
+                  ...p,
+                  discovery: {
+                    status: "ERROR" as AzureDiscoveryStatus,
+                    message: rgRes.reason instanceof Error ? rgRes.reason.message : "Resource group discovery failed.",
+                    stale: p.resource_groups.length > 0,
+                    retrievedAt: null,
+                  },
+                };
+              }
+              const rgs = rgRes.value;
+              const resources: AzureResourceItem[] = resRes.status === "fulfilled" ? resRes.value.items : [];
+              const resourcesKnown = resRes.status === "fulfilled" && resRes.value.count !== null;
+              return {
+                ...p,
+                status: (["Enabled", "Disabled", "Warned"].includes(rgs.subscription_state ?? "")
+                  ? rgs.subscription_state
+                  : p.status) as "Enabled" | "Disabled" | "Warned",
+                resource_count: resourcesKnown ? resources.length : null,
+                resource_groups: rgs.items.map((g): DiscoveredRgItem => {
+                  const inRg = resources.filter((r) => (r.resource_group ?? "").toLowerCase() === g.name.toLowerCase());
+                  return {
+                    name: g.name,
+                    subscription_id: g.subscription_id,
+                    region: g.location ?? "-",
+                    resource_count: resourcesKnown ? inRg.length : null,
+                    workspaces: [],
+                    other_resources: inRg.map((r) => ({ id: r.id, name: r.name, type: r.type })),
+                  };
+                }),
+                discovery: {
+                  status: rgs.status,
+                  message: rgs.status_message,
+                  stale: rgs.stale,
+                  retrievedAt: rgs.retrieved_at,
+                },
+              };
+            })
+          );
+        })
+      );
+      return subs.length;
+    } catch (err) {
+      setSubscriptionsData([]);
+      setSubscriptionsError(err instanceof Error ? err.message : "Azure subscription discovery failed.");
+      return 0;
+    }
+  }, []);
+  useEffect(() => {
+    void loadSubscriptions();
+  }, [loadSubscriptions]);
+  useEffect(() => {
+    if (subscriptionsError) setErrorMessage(`Azure subscription discovery failed: ${subscriptionsError}`);
+  }, [subscriptionsError]);
 
-  // Discovered Fabric Workspaces Dataset
-  const fabricWorkspacesData: DiscoveredFabricWorkspaceItem[] = useMemo(
-    () => [
-      {
-        id: "ws-fabric-analytics-01",
-        name: "Fabric FinOps Lakehouse Analytics",
-        capacity_id: "cap-f64-eastus-01",
-        capacity_name: "F64-FinOps-EastUS",
-        region: "eastus",
-        status: "active",
-        auth_status: "authorized",
-        lakehouse_count: 2,
-      },
-      {
-        id: "ws-fabric-directlake-02",
-        name: "Fabric Direct Lake Telemetry Store",
-        capacity_id: "cap-f64-eastus-01",
-        capacity_name: "F64-FinOps-EastUS",
-        region: "eastus",
-        status: "active",
-        auth_status: "authorized",
-        lakehouse_count: 1,
-      },
-    ],
-    []
-  );
-
-  const fabricCapacitiesData: DiscoveredFabricCapacityItem[] = useMemo(
-    () => [
-      {
-        id: "cap-f64-eastus-01",
-        name: "F64-FinOps-EastUS",
-        sku: "F64 (64 Capacity Units)",
-        region: "East US",
-        state: "Active",
-      },
-    ],
-    []
-  );
+  const fabricWorkspacesData: DiscoveredFabricWorkspaceItem[] = [];
+  const fabricCapacitiesData: DiscoveredFabricCapacityItem[] = [];
 
   // Sync initial scope from props if present
   useEffect(() => {
@@ -304,18 +261,25 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     return list;
   }, [subscriptionsData, selectedSubIds]);
 
-  // Section D Requirement: Databricks workspaces filtered strictly by selected subscriptions!
-  const availableDatabricksWorkspaces = useMemo(() => {
-    const list: DiscoveredWorkspaceItem[] = [];
-    subscriptionsData.forEach((sub) => {
-      if (selectedSubIds.includes(sub.subscription_id)) {
-        sub.resource_groups.forEach((rg) => {
-          rg.workspaces.forEach((ws) => list.push(ws));
-        });
-      }
-    });
-    return list;
-  }, [subscriptionsData, selectedSubIds]);
+  // Databricks workspaces: the real backend registry (not derived from a fabricated hierarchy)
+  const availableDatabricksWorkspaces = useMemo(
+    () =>
+      databricksConnections.map((c): DiscoveredWorkspaceItem => ({
+        workspace_id: c.workspace_id,
+        name: c.workspace_name,
+        azure_resource_id: "-",
+        subscription_id: "-",
+        resource_group: "-",
+        region: c.region ?? "-",
+        workspace_url: c.workspace_url,
+        pricing_tier: "-",
+        provisioning_status: c.status,
+        auth_status: c.status === "connected" ? "verified" : "standby",
+        discovery_status:
+          c.status === "connected" ? "connected" : c.status === "permission_denied" ? "permission_denied" : "standby",
+      })),
+    [databricksConnections]
+  );
 
   // Section F Requirement: Other resources filtered by selected subscriptions & RGs!
   const availableOtherResources = useMemo(() => {
@@ -338,7 +302,8 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   const handleToggleSubscription = (subId: string) => {
     const isSelected = selectedSubIds.includes(subId);
     const sub = subscriptionsData.find((s) => s.subscription_id === subId);
-    if (!sub) return;
+    // A Disabled subscription is read-only in Azure (no usage, billing or monitoring): not selectable.
+    if (!sub || (sub.status !== "Enabled" && !isSelected)) return;
 
     const rgNamesInSub = sub.resource_groups.map((r) => r.name);
     const wsIdsInSub = sub.resource_groups.flatMap((r) => r.workspaces.map((w) => w.workspace_id));
@@ -357,12 +322,11 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
   };
 
   const handleSelectAllSubs = () => {
-    const allSubIds = subscriptionsData.map((s) => s.subscription_id);
-    const allRgs = subscriptionsData.flatMap((s) => s.resource_groups.map((r) => r.name));
-    const allWs = subscriptionsData.flatMap((s) => s.resource_groups.flatMap((r) => r.workspaces.map((w) => w.workspace_id)));
+    const enabled = subscriptionsData.filter((s) => s.status === "Enabled");
+    const allSubIds = enabled.map((s) => s.subscription_id);
+    const allRgs = enabled.flatMap((s) => s.resource_groups.map((r) => r.name));
     setSelectedSubIds(allSubIds);
     setSelectedRgNames(Array.from(new Set(allRgs)));
-    setSelectedWorkspaceIds(Array.from(new Set(allWs)));
   };
 
   const handleClearAllSubs = () => {
@@ -438,14 +402,14 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
       progressPct: 50,
     });
 
-    const activeAccountName = activeConnection?.name || "Azure Production Account";
+    const activeAccountName = activeConnection?.name || "Azure account";
     const summaryText = `${selectedSubIds.length} Subs · ${selectedRgNames.length} RGs · ${selectedWorkspaceIds.length} Databricks · ${selectedFabricWorkspaceIds.length} Fabric`;
 
     const newScope: CloudScope = {
       provider: "azure",
       scope_type: "multi_scope",
-      account_id: activeConnection?.id || "conn-azure-prod",
-      tenant_id: activeConnection?.tenant_or_org_id || "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
+      account_id: activeConnection?.id,
+      tenant_id: activeConnection?.tenant_or_org_id ?? undefined,
       subscription_ids: selectedSubIds,
       subscription_id: selectedSubIds[0] || undefined,
       resource_groups: selectedRgNames,
@@ -456,7 +420,6 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
       other_resource_count: selectedOtherResources.length,
       display_name: `${activeAccountName} (${summaryText})`,
       is_multi_scope: true,
-      status: "connected",
     };
 
     setTimeout(() => {
@@ -467,37 +430,27 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
     }, 600);
   };
 
-  // Live Discovery Refresh
+  // Live discovery refresh: real calls, real counts, real failures
   const handleRefreshDiscovery = async () => {
     setLoadingState({
       isLoading: true,
-      stageMessage: "Querying Azure Resource Graph and discovering subscription topology...",
-      progressPct: 25,
+      stageMessage: "Discovering Azure subscriptions and Databricks workspaces...",
+      progressPct: 50,
       onCancel: () => setLoadingState({ isLoading: false }),
     });
     setErrorMessage(null);
-
-    setTimeout(() => {
-      setLoadingState((prev) => ({
-        ...prev,
-        stageMessage: "Discovering Databricks Workspaces and checking System Tables readiness...",
-        progressPct: 60,
-      }));
-    }, 600);
-
-    setTimeout(() => {
-      setLoadingState((prev) => ({
-        ...prev,
-        stageMessage: "Probing Microsoft Fabric capacities and lakehouses...",
-        progressPct: 85,
-      }));
-    }, 1200);
-
-    setTimeout(() => {
-      setLoadingState({ isLoading: false });
-      setSaveSuccessMessage("Cloud resource discovery refreshed successfully: 2 Subscriptions, 5 RGs, 2 Databricks Workspaces, 2 Fabric Lakehouses verified.");
+    try {
+      const subCount = await loadSubscriptions();
+      if (onRefreshDatabricks) await onRefreshDatabricks();
+      setSaveSuccessMessage(
+        `Discovery refreshed: ${subCount} Azure subscription(s), ${databricksConnections.length} Databricks workspace(s) in the registry.`
+      );
       setTimeout(() => setSaveSuccessMessage(null), 4000);
-    }, 1800);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? `Discovery failed: ${err.message}` : "Discovery failed.");
+    } finally {
+      setLoadingState({ isLoading: false });
+    }
   };
 
   // Continue to Dashboard Action (Section 6 Requirement)
@@ -525,17 +478,17 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                 <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider block">
                   Active Cloud Account &bull; Microsoft Azure
                 </span>
-                <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  Connected
+                <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                  {activeConnection?.status ?? "-"}
                 </span>
               </div>
               <h1 className="text-lg font-bold text-navy-950 tracking-tight mt-0.5">
-                {activeConnection?.name || "Azure Production Account (sub-prod-01)"}
+                {activeConnection?.name || "-"}
               </h1>
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono mt-0.5">
-                <span>Sub ID: <strong className="text-navy-900">{activeConnection?.scope_id || "f718c261-ab85-49fd-907e-99c022cc2aeb"}</strong></span>
+                <span>Sub ID: <strong className="text-navy-900">{activeConnection?.scope_id || "-"}</strong></span>
                 <span>&bull;</span>
-                <span>Tenant: <strong className="text-navy-900">{activeConnection?.tenant_or_org_id || "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41"}</strong></span>
+                <span>Tenant: <strong className="text-navy-900">{activeConnection?.tenant_or_org_id || "-"}</strong></span>
                 <span>&bull;</span>
                 <span className="text-emerald-700 font-sans font-semibold">Reader Role Enforced</span>
               </div>
@@ -649,34 +602,57 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {subscriptionsData.map((sub) => {
               const isChecked = selectedSubIds.includes(sub.subscription_id);
+              const isDisabledSub = sub.status !== "Enabled";
               return (
                 <div
                   key={sub.subscription_id}
                   onClick={() => handleToggleSubscription(sub.subscription_id)}
-                  className={`p-4 rounded-xl border transition cursor-pointer flex items-start gap-3 ${
-                    isChecked
-                      ? "border-blue-500 bg-blue-50/30 ring-1 ring-blue-500/20"
-                      : "border-slate-200 hover:border-slate-300 bg-white"
+                  aria-disabled={isDisabledSub}
+                  title={isDisabledSub ? `Subscription is ${sub.status} in Azure and cannot be selected for analysis.` : undefined}
+                  className={`p-4 rounded-xl border transition flex items-start gap-3 ${
+                    isDisabledSub
+                      ? "border-slate-200 bg-slate-50 opacity-70 cursor-not-allowed"
+                      : isChecked
+                      ? "border-blue-500 bg-blue-50/30 ring-1 ring-blue-500/20 cursor-pointer"
+                      : "border-slate-200 hover:border-slate-300 bg-white cursor-pointer"
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={isChecked}
+                    disabled={isDisabledSub}
                     onChange={() => {}} // handled by parent onClick
                     className="mt-1 rounded text-blue-600 focus:ring-blue-500 w-4 h-4"
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-bold text-xs text-navy-950 truncate">{sub.name}</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          isDisabledSub
+                            ? "bg-amber-50 text-amber-700 border-amber-200"
+                            : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        }`}
+                      >
                         {sub.status}
                       </span>
                     </div>
+                    {sub.discovery && sub.discovery.status !== "OK" && sub.discovery.status !== "EMPTY" && (
+                      <div className="text-[11px] text-red-700 mt-1">{sub.discovery.message}</div>
+                    )}
+                    {sub.discovery?.stale && (
+                      <div className="text-[11px] text-amber-700 mt-1">Stale: showing last successful inventory.</div>
+                    )}
+                    {isDisabledSub && (
+                      <div className="text-[11px] text-amber-700 mt-1">
+                        Disabled in Azure: inventory is read-only, not selectable for analysis.
+                      </div>
+                    )}
                     <div className="text-[11px] font-mono text-slate-500 mt-1 truncate">
                       {sub.subscription_id}
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-slate-500 mt-2">
-                      <span>{sub.resource_count} Total Resources</span>
+                      <span>{sub.resource_count ?? "-"} Total Resources</span>
                       <span>&bull;</span>
                       <span>{sub.resource_groups.length} Resource Groups</span>
                     </div>
@@ -753,7 +729,7 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                       <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-1">
                         <span className="font-mono bg-slate-100 px-1 py-0.2 rounded">{rg.region}</span>
                         <span>&bull;</span>
-                        <span>{rg.resource_count} resources</span>
+                        <span>{rg.resource_count ?? "-"} resources</span>
                       </div>
                       {rg.workspaces.length > 0 && (
                         <div className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-200">
@@ -842,9 +818,11 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                           <span className="font-mono text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
                             ID: {ws.workspace_id}
                           </span>
-                          <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            {ws.pricing_tier}
-                          </span>
+                          {ws.pricing_tier !== "-" && (
+                            <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              {ws.pricing_tier}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-500 mt-1 flex flex-wrap items-center gap-2">
                           <span>RG: <code className="font-mono text-slate-700">{ws.resource_group}</code></span>
@@ -866,8 +844,15 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 self-start md:self-auto">
-                      <span className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        System Tables Live
+                      <span
+                        className={`px-2.5 py-1 rounded-md text-[10px] font-bold border ${
+                          ws.discovery_status === "connected"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-slate-100 text-slate-700 border-slate-200"
+                        }`}
+                        title="Workspace REST connectivity (system tables need separate SQL approval)"
+                      >
+                        {ws.provisioning_status}
                       </span>
                     </div>
                   </div>
@@ -915,18 +900,24 @@ export const ConfigurationView: React.FC<ConfigurationViewProps> = ({
             </div>
           </div>
 
-          {/* Capacities Pill */}
-          <div className="p-3 bg-teal-50/60 rounded-xl border border-teal-200/80 flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-teal-600 shrink-0" />
-              <span>
-                <strong>Fabric Capacity:</strong> <code className="font-mono font-bold text-teal-900">{fabricCapacitiesData[0].name}</code> ({fabricCapacitiesData[0].sku})
+          {/* Capacities Pill (only when Fabric discovery returned a capacity) */}
+          {fabricCapacitiesData.length > 0 ? (
+            <div className="p-3 bg-teal-50/60 rounded-xl border border-teal-200/80 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-teal-600 shrink-0" />
+                <span>
+                  <strong>Fabric Capacity:</strong> <code className="font-mono font-bold text-teal-900">{fabricCapacitiesData[0].name}</code> ({fabricCapacitiesData[0].sku})
+                </span>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-teal-800 border border-teal-300">
+                {fabricCapacitiesData[0].state} &bull; {fabricCapacitiesData[0].region}
               </span>
             </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-teal-800 border border-teal-300">
-              Provisioned &bull; East US
-            </span>
-          </div>
+          ) : (
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600">
+              No Fabric workspaces or capacities were discovered (Fabric integration is disabled or not configured).
+            </div>
+          )}
 
           {/* Workspaces List */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

@@ -4,19 +4,30 @@ Provides certified REST endpoints for Azure Databricks FinOps analytics,
 KPI cards, charts, ledgers, scenario simulator, and CSV reports.
 """
 
+import asyncio
+from collections.abc import AsyncGenerator
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from cloud_recommender.core.auth import AuthenticatedUser, get_current_user
+from cloud_recommender.core.auth import (
+    RESTRICTED_ROLES,
+    AuthenticatedUser,
+    actor_for,
+    get_current_user,
+)
+from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.schemas.billing_ingestion import (
     BillingApprovalTokenRequest,
     BillingApprovalTokenResponse,
     BillingIngestionRunResponse,
     BillingIngestionStatusResponse,
+    BillingPriceEnvelope,
     BillingPriceRecord,
     BillingReconciliationResponse,
     BillingSummaryResponse,
+    BillingUsageEnvelope,
     BillingUsageRecord,
     IngestionPreviewResponse,
     IngestionRunCreateRequest,
@@ -52,8 +63,12 @@ from cloud_recommender.services.databricks.billing_ingestion_service import (
     BillingIngestionService,
 )
 from cloud_recommender.services.databricks.finops_analytics_service import FinOpsAnalyticsService
+from cloud_recommender.services.databricks.refresher import get_refresher
+from cloud_recommender.services.databricks.sql_client import ApprovalLedgerError, LedgerHandle
 
-router = APIRouter(prefix="/finops", tags=["FinOps Command Center"])
+logger = structlog.get_logger(__name__)
+
+_FIRST_LOAD_TIMEOUT_SECONDS = 25
 
 # Shared service singletons
 _service_instance: FinOpsAnalyticsService | None = None
@@ -63,7 +78,7 @@ _billing_service_instance: BillingIngestionService | None = None
 def get_finops_service() -> FinOpsAnalyticsService:
     global _service_instance
     if _service_instance is None:
-        _service_instance = FinOpsAnalyticsService()
+        _service_instance = FinOpsAnalyticsService(billing_service=get_billing_service())
     return _service_instance
 
 
@@ -72,6 +87,66 @@ def get_billing_service() -> BillingIngestionService:
     if _billing_service_instance is None:
         _billing_service_instance = BillingIngestionService()
     return _billing_service_instance
+
+
+async def get_billing_ledger(
+    settings: Settings = Depends(get_settings),
+) -> AsyncGenerator[LedgerHandle | None, None]:
+    """Durable approval-token ledger handle (AsyncSession + owning loop).
+
+    Offline/mock/testing runs return ``None`` and keep the in-memory single-use set. In every
+    other mode the handle is mandatory for live execution; if PostgreSQL (or the migrated
+    ``billing_approval_tokens`` table) is unavailable, token operations fail closed.
+    """
+    if settings.databricks_auth_type == "mock" or settings.app_env == "testing":
+        yield None
+        return
+    from cloud_recommender.db.session import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        yield LedgerHandle(session=session, loop=asyncio.get_running_loop())
+
+
+def _as_ledger(value: Any) -> LedgerHandle | None:
+    """Normalise a dependency value (a Depends object when the route is called directly)."""
+    return value if isinstance(value, LedgerHandle) else None
+
+
+async def warm_live_metadata(
+    connection_id: str = Query("databricks-azure-dev", description="Connection identifier"),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Keep live inventory caches warm without blocking dashboard requests.
+
+    The background refresher owns periodic refresh. A request only waits (bounded) when no
+    inventory has ever been cached; slow Unity Catalog / system-table metadata is scheduled
+    in the background. Read-only REST only: no SQL, no compute start.
+    Skipped under the testing environment so the suite stays offline.
+    """
+    if settings.app_env == "testing":
+        return
+    refresher = get_refresher(get_finops_service().workspace_service)
+    refresher.touch(connection_id)
+    ws = refresher.workspace_service
+    cid = connection_id
+    try:
+        if not ws._discovery_cache.get(cid):
+            await asyncio.wait_for(
+                ws.get_or_discover_workspace(cid), timeout=_FIRST_LOAD_TIMEOUT_SECONDS
+            )
+        if cid not in ws._uc_cache or cid not in ws._system_tables_cache:
+            asyncio.create_task(refresher.refresh_once(cid, force=True))
+    except TimeoutError:
+        logger.info("finops_first_load_still_running", connection_id=cid)
+        asyncio.create_task(refresher.refresh_once(cid, force=True))
+    except Exception as exc:  # noqa: BLE001 - never fail a dashboard request on warm-up
+        logger.warning("finops_live_metadata_warmup_failed", error=type(exc).__name__)
+
+
+router = APIRouter(
+    prefix="/finops", tags=["FinOps Command Center"], dependencies=[Depends(warm_live_metadata)]
+)
 
 
 @router.get("/overview", response_model=ExecutiveOverviewResponse)
@@ -121,26 +196,32 @@ def get_cost_explorer(
 
 # =============================================================================
 @router.get("/query-history", response_model=QueryHistoryResponse)
-def get_query_history(
+async def get_query_history(
     connection_id: str = Query("databricks-azure-dev", description="Connection identifier"),
     workspace_id: str | None = Query(None, description="Workspace ID filter"),
     warehouse_id: str | None = Query(None, description="Warehouse ID filter"),
-    user: str | None = Query(None, description="User filter"),
+    user: str | None = Query(None, description="User filter (applied to the returned page)"),
     execution_status: str | None = Query(
-        None, alias="status", description="Status filter: FINISHED, FAILED, CANCELLED"
+        None, alias="status", description="Status filter: FINISHED, FAILED, CANCELED"
     ),
-    limit: int = Query(50, ge=1, le=200, description="Page limit"),
+    limit: int = Query(50, ge=1, le=100, description="Page size"),
+    page_token: str | None = Query(None, description="Opaque token from a previous page"),
+    start_time_ms: int | None = Query(None, ge=0, description="Window start (epoch ms)"),
+    end_time_ms: int | None = Query(None, ge=0, description="Window end (epoch ms)"),
     service: FinOpsAnalyticsService = Depends(get_finops_service),
 ) -> QueryHistoryResponse:
-    """Get actual query history records from system.query.history."""
+    """Live, paginated query history from the Databricks Query History REST API (no SQL executed)."""
     try:
-        return service.get_query_history(
+        return await service.get_query_history(
             connection_id=connection_id,
             workspace_id=workspace_id,
             warehouse_id=warehouse_id,
             user=user,
             status=execution_status,
             limit=limit,
+            page_token=page_token,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -293,10 +374,14 @@ def record_decision_action(
     decision_id: str,
     req: RecommendationActionRequest,
     service: FinOpsAnalyticsService = Depends(get_finops_service),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> DecisionItem:
-    """Record an action (Approved, Deferred) on a recommendation with audit tracking."""
+    """Record an action (Approved, Deferred) on a recommendation, attributed to the caller."""
     return service.record_decision_action(
-        decision_id=decision_id, action=req.action, notes=req.notes
+        decision_id=decision_id,
+        action=req.action,
+        notes=req.notes,
+        actor=actor_for(current_user),
     )
 
 
@@ -348,13 +433,14 @@ def update_finops_anomaly_status(
     anomaly_id: str,
     payload: AnomalyStatusUpdateRequest,
     service: FinOpsAnalyticsService = Depends(get_finops_service),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Update anomaly investigation lifecycle status with audit tracking."""
     try:
         return service.update_anomaly_status(
             anomaly_id=anomaly_id,
             new_status=payload.status,
-            actor="finops.operator",
+            actor=actor_for(current_user),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -531,16 +617,18 @@ def _param(val: Any, default: Any = None) -> Any:
 @router.post("/ingestion/preview", response_model=IngestionPreviewResponse)
 def preview_ingestion(
     workspace_id: str = Query("642006393507276", description="Target workspace ID"),
-    start_date: str = Query("2026-10-01", description="Start date YYYY-MM-DD"),
-    end_date: str = Query("2026-11-04", description="End date YYYY-MM-DD"),
+    start_date: str | None = Query(
+        None, description="Start date YYYY-MM-DD (default: first day of the current month)"
+    ),
+    end_date: str | None = Query(None, description="End date YYYY-MM-DD (default: today, UTC)"),
     limit: int = Query(50, ge=1, le=1000, description="Max preview records"),
     service: BillingIngestionService = Depends(get_billing_service),
 ) -> IngestionPreviewResponse:
     """Preview available billing records without starting the SQL warehouse."""
     return service.preview_ingestion(
         workspace_id=_param(workspace_id, "642006393507276"),
-        start_date=_param(start_date, "2026-10-01"),
-        end_date=_param(end_date, "2026-11-04"),
+        start_date=_param(start_date, None),
+        end_date=_param(end_date, None),
         limit=_param(limit, 50),
     )
 
@@ -549,9 +637,10 @@ def preview_ingestion(
 def execute_ingestion_run(
     request: IngestionRunCreateRequest,
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingIngestionRunResponse:
     """Attempt an ingestion execution run. Gated by strict Human Approval policy."""
-    return service.run_ingestion(request)
+    return service.run_ingestion(request, ledger=_as_ledger(ledger))
 
 
 @router.post("/ingestion/approval-token", response_model=BillingApprovalTokenResponse)
@@ -559,6 +648,7 @@ def issue_approval_token(
     request: BillingApprovalTokenRequest,
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingApprovalTokenResponse:
     """Issue a cryptographically signed, role-authorized approval token for live execution."""
     import base64
@@ -589,7 +679,7 @@ def issue_approval_token(
         )
 
     # 2. Enforce RBAC
-    allowed_roles = {"Admin", "FinOpsAdministrator", "PlatformAdministrator"}
+    allowed_roles = set(RESTRICTED_ROLES)
     caller_roles = getattr(current_user, "roles", []) or []
     if not any(r in allowed_roles for r in caller_roles):
         raise HTTPException(
@@ -622,6 +712,7 @@ def issue_approval_token(
             approver_roles=approver_roles,
             max_rows=request.max_rows,
             approval_purpose=request.approval_purpose,
+            session=_as_ledger(ledger),
         )
 
         if token.startswith("v2:"):
@@ -667,6 +758,11 @@ def issue_approval_token(
             )
     except PermissionError as pe:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(pe)) from pe
+    except ApprovalLedgerError as le:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "APPROVAL_LEDGER_UNAVAILABLE", "message": str(le)},
+        ) from le
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
@@ -686,7 +782,7 @@ def get_billing_summary(
     )
 
 
-@router.get("/billing/usage", response_model=list[BillingUsageRecord])
+@router.get("/billing/usage", response_model=BillingUsageEnvelope | list[BillingUsageRecord])
 def get_billing_usage(
     workspace_id: str = Query("642006393507276", description="Target workspace ID"),
     sku_name: str | None = Query(None, description="Filter by SKU name"),
@@ -696,27 +792,60 @@ def get_billing_usage(
     end_date: str | None = Query(None, description="End date filter"),
     limit: int | None = Query(None, description="Maximum number of records to return"),
     offset: int = Query(0, description="Offset for pagination"),
+    record_type: str | None = Query(None, description="Filter by record_type"),
+    envelope: bool = Query(
+        False, description="Return {total, offset, limit, records} instead of a bare list"
+    ),
     service: BillingIngestionService = Depends(get_billing_service),
-) -> list[BillingUsageRecord]:
-    """List normalized billing usage events with parameter filtering."""
-    return service.list_usage_records(
+) -> BillingUsageEnvelope | list[BillingUsageRecord]:
+    """List normalized billing usage events with parameter filtering.
+
+    Default response is the legacy bare list. ``envelope=true`` returns the paginated envelope
+    the frontend contract expects (``total`` is the pre-pagination match count).
+    """
+    matches = service.list_usage_records(
         workspace_id=_param(workspace_id, "642006393507276"),
         sku_name=_param(sku_name, None),
         product=_param(product, None),
         resource_id=_param(resource_id, None),
         start_date=_param(start_date, None),
         end_date=_param(end_date, None),
-        limit=_param(limit, None),
-        offset=_param(offset, 0),
     )
+    rtype = _param(record_type, None)
+    if rtype:
+        matches = [m for m in matches if m.record_type.lower() == str(rtype).lower()]
+    off = max(int(_param(offset, 0)), 0)
+    lim = _param(limit, None)
+    page = matches[off:] if lim is None else matches[off : off + int(lim)]
+    if _param(envelope, False) is True:
+        return BillingUsageEnvelope(
+            total=len(matches),
+            offset=off,
+            limit=len(page) if lim is None else int(lim),
+            records=page,
+        )
+    return page
 
 
-@router.get("/billing/pricing", response_model=list[BillingPriceRecord])
+@router.get("/billing/pricing", response_model=BillingPriceEnvelope | list[BillingPriceRecord])
 def get_billing_pricing(
+    sku_name: str | None = Query(None, description="Filter by SKU name"),
+    limit: int | None = Query(None, ge=1, description="Maximum number of records to return"),
+    envelope: bool = Query(False, description="Return {total, records} instead of a bare list"),
     service: BillingIngestionService = Depends(get_billing_service),
-) -> list[BillingPriceRecord]:
-    """List published list prices from system.billing.list_prices."""
-    return service.list_price_records()
+) -> BillingPriceEnvelope | list[BillingPriceRecord]:
+    """List the ingested rate card (empty until an approved list_prices ingestion)."""
+    prices = service.list_price_records()
+    sku = _param(sku_name, None)
+    if sku:
+        prices = [p for p in prices if p.sku_name.upper() == str(sku).upper()]
+    total = len(prices)
+    lim = _param(limit, None)
+    if lim is not None:
+        prices = prices[: int(lim)]
+    if _param(envelope, False) is True:
+        return BillingPriceEnvelope(total=total, records=prices)
+    return prices
 
 
 @router.get("/billing/reconciliation", response_model=BillingReconciliationResponse)

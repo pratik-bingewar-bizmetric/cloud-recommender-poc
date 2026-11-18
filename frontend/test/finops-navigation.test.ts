@@ -21,12 +21,12 @@ test("Unified Navigation: Standalone FinOps Application group is removed and uni
 
   // Connected workspace ID and status badge must be present in header area
   assert.ok(
-    content.includes("Connected"),
-    "Sidebar.tsx header area must display 'Connected' status badge"
+    content.includes("connectionView"),
+    "Sidebar.tsx must render the single shared connection view (no local status logic)"
   );
   assert.ok(
-    content.includes("642006393507276"),
-    "Sidebar.tsx header area must display connected workspace ID"
+    !content.includes("642006393507276"),
+    "Sidebar.tsx must not hardcode a workspace ID"
   );
 });
 
@@ -154,7 +154,7 @@ test("Unified View: FinOpsCommandCenterView implements Forecast & Budgets functi
     "Forecast view must display Forecast month-end spend"
   );
   assert.ok(
-    content.includes("Budget burn and forecast pace"),
+    content.includes("Budget burn"),
     "Forecast view must display budget burn chart"
   );
   assert.ok(
@@ -180,8 +180,8 @@ test("Unified View: FinOpsCommandCenterView implements Optimization Advisor func
     "Optimization Advisor must display Potential monthly savings"
   );
   assert.ok(
-    content.includes("Quick wins"),
-    "Optimization Advisor must display Quick wins"
+    content.includes("Configuration findings"),
+    "Optimization Advisor must display Configuration findings"
   );
   assert.ok(
     content.includes("Awaiting approval"),
@@ -198,5 +198,54 @@ test("Unified View: FinOpsCommandCenterView implements Optimization Advisor func
   assert.ok(
     content.includes("View evidence"),
     "Optimization Advisor must provide evidence viewing"
+  );
+});
+
+test("M1 Connection Integrity: Real health status states and no hardcoded unrelated workspace IDs", () => {
+  const sidebarContent = fs.readFileSync(
+    path.resolve(__dirname, "../src/components/Sidebar.tsx"),
+    "utf-8"
+  );
+  const detailContent = fs.readFileSync(
+    path.resolve(__dirname, "../src/components/DatabricksWorkspaceDetailView.tsx"),
+    "utf-8"
+  );
+  const finopsContent = fs.readFileSync(
+    path.resolve(__dirname, "../src/components/FinOpsCommandCenterView.tsx"),
+    "utf-8"
+  );
+
+  const stateContent = fs.readFileSync(
+    path.resolve(__dirname, "../src/lib/connectionState.ts"),
+    "utf-8"
+  );
+  for (const state of [
+    "CONNECTED",
+    "DISCONNECTED",
+    "AUTHENTICATION_REQUIRED",
+    "ACCESS_DENIED",
+    "ERROR",
+    "NOT_CONFIGURED",
+  ]) {
+    assert.ok(stateContent.includes(state), `connectionState.ts must define ${state}`);
+  }
+  for (const [name, content] of [
+    ["Sidebar.tsx", sidebarContent],
+    ["DatabricksWorkspaceDetailView.tsx", detailContent],
+    ["FinOpsCommandCenterView.tsx", finopsContent],
+  ] as const) {
+    assert.ok(content.includes("connectionView"), `${name} must use the shared connectionView`);
+    assert.ok(
+      !content.includes("effectiveConnectionStatus") && !content.includes('case "auth_failed"'),
+      `${name} must not derive its own connection badge`
+    );
+  }
+  assert.ok(
+    !finopsContent.includes("adb-7840192837148901"),
+    "FinOpsCommandCenterView.tsx must not contain unrelated workspace adb-7840192837148901"
+  );
+  assert.ok(
+    !finopsContent.includes('label="Azure Dev Connected"'),
+    "FinOpsCommandCenterView.tsx must not hardcode static Azure Dev Connected badge"
   );
 });

@@ -33,18 +33,14 @@ test("Azure Hierarchy: Azure Account cards contain nested Service Integrations",
   const filePath = path.resolve(__dirname, "../src/components/ConnectCloudView.tsx");
   const content = fs.readFileSync(filePath, "utf-8");
 
-  // Verify ARM, Databricks, and Fabric service integrations are modeled
+  // Service integrations are rendered from backend data; none are seeded client-side
   assert.ok(
-    content.includes('service_type: "arm"'),
-    "Azure Account must include ARM service integration"
+    content.includes("service_integrations"),
+    "Account cards must render nested service integrations from the backend response"
   );
   assert.ok(
-    content.includes('service_type: "databricks"'),
-    "Azure Account must include Databricks service integration"
-  );
-  assert.ok(
-    content.includes('service_type: "fabric"'),
-    "Azure Account must include Fabric service integration"
+    !content.includes("SEED_CONNECTIONS") && !content.includes("offline cache credentials"),
+    "ConnectCloudView must not ship seeded accounts or fabricate offline validation success"
   );
 });
 
@@ -83,8 +79,8 @@ test("Azure Hierarchy: Google Cloud is preserved as an independent top-level pro
   const content = fs.readFileSync(filePath, "utf-8");
 
   assert.ok(
-    content.includes('provider: "gcp"'),
-    "ConnectCloudView must preserve Google Cloud connection definition"
+    content.includes('"gcp"'),
+    "ConnectCloudView must keep Google Cloud as an independent provider filter"
   );
   assert.ok(
     content.includes("organizations/") || content.includes("Organization ID:"),

@@ -688,19 +688,32 @@ export interface LogSearchResponse {
   limitations: string[];
 }
 
+export interface MonitoringProbe {
+  name: string;
+  endpoint: string;
+  /** AVAILABLE | NO_DATA | ACCESS_DENIED | UNAVAILABLE | ERROR | NOT_PROBED */
+  status: string;
+  http_status: number | null;
+  record_count: number | null;
+  required_permission: string;
+  message: string | null;
+}
+
+export interface MonitoringSourceStatus {
+  status: string;
+  is_live: boolean;
+  capabilities: string[];
+  /** Never stated: the monitoring APIs do not report retention. */
+  retention_days: number | null;
+  probes?: MonitoringProbe[];
+  auth_method?: string;
+  last_checked?: string;
+  message?: string | null;
+}
+
 export interface MonitoringSourcesResponse {
-  azure_monitor: {
-    status: string;
-    is_live: boolean;
-    capabilities: string[];
-    retention_days: number;
-  };
-  gcp_monitoring: {
-    status: string;
-    is_live: boolean;
-    capabilities: string[];
-    retention_days: number;
-  };
+  azure_monitor: MonitoringSourceStatus;
+  gcp_monitoring: MonitoringSourceStatus;
   policy: string;
 }
 
@@ -738,6 +751,26 @@ export interface CloudConnection {
   capabilities: string[];
   access_limitations: string[];
   service_integrations?: ServiceIntegration[];
+  /** 'owned' = created by the signed-in user (persistent, encrypted); otherwise organization. */
+  ownership?: "owned" | "organization";
+  /** Per-integration validation results (owned connections). */
+  integrations?: ConnectionIntegrationStatus[];
+  warnings?: string[];
+}
+
+export type IntegrationState =
+  | "connected"
+  | "permission_denied"
+  | "not_configured"
+  | "unavailable"
+  | "error";
+
+export interface ConnectionIntegrationStatus {
+  integration: "resource_manager" | "cost_management" | "monitor" | "databricks" | "fabric" | string;
+  state: IntegrationState;
+  message?: string | null;
+  required_permission?: string | null;
+  details?: Record<string, unknown>;
 }
 
 export interface ValidateConnectionRequest {
@@ -764,14 +797,29 @@ export interface ConnectionValidationResponse {
 
 export interface CreateConnectionRequest {
   provider: CloudProvider;
+  /** Azure: service_principal (default), azure_cli (local development only) or managed_identity. */
+  auth_method?: "service_principal" | "azure_cli" | "managed_identity";
   name: string;
   scope_id: string;
   azure_tenant_id?: string;
   azure_client_id?: string;
   azure_client_secret?: string;
+  databricks_workspace_url?: string;
+  databricks_workspace_id?: string;
+  fabric_workspace_id?: string;
   gcp_project_id?: string;
   gcp_service_account_json?: string;
   gcp_access_token?: string;
+}
+
+export interface UpdateConnectionRequest {
+  name?: string;
+  azure_client_id?: string;
+  /** New client secret (rotation). Validated before it replaces the stored one. */
+  azure_client_secret?: string;
+  databricks_workspace_url?: string;
+  databricks_workspace_id?: string;
+  fabric_workspace_id?: string;
 }
 
 export type TokenDataStatus =
@@ -922,7 +970,15 @@ export interface ScopeDiscoveryResponse {
   provider: CloudProvider | string;
   connection_id: string;
   tenant_or_org_id?: string | null;
-  status: "ready" | "permission_denied" | "unsupported" | "empty";
+  status:
+    | "ready"
+    | "permission_denied"
+    | "unsupported"
+    | "empty"
+    | "authentication_required"
+    | "error";
+  /** live = from the cloud API; demo_fixture = fabricated demo data; none = nothing retrieved. */
+  data_source?: "live" | "demo_fixture" | "none";
   status_message: string;
   last_discovered_at: string;
   tree: ScopeDiscoveryNode[];
@@ -1097,9 +1153,19 @@ export interface IngestionRunSummaryResponse {
 
 export type DatabricksCloud = "azure" | "aws" | "gcp";
 
+export type DatabricksResourceState =
+  | "LIVE"
+  | "NO_DATA"
+  | "ACCESS_DENIED"
+  | "AUTH_FAILED"
+  | "UNAVAILABLE"
+  | "NOT_SUPPORTED"
+  | "PARTIAL";
+
 export type CategoryDiscoveryStatus =
   | "available"
   | "permission_denied"
+  | "auth_failed"
   | "unsupported"
   | "no_resources_found"
   | "connection_error"
@@ -1121,6 +1187,8 @@ export interface DatabricksConnection {
   region?: string | null;
   auth_method: string;
   profile_name?: string | null;
+  warehouse_id?: string | null;
+  environment?: string | null;
   status: DatabricksConnectionStatus;
   last_connected_at?: string | null;
   last_error?: string | null;
@@ -1131,8 +1199,16 @@ export interface DatabricksConnection {
 export interface CategoryDiscoveryResult {
   category: string;
   status: CategoryDiscoveryStatus;
+  discovery_state?: DatabricksResourceState | null;
   resource_count: number;
+  workspace_id?: string | null;
+  source_api?: string | null;
+  http_status?: number | null;
+  error_code?: string | null;
   error_message?: string | null;
+  empty_confirmed?: boolean | null;
+  has_more?: boolean;
+  next_page_token?: string | null;
   discovered_at?: string | null;
 }
 
@@ -1154,7 +1230,9 @@ export interface DatabricksWorkspaceDiscovery {
   workspace_name: string;
   workspace_url: string;
   cloud: DatabricksCloud;
+  environment?: string | null;
   overall_status: "completed" | "partial_failure" | "failed";
+  data_status?: DatabricksResourceState | null;
   categories: Record<string, CategoryDiscoveryResult>;
   resources: DiscoveredResourceItem[];
   total_resources_count: number;
@@ -1178,11 +1256,232 @@ export interface DatabricksConnectionHealth {
   cloud: DatabricksCloud;
   status: DatabricksConnectionStatus;
   authenticated_user?: string | null;
+  auth_method?: string | null;
+  last_error?: string | null;
   last_verified_at?: string | null;
+  connection_state?:
+    | "CONNECTED"
+    | "DISCONNECTED"
+    | "AUTHENTICATION_REQUIRED"
+    | "ACCESS_DENIED"
+    | "ERROR"
+    | "NOT_CONFIGURED";
+  workspace_name?: string | null;
+  workspace_url?: string | null;
+  environment?: string | null;
+  last_connected_at?: string | null;
+  last_discovery_at?: string | null;
+  last_discovery_attempt_at?: string | null;
+  discovery_stale?: boolean;
+  refresh_interval_seconds?: number;
+  sql_warehouse?: {
+    warehouse_id?: string | null;
+    warehouse_name?: string | null;
+    state?: string | null;
+    sql_available: boolean;
+    message: string;
+  } | null;
   categories_summary: Record<string, CategoryDiscoveryStatus>;
   resource_counts_by_type: Record<string, number>;
   capabilities: string[];
   limitations: string[];
+}
+
+export interface DatabricksCategoryPageResponse {
+  connection_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  workspace_url: string;
+  environment?: string | null;
+  category: string;
+  status: CategoryDiscoveryStatus;
+  discovery_state: DatabricksResourceState;
+  data_status?: DatabricksResourceState | null;
+  source_api: string;
+  retrieved_at: string;
+  items: DiscoveredResourceItem[];
+  total_returned: number;
+  has_more: boolean;
+  next_page_token?: string | null;
+  empty_confirmed?: boolean | null;
+  http_status?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+export interface UnityCatalogColumnItem {
+  name: string;
+  type_text: string;
+  type_name?: string | null;
+  nullable: boolean;
+  comment?: string | null;
+}
+
+export interface UnityCatalogPermissionItem {
+  principal: string;
+  privileges: string[];
+  inherited_from_type?: string | null;
+  inherited_from_name?: string | null;
+}
+
+export interface UnityCatalogTableItem {
+  catalog_name: string;
+  schema_name: string;
+  name: string;
+  full_name: string;
+  table_type?: string | null;
+  data_source_format?: string | null;
+  owner?: string | null;
+  storage_location?: string | null;
+  comment?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  properties?: Record<string, string>;
+  columns: UnityCatalogColumnItem[];
+  permissions: UnityCatalogPermissionItem[];
+  permissions_status: DatabricksResourceState;
+  permissions_error?: string | null;
+}
+
+export interface UnityCatalogSchemaItem {
+  catalog_name: string;
+  name: string;
+  full_name: string;
+  owner?: string | null;
+  comment?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  tables: UnityCatalogTableItem[];
+  tables_status: DatabricksResourceState;
+  tables_error?: string | null;
+}
+
+export interface UnityCatalogCatalogItem {
+  name: string;
+  owner?: string | null;
+  comment?: string | null;
+  catalog_type?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  schemas: UnityCatalogSchemaItem[];
+  schemas_status: DatabricksResourceState;
+  schemas_error?: string | null;
+}
+
+export interface UnityCatalogMetadataResponse {
+  connection_id: string;
+  workspace_id: string;
+  workspace_name?: string | null;
+  workspace_url: string;
+  environment?: string | null;
+  status: CategoryDiscoveryStatus;
+  discovery_state: DatabricksResourceState;
+  data_status?: DatabricksResourceState | null;
+  source_api: string;
+  retrieved_at: string;
+  catalogs: UnityCatalogCatalogItem[];
+  total_catalogs: number;
+  total_schemas: number;
+  total_tables: number;
+  has_more?: boolean;
+  next_page_token?: string | null;
+  http_status?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+export interface TypedSystemTableRegistryEntry {
+  full_name: string;
+  domain: string;
+  exists: boolean;
+  metadata_status: DatabricksResourceState;
+  select_grant_verified?: boolean | null;
+  column_types: Record<string, string>;
+  warehouse_id?: string | null;
+}
+
+export interface LiveSystemTableItem {
+  schema_name: string;
+  table_name: string;
+  full_name: string;
+  domain?: string | null;
+  table_type?: string | null;
+  data_source_format?: string | null;
+  owner?: string | null;
+  comment?: string | null;
+  columns_count: number;
+  columns: UnityCatalogColumnItem[];
+  effective_privileges: string[];
+  schema_discovered: boolean;
+  table_discovered: boolean;
+  metadata_status: DatabricksResourceState;
+  select_grant_verified?: boolean | null;
+  note: string;
+}
+
+export interface SystemTablesMetadataResponse {
+  connection_id: string;
+  workspace_id: string;
+  workspace_name?: string | null;
+  workspace_url: string;
+  environment?: string | null;
+  status: CategoryDiscoveryStatus;
+  discovery_state: DatabricksResourceState;
+  data_status?: DatabricksResourceState | null;
+  source_api: string;
+  retrieved_at: string;
+  target_schemas: string[];
+  discovered_schemas: string[];
+  missing_schemas: string[];
+  tables: LiveSystemTableItem[];
+  billing_ingestion_ready_tables?: TypedSystemTableRegistryEntry[];
+  total_tables?: number;
+  has_more?: boolean;
+  next_page_token?: string | null;
+  http_status?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  sql_executed: boolean;
+  compute_started: boolean;
+}
+
+export interface LiveQueryHistoryItem {
+  query_id: string;
+  status: string;
+  warehouse_id?: string | null;
+  statement_type?: string | null;
+  query_source?: string | null;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_ms?: number | null;
+  rows_produced?: number | null;
+  read_bytes?: number | null;
+  executed_by_masked?: string | null;
+  sql_summary: string;
+  error_message?: string | null;
+}
+
+export interface LiveQueryHistoryResponse {
+  connection_id: string;
+  workspace_id: string;
+  workspace_name?: string | null;
+  workspace_url: string;
+  environment?: string | null;
+  status: CategoryDiscoveryStatus;
+  discovery_state: DatabricksResourceState;
+  data_status?: DatabricksResourceState | null;
+  source_api: string;
+  retrieved_at: string;
+  records: LiveQueryHistoryItem[];
+  total_returned: number;
+  has_next_page: boolean;
+  next_page_token?: string | null;
+  empty_confirmed?: boolean | null;
+  http_status?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  sql_executed: boolean;
+  compute_started: boolean;
 }
 
 // -------------------------------------------------------------
@@ -1215,10 +1514,29 @@ export type KpiAvailabilityStatus =
   | "STALE"
   | "ERROR"
   | "LIVE"
+  | "CALCULATED"
   | "BASELINE"
   | "ESTIMATED"
+  | "BLOCKED_PENDING_APPROVAL"
   | "STOPPED_WAREHOUSE"
-  | "UNAVAILABLE";
+  | "UNAVAILABLE"
+  | "SOURCE_UNAVAILABLE"
+  | "NOT_AUTHORIZED"
+  | "NO_DATA_AVAILABLE"
+  | "INSUFFICIENT_HISTORY"
+  | "NOT_ATTRIBUTABLE";
+
+/** Provenance of one dashboard section: where it came from and what unblocks it. */
+export interface FinOpsSectionProvenance {
+  classification: KpiAvailabilityStatus;
+  source: string;
+  message?: string | null;
+  requirement?: string | null;
+  retrieved_at?: string | null;
+  record_count?: number | null;
+}
+
+export type FinOpsProvenanceMap = Record<string, FinOpsSectionProvenance>;
 
 export interface FinOpsKpiMetric {
   value: number | null;
@@ -1249,6 +1567,7 @@ export interface FinOpsKpiMetric {
   calculation_version: string;
   coverage: number;
   limitations?: string | null;
+  reason?: string | null;
 }
 
 export interface CanonicalKpiResponse {
@@ -1261,7 +1580,7 @@ export interface FinOpsDecisionItem {
   priority: number;
   title: string;
   description: string;
-  estimated_savings_monthly: number;
+  estimated_savings_monthly: number | null;
   formatted_savings: string;
   impact: string;
   status: string;
@@ -1284,11 +1603,14 @@ export interface FinOpsDecisionItem {
   lifecycle_stage?: string;
   calculation_methodology?: string;
   recommended_action?: string;
+  source_timestamp?: string;
+  savings_status?: KpiAvailabilityStatus;
 }
 
 export interface ExecutiveOverviewData {
   kpis: Record<string, FinOpsKpiMetric>;
-  spend_trend: Array<{ day: string; actual: number; forecast: number; budget_pace: number }>;
+  provenance?: FinOpsProvenanceMap;
+  spend_trend: Array<{ day: string; actual: number | null; forecast: number | null; budget_pace: number | null }>;
   spend_composition: Array<{ family: string; share: number; amount: number; color: string }>;
   top_cost_drivers: Array<{
     driver: string;
@@ -1304,6 +1626,7 @@ export interface ExecutiveOverviewData {
 
 export interface CostExplorerData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   daily_trend: Array<{ date: string; cost: number; dbu: number }>;
   cost_by_product_family: Array<{ product: string; cost: number; share: number }>;
   billing_ledger: Array<{
@@ -1322,6 +1645,7 @@ export interface CostExplorerData {
 
 export interface CostAllocationData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   spend_by_bu: Array<{ business_unit: string; spend: number }>;
   allocation_completeness: Record<string, number>;
   rulebook: Array<{
@@ -1336,16 +1660,17 @@ export interface CostAllocationData {
 
 export interface ComputeWarehousesData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   clusters: Array<{
     cluster_id: string;
     name: string;
     type: string;
     owner: string;
     node_profile: string;
-    runtime_hrs: number;
+    runtime_hrs: number | null;
     cpu_utilization: string;
-    dbu_mtd: number;
-    cost_mtd: number;
+    dbu_mtd: number | null;
+    cost_mtd: number | null;
     state: string;
     finding: string;
   }>;
@@ -1357,21 +1682,21 @@ export interface ComputeWarehousesData {
     uptime: string;
     avg_utilization: string;
     queue_p95: string;
-    auto_stop_mins: number;
-    cost_mtd: number;
+    auto_stop_mins: number | null;
+    cost_mtd: number | null;
     state: string;
     recommendation: string;
   }>;
   jobs: Array<{
     job_id: string;
     name: string;
-    runs: number;
+    runs: number | null;
     success_rate: string;
-    retries: number;
+    retries: number | null;
     avg_duration: string;
-    dbu_per_run: number;
-    cost_per_run: number;
-    cost_per_tb: number;
+    dbu_per_run: number | null;
+    cost_per_run: number | null;
+    cost_per_tb: number | null;
     signal: string;
   }>;
   heatmap_utilization: number[];
@@ -1379,6 +1704,7 @@ export interface ComputeWarehousesData {
 
 export interface AiEconomicsData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   token_consumption_by_model: Array<{ model: string; tokens: number; spend: number }>;
   token_cost_drivers: Array<{ driver: string; amount: string; is_deduction: boolean }>;
   model_economics: Array<{
@@ -1400,7 +1726,7 @@ export interface AiEconomicsData {
     capacity_utilization: string;
     p95_latency: string;
     availability: string;
-    monthly_cost: number;
+    monthly_cost: number | null;
     action: string;
   }>;
   genie_scorecard: Array<{
@@ -1430,7 +1756,7 @@ export interface AiEconomicsData {
     compute_hrs: string;
     runs: number;
     artifact_storage: string;
-    spend: number;
+    spend: number | null;
     quality_lift: string;
     decision: string;
   }>;
@@ -1439,6 +1765,7 @@ export interface AiEconomicsData {
 
 export interface DataStorageData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   storage_tiers: Array<{ tier: string; share: number; tb: number }>;
   lifecycle_opportunities: Array<{ opportunity: string; metric: string }>;
   tables: Array<{
@@ -1448,20 +1775,21 @@ export interface DataStorageData {
     last_read: string;
     retention: string;
     growth_month: string;
-    monthly_cost: number;
+    monthly_cost: number | null;
     recommendation: string;
   }>;
 }
 
 export interface NetworkCloudData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   components: Array<{
     provider: string;
     service: string;
     resource: string;
     region: string;
     usage_driver: string;
-    cost_mtd: number;
+    cost_mtd: number | null;
     allocation: string;
     opportunity: string;
   }>;
@@ -1469,30 +1797,34 @@ export interface NetworkCloudData {
 
 export interface OptimizationAdvisorData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   recommendations: FinOpsDecisionItem[];
 }
 
 export interface ScenarioSimulationResult {
-  baseline_spend: number;
-  adjusted_spend: number;
+  baseline_spend: number | null;
+  adjusted_spend: number | null;
   formatted_spend: string;
-  savings_vs_baseline: number;
+  savings_vs_baseline: number | null;
   delta_label: string;
-  is_favorable: boolean;
-  budget_variance: number;
+  is_favorable: boolean | null;
+  budget_variance: number | null;
+  status?: KpiAvailabilityStatus;
+  message?: string | null;
 }
 
 export interface ForecastBudgetsData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   budget_burn: Array<{ day: string; actual: number; budget: number }>;
   budget_controls: Array<{
     budget_scope: string;
     owner: string;
     budget: number;
-    actual: number;
-    forecast: number;
+    actual: number | null;
+    forecast: number | null;
     threshold: string;
-    burn_pct: number;
+    burn_pct: number | null;
     status: string;
   }>;
   default_scenario: ScenarioSimulationResult;
@@ -1557,18 +1889,20 @@ export interface FinOpsAiAnalysis {
 
 export interface AnomalyDetectionData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   anomalies: AnomalyItemData[];
 }
 
 export interface GovernancePoliciesData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   policies: Array<{
     policy_name: string;
     scope: string;
     control: string;
     enforcement: string;
     owner: string;
-    exceptions: number;
+    exceptions: number | null;
     status: string;
   }>;
   checklist: Array<{ label: string; checked: boolean }>;
@@ -1577,12 +1911,13 @@ export interface GovernancePoliciesData {
 
 export interface ShowbackChargebackData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   statements: Array<{
     business_unit: string;
     direct_compute: number;
     ai_tokens: number;
-    storage: number;
-    shared_allocation: number;
+    storage: number | null;
+    shared_allocation: number | null;
     total: number;
     budget_variance: string;
     trend: string;
@@ -1591,11 +1926,12 @@ export interface ShowbackChargebackData {
 
 export interface WorkloadEconomicsData {
   kpis: Record<string, FinOpsKpiMetric>;
+  provenance?: FinOpsProvenanceMap;
   workloads: Array<{
     workload: string;
     workload_type: string;
     owner: string;
-    monthly_spend: number;
+    monthly_spend: number | null;
     volume: string;
     unit_cost: string;
     sla_quality: string;
@@ -1657,9 +1993,10 @@ export interface QueryHistoryItem {
   status: string;
   warehouse_id: string;
   warehouse_name: string;
-  rows_produced: number;
-  bytes_read: number;
-  bytes_written: number;
+  rows_produced?: number | null;
+  bytes_read?: number | null;
+  bytes_written?: number | null;
+  end_time?: string | null;
   user: string;
   sql_statement: string;
   query_type: string;
@@ -1674,6 +2011,9 @@ export interface QueryHistoryData {
   status_distribution: Array<{ status: string; count: number; percentage: number; color?: string }>;
   daily_volume: Array<{ date: string; queries: number; avg_duration_ms: number }>;
   active_filters: Record<string, unknown>;
+  has_next_page?: boolean;
+  next_page_token?: string | null;
+  provenance?: FinOpsSectionProvenance | null;
 }
 
 export interface SystemTableItem {
@@ -1711,6 +2051,8 @@ export interface BillingUsageRecord {
   usage_date: string;
   usage_unit: string;
   usage_quantity: number;
+  /** Lossless decimal text of usage_quantity (source precision). */
+  usage_quantity_exact?: string;
   record_type: string;
   ingestion_date?: string | null;
   billing_origin_product?: string | null;
@@ -1721,14 +2063,27 @@ export interface BillingUsageRecord {
   effective_cost?: number | null;
   pricing_matched: boolean;
   currency?: string | null;
+  /** METERED_USAGE | LIST_PRICE_ESTIMATE | AZURE_INVOICED */
+  cost_basis?: string;
+  match_status?: string;
+  price_tier?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
 }
 
 export interface BillingPriceRecord {
   sku_name: string;
   cloud: string;
   currency_code: string;
-  price_per_unit: number;
+  account_id?: string | null;
+  usage_unit?: string;
+  price_default?: number | null;
+  price_promotional?: number | null;
+  price_effective_list?: number | null;
+  /** Selected list rate (effective_list, else default); null when the source gave neither. */
+  price_per_unit: number | null;
   pricing_unit: string;
+  price_tier?: string | null;
   price_start_time: string;
   price_end_time?: string | null;
 }
@@ -1779,7 +2134,16 @@ export interface BillingSummaryResponse {
   net_dbu: number;
   retraction_dbu: number;
   total_spend_verified?: number | null;
-  currency: string;
+  /** True only when every DBU row was priced; false = partial estimate. */
+  spend_complete?: boolean | null;
+  pricing_coverage_pct?: number | null;
+  /** METERED_USAGE | LIST_PRICE_ESTIMATE | AZURE_INVOICED */
+  cost_basis?: string;
+  currency: string | null;
+  /** Priced spend per currency; currencies are never merged or converted. */
+  spend_by_currency?: Array<{ currency: string; spend: number }>;
+  /** False when the last rate-card extract was incomplete; null if none ran. */
+  price_card_complete?: boolean | null;
   dbu_by_product: Array<Record<string, unknown>>;
   dbu_by_sku: Array<Record<string, unknown>>;
   daily_trend: Array<Record<string, unknown>>;
@@ -1799,10 +2163,15 @@ export interface BillingReconciliationResponse {
   gross_dbu: number;
   retraction_dbu: number;
   net_dbu: number;
-  gross_cost: number;
-  net_cost: number;
-  currency: string;
+  /** null when nothing is priced or when several currencies are present. */
+  gross_cost: number | null;
+  net_cost: number | null;
+  currency: string | null;
+  /** Per-currency totals; currencies are never merged or converted. */
+  cost_by_currency?: Array<{ currency: string; gross_cost: number; net_cost: number }>;
+  cost_basis?: string;
   reconciliation_status: string;
+  checks?: Array<{ name: string; passed: boolean; detail: string }>;
   audit_notes: string[];
 }
 

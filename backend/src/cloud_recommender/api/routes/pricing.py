@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 
 from cloud_recommender.core.config import Settings, get_settings
+from cloud_recommender.core.refresh_guard import RefreshGuard, get_pricing_refresh_guard
 from cloud_recommender.schemas.analysis import (
     CostSimulationRequest,
     CostSimulationResponse,
@@ -35,6 +36,12 @@ class PriceRefreshRequest(BaseModel):
         ]
     )
     region: str = Field(default="eastus")
+    connection_id: str | None = Field(
+        default=None, description="Optional connection scope for the refresh cooldown."
+    )
+    subscription_id: str | None = Field(
+        default=None, description="Optional subscription scope for the refresh cooldown."
+    )
 
 
 class PriceRefreshResponse(BaseModel):
@@ -93,16 +100,24 @@ async def simulate_costs(
 async def refresh_prices(
     request: PriceRefreshRequest,
     pricing_engine: AzurePricingEngine = Depends(get_pricing_engine),
+    settings: Settings = Depends(get_settings),
+    guard: RefreshGuard = Depends(get_pricing_refresh_guard),
 ) -> PriceRefreshResponse:
-    """Force refresh of pricing cache for target services."""
+    """Force refresh of pricing cache for target services.
+
+    Throttled: one refresh per connection/subscription scope and region per cooldown window
+    (default 15 minutes), and never two concurrently for the same scope (409/429).
+    """
+    scope = request.subscription_id or request.connection_id or "organization"
     refreshed = 0
-    for sid in request.service_ids:
-        try:
-            # Query and cache
-            await pricing_engine.get_price_for_service(sid, region=request.region)
-            refreshed += 1
-        except Exception as exc:
-            logger.warning("pricing_refresh_failed_for_service", service_id=sid, error=str(exc))
+    with guard.guard(f"{scope}|{request.region}", settings.pricing_refresh_cooldown_seconds):
+        for sid in request.service_ids:
+            try:
+                # Query and cache
+                await pricing_engine.get_price_for_service(sid, region=request.region)
+                refreshed += 1
+            except Exception as exc:
+                logger.warning("pricing_refresh_failed_for_service", service_id=sid, error=str(exc))
 
     return PriceRefreshResponse(
         status="completed",

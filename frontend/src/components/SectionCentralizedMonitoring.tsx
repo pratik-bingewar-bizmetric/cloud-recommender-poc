@@ -15,6 +15,7 @@ import {
   SubscriptionOrProjectAnalysis,
 } from "@/types";
 import {
+  ApiError,
   listAzureSubscriptions,
   listGcpProjects,
   getMonitoringOverview,
@@ -27,7 +28,12 @@ import { SectionTokenEconomics } from "@/components/SectionTokenEconomics";
 import { SectionCostWaste } from "@/components/SectionCostWaste";
 import { TelemetryCoverageDrawer } from "@/components/TelemetryCoverageDrawer";
 import { FinancialKpiDrawer } from "@/components/FinancialKpiDrawer";
-import { buildCanonicalFinancialSummary } from "@/lib/financials";
+import {
+  buildCanonicalFinancialSummary,
+  formatFinancialCurrency,
+  periodSuffix,
+  toFiniteNumber,
+} from "@/lib/financials";
 import { FinancialKpiType } from "@/types/financials";
 import { formatDeterministicTime, formatDeterministicDateTime } from "@/lib/dateTimeFormat";
 import {
@@ -294,6 +300,8 @@ export function SectionCentralizedMonitoring({
   const [analysisData, setAnalysisData] =
     useState<SubscriptionOrProjectAnalysis | null>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState<boolean>(false);
+  // HTTP status of the last failed analysis call (null = network error); cleared on success.
+  const [analysisError, setAnalysisError] = useState<{ status: number | null } | null>(null);
 
   // Financial KPI Drill-Down Drawer State & Canonical Calculation
   const [financialDrawerKpi, setFinancialDrawerKpi] =
@@ -502,6 +510,7 @@ export function SectionCentralizedMonitoring({
   const fetchAnalysis = useCallback(async () => {
     if (!selectedScopeId) return;
     setIsLoadingAnalysis(true);
+    setAnalysisError(null);
     try {
       if (provider === "azure") {
         const res = await analyzeAzureSubscription({
@@ -516,7 +525,9 @@ export function SectionCentralizedMonitoring({
         setAnalysisData(res);
       }
     } catch (err) {
-      console.warn("Waste analysis query error:", err);
+      // Surface only the status code: never the response body, token or stack trace.
+      setAnalysisError({ status: err instanceof ApiError ? err.status : null });
+      console.warn("Waste analysis query failed", err instanceof ApiError ? err.status : "network");
     } finally {
       setIsLoadingAnalysis(false);
     }
@@ -1286,7 +1297,7 @@ export function SectionCentralizedMonitoring({
               <span className="text-[10px] text-slate-400 font-mono">USD</span>
             </div>
             <div className="text-xl font-extrabold text-slate-900 mt-1">
-              ${canonicalFinancials.estimated_monthly_spend.toFixed(2)}
+              {formatFinancialCurrency(canonicalFinancials?.estimated_monthly_spend)}
             </div>
             <div className="text-[10px] text-brand-600 font-semibold mt-0.5 flex items-center justify-between">
               <span>Catalog basis</span>
@@ -1308,8 +1319,10 @@ export function SectionCentralizedMonitoring({
               <TrendingDown className="w-3.5 h-3.5 text-emerald-600" />
             </div>
             <div className="text-xl font-extrabold text-emerald-700 mt-1">
-              ${canonicalFinancials.potential_monthly_savings.toFixed(2)}
-              <span className="text-xs font-normal">/mo</span>
+              {formatFinancialCurrency(canonicalFinancials?.potential_monthly_savings)}
+              <span className="text-xs font-normal">
+                {periodSuffix(canonicalFinancials?.potential_monthly_savings, "/mo")}
+              </span>
             </div>
             <div className="text-[10px] text-emerald-700 font-semibold mt-0.5 flex items-center justify-between">
               <span>Non-double-counted</span>
@@ -2171,6 +2184,7 @@ export function SectionCentralizedMonitoring({
           overview={overview}
           analysisData={analysisData}
           isLoading={isLoadingAnalysis}
+          analysisError={analysisError}
           onRefresh={() => fetchAnalysis()}
           onInspectResource={inspectResource}
         />
@@ -2458,12 +2472,13 @@ export function SectionCentralizedMonitoring({
                             Monthly Sizing Basis
                           </div>
                           <div className="text-base font-bold text-slate-900 mt-1">
-                            $
-                            {String(
-                              resourceDetail.cost_and_utilization
-                                ?.monthly_cost ?? "0.00"
+                            {formatFinancialCurrency(
+                              toFiniteNumber(resourceDetail.cost_and_utilization?.monthly_cost)
                             )}
-                            /month
+                            {periodSuffix(
+                              toFiniteNumber(resourceDetail.cost_and_utilization?.monthly_cost),
+                              "/month"
+                            )}
                           </div>
                         </div>
                         <div>
@@ -2566,7 +2581,7 @@ export function SectionCentralizedMonitoring({
       />
 
       {/* 14. Canonical Financial KPI Drill-Down Drawer */}
-      {financialDrawerKpi && (
+      {financialDrawerKpi && canonicalFinancials && (
         <FinancialKpiDrawer
           isOpen={Boolean(financialDrawerKpi)}
           onClose={() => setFinancialDrawerKpi(null)}

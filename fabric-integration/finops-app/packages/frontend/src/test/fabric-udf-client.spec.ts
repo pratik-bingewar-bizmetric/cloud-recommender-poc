@@ -16,19 +16,37 @@ import {
   udfRecordTokenUsage,
   udfCalculatePricing,
   resetUdfInFlightCache,
+  setFabricUdfTokenProvider,
+  sanitize,
 } from "../lib/fabric-udf-client";
 import { setAuthTokenProvider } from "../lib/api";
+
+function jwt(claims: Record<string, unknown>): string {
+  const enc = (o: unknown) => btoa(JSON.stringify(o)).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+  return `${enc({ alg: "none", typ: "JWT" })}.${enc(claims)}.sig-not-checked`;
+}
+const NOW = () => Math.floor(Date.now() / 1000);
+const FABRIC_TOKEN = jwt({
+  aud: "https://analysis.windows.net/powerbi/api",
+  iss: "https://sts.windows.net/tenant-1/",
+  tid: "tenant-1",
+  scp: "UserDataFunction.Execute.All Item.Execute.All",
+  exp: NOW() + 3600,
+  nbf: NOW() - 60,
+});
 
 describe("Fabric UDF Client (Microsoft Fabric Python RPC Integration)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     resetUdfInFlightCache();
     setAuthTokenProvider(null);
+    setFabricUdfTokenProvider(async () => FABRIC_TOKEN);
   });
 
   afterEach(() => {
     vi.unstubAllEnvs();
     resetUdfInFlightCache();
+    setFabricUdfTokenProvider(null);
   });
 
   describe("UDF Base URL Resolution", () => {
@@ -56,8 +74,7 @@ describe("Fabric UDF Client (Microsoft Fabric Python RPC Integration)", () => {
   });
 
   describe("Authentication & Header Forwarding", () => {
-    it("attaches Entra ID Bearer token when an auth token provider is registered", async () => {
-      setAuthTokenProvider(async () => "mock-entra-jwt-token-xyz");
+    it("attaches the delegated Fabric-audience Entra token as the Bearer token", async () => {
 
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -73,23 +90,123 @@ describe("Fabric UDF Client (Microsoft Fabric Python RPC Integration)", () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [, requestInit] = mockFetch.mock.calls[0];
-      expect(requestInit.headers["Authorization"]).toBe("Bearer mock-entra-jwt-token-xyz");
+      expect(requestInit.headers["Authorization"]).toBe(`Bearer ${FABRIC_TOKEN}`);
       expect(requestInit.headers["Content-Type"]).toBe("application/json");
     });
 
-    it("does not attach Authorization header when no auth token provider is active", async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          status: "success",
-          data: [],
-        }),
-      });
+    it("never sends an unauthenticated request: no token is a 401, not an empty success", async () => {
+      setFabricUdfTokenProvider(async () => null);
+      const mockFetch = vi.fn();
       globalThis.fetch = mockFetch;
 
+      await expect(udfListConnections()).rejects.toMatchObject({ status: 401, errorCode: "UNAUTHENTICATED" });
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("never forwards the Fabric App (Rayfin) session token to Fabric", async () => {
+      // This is the regression behind the HTTP 401: the Rayfin session token was sent to Fabric.
+      setAuthTokenProvider(async () => "rayfin-session-token-must-not-be-used");
+      localStorage.setItem("authSession", JSON.stringify({ accessToken: "rayfin-local-session-token" }));
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ status: "success", data: [] }) });
+      globalThis.fetch = mockFetch;
       await udfListConnections();
-      const [, requestInit] = mockFetch.mock.calls[0];
-      expect(requestInit.headers["Authorization"]).toBeUndefined();
+      const auth = mockFetch.mock.calls[0][1].headers["Authorization"] as string;
+      expect(auth).toBe(`Bearer ${FABRIC_TOKEN}`);
+      expect(auth).not.toContain("rayfin");
+      localStorage.removeItem("authSession");
+    });
+
+    it("surfaces token acquisition failures instead of calling Fabric", async () => {
+      const failure = Object.assign(new Error("interaction needed"), {
+        name: "InteractionRequiredAuthError",
+        errorCode: "interaction_required",
+      });
+      setFabricUdfTokenProvider(async () => {
+        throw failure;
+      });
+      const mockFetch = vi.fn();
+      globalThis.fetch = mockFetch;
+      await expect(udfListConnections()).rejects.toBeDefined();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("on HTTP 401 renews the token once (forceRefresh) and retries", async () => {
+      const calls: boolean[] = [];
+      setFabricUdfTokenProvider(async ({ forceRefresh }) => {
+        calls.push(forceRefresh);
+        return FABRIC_TOKEN;
+      });
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: "success", data: [{ id: "c1" }] }) });
+      globalThis.fetch = mockFetch;
+      const result = await udfListConnections();
+      expect(result).toHaveLength(1);
+      expect(calls).toEqual([false, true]);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("a persistent 401 is reported with token diagnostics (no token value) and a correlation id", async () => {
+      const wrongAud = jwt({ aud: "api://backend-app", tid: "t", scp: "access_as_user", exp: NOW() + 3600 });
+      setFabricUdfTokenProvider(async () => wrongAud);
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({}),
+        headers: new Headers({ requestid: "fabric-req-123" }),
+      });
+      try {
+        await udfListConnections();
+        throw new Error("should have thrown");
+      } catch (err) {
+        const e = err as FabricUdfError;
+        expect(e.status).toBe(401);
+        expect(e.detailMessage).toContain("api://backend-app");
+        expect(e.detailMessage).toContain("not accepted");
+        expect(e.diagnostics?.functionName).toBe("list_connections");
+        expect(e.diagnostics?.correlationId).toBeTruthy();
+        expect(e.diagnostics?.fabricRequestId).toBe("fabric-req-123");
+        expect(e.diagnostics?.token?.state).toBe("wrong_audience");
+        expect(JSON.stringify(e.diagnostics)).not.toContain(wrongAud);
+        expect(e.message).not.toContain(wrongAud);
+      }
+    });
+
+    it("maps 404 to a not-found error naming the identifiers to check", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+      await expect(udfListConnections()).rejects.toMatchObject({ status: 404, errorCode: "NOT_FOUND" });
+    });
+
+    it("maps 5xx to a server error and sanitises the response body", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: async () => JSON.stringify({ message: "boom Bearer abc.def.ghi" }),
+        headers: new Headers(),
+      });
+      try {
+        await udfListConnections();
+        throw new Error("should have thrown");
+      } catch (err) {
+        const e = err as FabricUdfError;
+        expect(e.errorCode).toBe("FABRIC_SERVER_ERROR");
+        expect(e.detailMessage).not.toContain("abc.def.ghi");
+        expect(e.diagnostics?.responseBody).not.toContain("abc.def.ghi");
+      }
+    });
+
+    it("keeps business errors from the function distinct from authentication failures", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "error", error_code: "BAD_INPUT", error_message: "nope" }),
+      });
+      await expect(udfListConnections()).rejects.toMatchObject({ status: 400, errorCode: "BAD_INPUT" });
+    });
+
+    it("sanitize() strips bearer tokens and JWTs", () => {
+      expect(sanitize("x Bearer abc.def.ghi y")).toBe("x Bearer [redacted] y");
+      expect(sanitize(`tok ${FABRIC_TOKEN}`)).toContain("[jwt-redacted]");
     });
   });
 
@@ -127,7 +244,7 @@ describe("Fabric UDF Client (Microsoft Fabric Python RPC Integration)", () => {
         const udfErr = err as FabricUdfError;
         expect(udfErr.status).toBe(403);
         expect(udfErr.errorCode).toBe("FORBIDDEN");
-        expect(udfErr.detailMessage).toContain("Insufficient Entra ID application roles");
+        expect(udfErr.detailMessage).toContain("lacks Execute permission");
       }
     });
 

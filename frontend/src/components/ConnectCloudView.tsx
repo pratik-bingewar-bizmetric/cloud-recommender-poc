@@ -6,7 +6,14 @@ import {
   ConnectionValidationResponse,
   CreateConnectionRequest,
 } from "@/types";
-import { listConnections, validateConnection, createConnection } from "@/lib/api";
+import {
+  listConnections,
+  validateConnection,
+  createConnection,
+  updateConnection,
+  deleteConnection,
+} from "@/lib/api";
+import { describeConnectionError, type ConnectionErrorView } from "@/lib/authErrors";
 import { formatDeterministicTime } from "@/lib/dateTimeFormat";
 import {
   ShieldCheck,
@@ -36,123 +43,13 @@ interface ConnectCloudViewProps {
   currentActiveConnectionId?: string;
 }
 
-// Canonical Enterprise Seed Connections with Microsoft Azure & Google Cloud Hierarchy
-const SEED_CONNECTIONS: CloudConnection[] = [
-  {
-    id: "conn-azure-prod",
-    name: "Azure Production Account",
-    provider: "azure",
-    scope_id: "f718c261-ab85-49fd-907e-99c022cc2aeb",
-    display_name: "Azure Production Account (sub-prod-01)",
-    tenant_or_org_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-    auth_method: "Azure CLI Credentials",
-    status: "connected",
-    last_verified_at: "2026-11-08T12:00:00.000Z",
-    is_live: true,
-    capabilities: ["inventory", "monitoring", "pricing", "system_tables", "onelake"],
-    access_limitations: ["Strictly Read-Only (Reader & Cost Management Reader)"],
-    service_integrations: [
-      {
-        service_type: "arm",
-        display_name: "Azure Resource Manager",
-        status: "connected",
-        auth_method: "Reader Role (CLI OAuth)",
-        capabilities: ["ARM Inventory", "Metrics", "Cost Management API"],
-        details: "48 Resource Groups, 98 Resources discovered",
-      },
-      {
-        service_type: "databricks",
-        display_name: "Azure Databricks",
-        status: "connected",
-        auth_method: "Azure CLI OAuth & System Tables Probed",
-        capabilities: ["adb-lakehouse-eastus (642006393507276)", "system.billing", "query_history"],
-        details: "Unity Catalog & Billing System Tables Live",
-      },
-      {
-        service_type: "fabric",
-        display_name: "Microsoft Fabric",
-        status: "connected",
-        auth_method: "Service Principal (Fabric.Read.All)",
-        capabilities: ["ws-fabric-analytics-01", "Direct Lake", "F64 Capacity"],
-        details: "FinOps Lakehouse & Capacity Telemetry Synchronized",
-      },
-    ],
-  },
-  {
-    id: "conn-azure-dev",
-    name: "Azure Analytics & Dev Account",
-    provider: "azure",
-    scope_id: "e827a192-3bc1-49e0-812d-11c033bb1fea",
-    display_name: "Azure Analytics & Dev Account (sub-dev-02)",
-    tenant_or_org_id: "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41",
-    auth_method: "Service Principal (OAuth2)",
-    status: "ready_to_connect",
-    last_verified_at: "2026-11-08T11:00:00.000Z",
-    is_live: true,
-    capabilities: ["inventory", "monitoring", "pricing", "dbu_billing"],
-    access_limitations: ["Strictly Read-Only"],
-    service_integrations: [
-      {
-        service_type: "arm",
-        display_name: "Azure Resource Manager",
-        status: "connected",
-        auth_method: "Service Principal Reader",
-        capabilities: ["ARM Inventory", "Metrics"],
-        details: "36 Resource Groups, 56 Resources cataloged",
-      },
-      {
-        service_type: "databricks",
-        display_name: "Azure Databricks",
-        status: "connected",
-        auth_method: "Service Principal OAuth",
-        capabilities: ["adb-lakehouse-prod (7840192837148901)", "DBU Billing"],
-        details: "Automated Jobs & Cluster Telemetry Enabled",
-      },
-      {
-        service_type: "fabric",
-        display_name: "Microsoft Fabric",
-        status: "standby",
-        auth_method: "Not Configured",
-        capabilities: ["Workspace Discovery Available"],
-        details: "Requires Fabric workspace capacity assignment",
-      },
-    ],
-  },
-  {
-    id: "conn-gcp-prod",
-    name: "Smart Expense GCP Production",
-    provider: "gcp",
-    scope_id: "smart-expense-prod-8812",
-    display_name: "GCP Smart Expense (smart-expense-prod-8812)",
-    tenant_or_org_id: "organizations/44910293817",
-    auth_method: "GCP Service Account (Read-Only)",
-    status: "ready_to_connect",
-    last_verified_at: "2026-11-08T10:00:00.000Z",
-    is_live: false,
-    capabilities: ["pricing", "inventory", "billing_export"],
-    access_limitations: ["roles/viewer", "roles/billing.viewer"],
-    service_integrations: [
-      {
-        service_type: "gcp_core",
-        display_name: "Google Cloud Platform Core",
-        status: "connected",
-        auth_method: "Service Account Key",
-        capabilities: ["Compute Engine", "Cloud Storage", "BigQuery Billing Export"],
-        details: "Read-only inventory and pricing analysis",
-      },
-    ],
-  },
-];
-
 export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   onConnectionSelected,
   onCancel,
-  currentActiveConnectionId = "conn-azure-prod",
+  currentActiveConnectionId = "",
 }) => {
-  const [connections, setConnections] = useState<CloudConnection[]>(SEED_CONNECTIONS);
-  const [activeConnectionId, setActiveConnectionId] = useState<string>(
-    currentActiveConnectionId || "conn-azure-prod"
-  );
+  const [connections, setConnections] = useState<CloudConnection[]>([]);
+  const [activeConnectionId, setActiveConnectionId] = useState<string>(currentActiveConnectionId);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -181,7 +78,16 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   const [newConnName, setNewConnName] = useState<string>("");
   const [newScopeId, setNewScopeId] = useState<string>("");
   const [newTenantId, setNewTenantId] = useState<string>("");
-  const [newAuthMethod, setNewAuthMethod] = useState<string>("azure_cli_credentials");
+  const [newAuthMethod, setNewAuthMethod] = useState<string>("service_principal");
+  // Service principal credentials. The secret lives only in this component's state and is
+  // cleared after a successful save; non-secret fields are kept after a failed attempt.
+  const [newClientId, setNewClientId] = useState<string>("");
+  const [newClientSecret, setNewClientSecret] = useState<string>("");
+  const [newDatabricksUrl, setNewDatabricksUrl] = useState<string>("");
+  const [newFabricWorkspaceId, setNewFabricWorkspaceId] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [formError, setFormError] = useState<ConnectionErrorView | null>(null);
+  const [editNewSecret, setEditNewSecret] = useState<string>("");
   const [enableDatabricksIntegration, setEnableDatabricksIntegration] = useState<boolean>(true);
   const [enableFabricIntegration, setEnableFabricIntegration] = useState<boolean>(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -192,22 +98,13 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     setFetchError(null);
     try {
       const serverConns = await listConnections();
-      if (serverConns && serverConns.length > 0) {
-        // Merge server conns with seed metadata if server lacks rich service integrations
-        setConnections((prev) => {
-          const map = new Map(prev.map((c) => [c.id, c]));
-          serverConns.forEach((sc) => {
-            if (map.has(sc.id)) {
-              map.set(sc.id, { ...map.get(sc.id)!, ...sc });
-            } else {
-              map.set(sc.id, sc);
-            }
-          });
-          return Array.from(map.values());
-        });
-      }
-    } catch {
-      // Offline fallback: keep seed connections
+      setConnections(serverConns || []);
+    } catch (err) {
+      // No offline fallback: an unreachable backend is shown as an error, never as seeded accounts.
+      setConnections([]);
+      setFetchError(
+        err instanceof Error ? `Could not load cloud connections: ${err.message}` : "Could not load cloud connections."
+      );
     } finally {
       setIsLoading(false);
     }
@@ -249,25 +146,11 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
       });
       setValidationStep("connected");
       onConnectionSelected(conn, res);
-    } catch {
-      // Offline mode fallback: continue directly
-      setValidationStep("connected");
-      const fallbackRes: ConnectionValidationResponse = {
-        success: true,
-        connection_id: conn.id,
-        provider: conn.provider,
-        scope_id: conn.scope_id,
-        scope_name: conn.display_name,
-        status: "connected",
-        details: "Validated with local offline cache credentials",
-        discovered_resource_count: 98,
-        discovered_resource_groups: ["rg-finops-eastus", "rg-analytics-core"],
-        permissions_verified: ["Reader", "Cost Management Reader"],
-        is_live: conn.is_live,
-        latency_ms: 12,
-        validated_at: new Date().toISOString(),
-      };
-      onConnectionSelected(conn, fallbackRes);
+    } catch (err) {
+      setValidationStep("failed");
+      setValidationError(
+        err instanceof Error ? `Validation failed: ${err.message}` : "Validation failed: backend unreachable."
+      );
     }
   };
 
@@ -277,12 +160,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     setValidationError(null);
     setValidationResult(null);
 
-    setValidationStep("connecting");
-    await new Promise((r) => setTimeout(r, 300));
     setValidationStep("validating");
-    await new Promise((r) => setTimeout(r, 400));
-    setValidationStep("discovering");
-    await new Promise((r) => setTimeout(r, 400));
 
     try {
       const res = await validateConnection({
@@ -290,35 +168,41 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
         provider: conn.provider,
         scope_id: conn.scope_id,
       });
+      if (res.success === false) {
+        throw new Error(res.details || "The backend could not verify access to this account.");
+      }
       setValidationResult(res);
       setValidationStep("connected");
       setConnections((prev) =>
         prev.map((item) =>
-          item.id === conn.id
-            ? { ...item, status: "connected", last_verified_at: new Date().toISOString() }
-            : item
+          item.id === conn.id ? { ...item, status: "connected", last_verified_at: res.validated_at } : item
         )
       );
+      if (conn.ownership === "owned") await refreshConnections();
       setActionSuccessMessage(`Account "${conn.name}" re-verified successfully.`);
       setTimeout(() => setActionSuccessMessage(null), 4000);
-    } catch {
-      setValidationStep("connected");
-      setConnections((prev) =>
-        prev.map((item) =>
-          item.id === conn.id
-            ? { ...item, status: "connected", last_verified_at: new Date().toISOString() }
-            : item
-        )
+    } catch (err) {
+      setValidationStep("failed");
+      setValidationError(
+        err instanceof Error ? `Verification failed: ${err.message}` : "Verification failed: backend unreachable."
       );
-      setActionSuccessMessage(`Account "${conn.name}" refreshed in verified offline mode.`);
-      setTimeout(() => setActionSuccessMessage(null), 4000);
     }
   };
 
   // 3. Disconnect Action
-  const confirmDisconnect = () => {
+  const confirmDisconnect = async () => {
     if (!disconnectModalConnection) return;
     const target = disconnectModalConnection;
+    if (target.ownership === "owned") {
+      try {
+        await deleteConnection(target.id); // removes the connection AND its stored credential
+      } catch (err) {
+        const view = describeConnectionError(err);
+        setValidationError(`${view.title}: ${view.message}`);
+        setDisconnectModalConnection(null);
+        return;
+      }
+    }
     setConnections((prev) => prev.filter((c) => c.id !== target.id));
     if (activeConnectionId === target.id) {
       const remaining = connections.filter((c) => c.id !== target.id);
@@ -332,9 +216,26 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   };
 
   // 4. Edit Modal Save
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editModalConnection) return;
+    if (editModalConnection.ownership === "owned") {
+      try {
+        await updateConnection(editModalConnection.id, {
+          name: editModalConnection.name,
+          ...(editNewSecret ? { azure_client_secret: editNewSecret } : {}),
+        });
+        setEditNewSecret(""); // the secret is never kept after a successful save
+        setEditModalConnection(null);
+        await refreshConnections();
+        setActionSuccessMessage("Connection updated and re-validated.");
+        setTimeout(() => setActionSuccessMessage(null), 4000);
+      } catch (err) {
+        const view = describeConnectionError(err);
+        setValidationError(`${view.title}: ${view.message}`);
+      }
+      return;
+    }
     setConnections((prev) =>
       prev.map((c) => (c.id === editModalConnection.id ? editModalConnection : c))
     );
@@ -343,96 +244,86 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     setTimeout(() => setActionSuccessMessage(null), 3000);
   };
 
-  // 5. Add New Connection
-  const handleAddNewConnection = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newConnName.trim() || !newScopeId.trim()) return;
+  // 5. Add New Connection (Azure: service principal validated and saved encrypted by the backend)
+  const GUID = /^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/;
 
-    const newId = `conn-${addEcosystem}-${Date.now().toString().slice(-6)}`;
-    const newConn: CloudConnection = {
-      id: newId,
-      name: newConnName,
-      provider: addEcosystem,
-      scope_id: newScopeId,
-      display_name: `${newConnName} (${newScopeId.slice(0, 14)}...)`,
-      tenant_or_org_id: newTenantId || (addEcosystem === "azure" ? "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41" : undefined),
-      auth_method: newAuthMethod,
-      status: "connected",
-      last_verified_at: new Date().toISOString(),
-      is_live: true,
-      capabilities:
-        addEcosystem === "azure"
-          ? ["inventory", "monitoring", "pricing", ...(enableDatabricksIntegration ? ["system_tables"] : []), ...(enableFabricIntegration ? ["onelake"] : [])]
-          : ["inventory", "monitoring", "pricing"],
-      access_limitations: ["Strictly Read-Only (Reader)"],
-      service_integrations:
-        addEcosystem === "azure"
-          ? [
-              {
-                service_type: "arm",
-                display_name: "Azure Resource Manager",
-                status: "connected",
-                auth_method: newAuthMethod,
-                capabilities: ["ARM Inventory", "Metrics"],
-                details: "ARM Read-Only Reader Role",
-              },
-              ...(enableDatabricksIntegration
-                ? [
-                    {
-                      service_type: "databricks" as const,
-                      display_name: "Azure Databricks",
-                      status: "connected" as const,
-                      auth_method: "Workspace OAuth & System Tables",
-                      capabilities: ["System Tables Probing", "DBU Billing"],
-                      details: "Linked via Azure Subscription hierarchy",
-                    },
-                  ]
-                : []),
-              ...(enableFabricIntegration
-                ? [
-                    {
-                      service_type: "fabric" as const,
-                      display_name: "Microsoft Fabric",
-                      status: "connected" as const,
-                      auth_method: "Fabric Capacity Read-Only",
-                      capabilities: ["FinOps Lakehouse", "Capacity Metrics"],
-                      details: "Associated Fabric tenant workspace",
-                    },
-                  ]
-                : []),
-            ]
-          : [
-              {
-                service_type: "gcp_core",
-                display_name: "Google Cloud Platform Core",
-                status: "connected",
-                auth_method: "Service Account",
-                capabilities: ["Compute", "BigQuery"],
-                details: "GCP Read-Only Access",
-              },
-            ],
-    };
-
-    try {
-      const req: CreateConnectionRequest = {
-        provider: addEcosystem,
-        name: newConnName,
-        scope_id: newScopeId,
-        azure_tenant_id: newTenantId,
-      };
-      await createConnection(req).catch(() => null);
-    } catch {
-      // offline fallback
-    }
-
-    setConnections((prev) => [newConn, ...prev]);
-    setActiveConnectionId(newId);
-    setIsAddConnectionOpen(false);
+  const resetAddForm = () => {
     setNewConnName("");
     setNewScopeId("");
     setNewTenantId("");
-    setActionSuccessMessage(`New account "${newConnName}" added and validated.`);
-    setTimeout(() => setActionSuccessMessage(null), 4000);
+    setNewClientId("");
+    setNewClientSecret("");
+    setNewDatabricksUrl("");
+    setNewFabricWorkspaceId("");
+    setFormError(null);
+  };
+
+  const handleAddNewConnection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+
+    const isAzureSp = addEcosystem === "azure" && newAuthMethod === "service_principal";
+    const missing: string[] = [];
+    if (!newConnName.trim()) missing.push("Account name");
+    if (!newScopeId.trim()) missing.push(addEcosystem === "azure" ? "Subscription ID" : "Project ID");
+    if (isAzureSp) {
+      if (!GUID.test(newTenantId.trim())) missing.push("Tenant ID (GUID)");
+      if (!GUID.test(newClientId.trim())) missing.push("Client ID (GUID)");
+      if (!newClientSecret) missing.push("Client secret");
+      if (addEcosystem === "azure" && !GUID.test(newScopeId.trim())) missing.push("Subscription ID (GUID)");
+    }
+    if (missing.length > 0) {
+      setFormError({
+        kind: "validation",
+        title: "Please complete the required fields",
+        message: missing.join(", "),
+        fields: missing,
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const req: CreateConnectionRequest = {
+        provider: addEcosystem,
+        name: newConnName.trim(),
+        scope_id: newScopeId.trim(),
+        azure_tenant_id: newTenantId.trim() || undefined,
+        ...(addEcosystem === "azure"
+          ? {
+              auth_method: newAuthMethod as CreateConnectionRequest["auth_method"],
+              ...(isAzureSp
+                ? { azure_client_id: newClientId.trim(), azure_client_secret: newClientSecret }
+                : {}),
+              ...(enableDatabricksIntegration && newDatabricksUrl.trim()
+                ? { databricks_workspace_url: newDatabricksUrl.trim() }
+                : {}),
+              ...(enableFabricIntegration && newFabricWorkspaceId.trim()
+                ? { fabric_workspace_id: newFabricWorkspaceId.trim() }
+                : {}),
+            }
+          : {}),
+      };
+      const created = await createConnection(req);
+      setNewClientSecret(""); // clear the secret immediately after submission succeeded
+      await refreshConnections();
+      if (created?.id) setActiveConnectionId(created.id);
+      setIsAddConnectionOpen(false);
+      const summary = (created?.integrations ?? [])
+        .map((i) => `${i.integration.replace(/_/g, " ")}: ${i.state.replace(/_/g, " ")}`)
+        .join(" \u2022 ");
+      setActionSuccessMessage(
+        `Account "${newConnName}" connected and saved.${summary ? ` ${summary}.` : ""}`
+      );
+      setTimeout(() => setActionSuccessMessage(null), 8000);
+      resetAddForm();
+    } catch (err) {
+      // Keep every non-secret field so the user can correct and retry; the secret is re-entered.
+      setNewClientSecret("");
+      setFormError(describeConnectionError(err));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -662,6 +553,25 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                           {conn.auth_method}
                         </span>
                       </div>
+                      {conn.ownership === "owned" && (conn.integrations?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5" data-testid={`integrations-${conn.id}`}>
+                          {conn.integrations!.map((i) => (
+                            <span
+                              key={i.integration}
+                              title={i.message ?? undefined}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border ${
+                                i.state === "connected"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : i.state === "not_configured"
+                                    ? "bg-slate-50 text-slate-500 border-slate-200"
+                                    : "bg-amber-50 text-amber-800 border-amber-200"
+                              }`}
+                            >
+                              {i.integration.replace(/_/g, " ")}: {i.state.replace(/_/g, " ")}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -989,6 +899,25 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                 </select>
               </div>
 
+              {editModalConnection.ownership === "owned" && (
+                <div>
+                  <label className="block font-semibold text-navy-900 mb-1">
+                    New client secret <span className="text-slate-400">(leave blank to keep the current one)</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={editNewSecret}
+                    onChange={(e) => setEditNewSecret(e.target.value)}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    A new secret is validated with Azure before it replaces the stored one.
+                  </p>
+                </div>
+              )}
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -1108,7 +1037,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                   onChange={(e) => setNewScopeId(e.target.value)}
                   placeholder={
                     addEcosystem === "azure"
-                      ? "e.g. f718c261-ab85-49fd-907e-99c022cc2aeb"
+                      ? "Azure subscription ID (GUID)"
                       : "e.g. smart-expense-prod-8812"
                   }
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
@@ -1144,9 +1073,9 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                 >
                   {addEcosystem === "azure" ? (
                     <>
-                      <option value="Azure CLI Credentials">Azure CLI Credentials (Local / Sandbox Session)</option>
-                      <option value="Service Principal (OAuth2)">Service Principal (Read-Only Secret)</option>
-                      <option value="Managed Identity">Azure Managed Identity (Production App Service)</option>
+                      <option value="service_principal">Service Principal (recommended; works everywhere)</option>
+                      <option value="azure_cli">Azure CLI (local development only)</option>
+                      <option value="managed_identity">Managed Identity (Azure-hosted backend only)</option>
                     </>
                   ) : (
                     <>
@@ -1156,6 +1085,54 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                   )}
                 </select>
               </div>
+
+              {addEcosystem === "azure" && newAuthMethod === "service_principal" && (
+                <div className="space-y-3 p-3 rounded-xl border border-blue-100 bg-blue-50/40">
+                  <p className="text-[11px] text-slate-600">
+                    Use a service principal with read-only roles (Reader, Cost Management Reader, Monitoring Reader).
+                    The secret is sent once over HTTPS, stored <strong>encrypted</strong>, and never shown again.
+                  </p>
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      Client ID <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newClientId}
+                      onChange={(e) => setNewClientId(e.target.value)}
+                      placeholder="Application (client) ID (GUID)"
+                      autoComplete="off"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      Client Secret <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={newClientSecret}
+                      onChange={(e) => setNewClientSecret(e.target.value)}
+                      placeholder="Client secret value"
+                      autoComplete="new-password"
+                      spellCheck={false}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+              {addEcosystem === "azure" && newAuthMethod === "azure_cli" && (
+                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                  Azure CLI authentication uses the signed-in CLI session of the machine running the backend.
+                  It is available only in local development and is never used as a fallback.
+                </p>
+              )}
+              {addEcosystem === "azure" && newAuthMethod === "managed_identity" && (
+                <p className="text-[11px] text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                  Managed Identity uses the identity assigned to the Azure-hosted backend. Grant that identity
+                  read-only roles on the subscription.
+                </p>
+              )}
 
               {/* Service Integrations Configuration for Azure */}
               {addEcosystem === "azure" && (
@@ -1199,7 +1176,36 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                         Microsoft Fabric Integration (FinOps Lakehouse &amp; Capacities)
                       </span>
                     </label>
+                    {enableDatabricksIntegration && (
+                      <input
+                        type="text"
+                        value={newDatabricksUrl}
+                        onChange={(e) => setNewDatabricksUrl(e.target.value)}
+                        placeholder="Databricks workspace URL (optional) https://adb-....azuredatabricks.net"
+                        className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono"
+                      />
+                    )}
+                    {enableFabricIntegration && (
+                      <input
+                        type="text"
+                        value={newFabricWorkspaceId}
+                        onChange={(e) => setNewFabricWorkspaceId(e.target.value)}
+                        placeholder="Fabric workspace ID (optional GUID)"
+                        className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono"
+                      />
+                    )}
                   </div>
+                </div>
+              )}
+
+              {formError && (
+                <div
+                  role="alert"
+                  data-testid="connection-form-error"
+                  className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-[11px] text-rose-800 space-y-0.5"
+                >
+                  <div className="font-bold">{formError.title}</div>
+                  <div>{formError.message}</div>
                 </div>
               )}
 
@@ -1213,9 +1219,10 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs transition shadow-2xs"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 disabled:opacity-60 text-white font-bold text-xs transition shadow-2xs"
                 >
-                  Validate &amp; Connect Account
+                  {isSubmitting ? "Validating\u2026" : "Validate \u0026 Connect Account"}
                 </button>
               </div>
             </form>

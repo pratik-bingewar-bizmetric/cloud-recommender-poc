@@ -3,14 +3,19 @@
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from cloud_recommender.schemas.databricks import (
+    DatabricksCategoryPageResponse,
     DatabricksConnectionHealthResponse,
     DatabricksConnectionResponse,
     DatabricksConnectionTestResponse,
     DatabricksWorkspaceDiscoveryResponse,
+    LiveQueryHistoryResponse,
+    SystemTablesMetadataResponse,
+    UnityCatalogMetadataResponse,
 )
+from cloud_recommender.services.databricks.refresher import get_refresher
 from cloud_recommender.services.databricks.workspace_service import (
     DatabricksWorkspaceService,
 )
@@ -113,4 +118,105 @@ async def get_workspace_health(
     service: Annotated[DatabricksWorkspaceService, Depends(get_workspace_service)],
 ) -> DatabricksConnectionHealthResponse:
     """Fetch health and permission status breakdown."""
+    get_refresher().touch(connection_id)
     return await service.get_health(connection_id)
+
+
+@router.get(
+    "/connections/{connection_id}/categories/{category}",
+    response_model=DatabricksCategoryPageResponse,
+    summary="Get Paginated Resources for a Workspace Category",
+    description="Returns paginated resources, retrieval timestamp, and explicit M2 state for a single discovery category.",
+)
+async def get_workspace_category_resources(
+    connection_id: str,
+    category: str,
+    service: Annotated[DatabricksWorkspaceService, Depends(get_workspace_service)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    force_refresh: Annotated[bool, Query()] = False,
+    job_id: Annotated[int | None, Query(ge=1)] = None,
+    page_token: Annotated[str | None, Query()] = None,
+) -> DatabricksCategoryPageResponse:
+    """Return paginated resources and state for a workspace category."""
+    return await service.get_category_resources(
+        connection_id=connection_id,
+        category=category,
+        limit=limit,
+        offset=offset,
+        force_refresh=force_refresh,
+        job_id=job_id,
+        page_token=page_token,
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/unity-catalog",
+    response_model=UnityCatalogMetadataResponse,
+    summary="Get Live Unity Catalog Hierarchy & Effective Grants",
+    description="Reads Unity Catalog catalogs, schemas, tables, columns, and effective permissions metadata via REST APIs.",
+)
+async def get_workspace_unity_catalog(
+    connection_id: str,
+    service: Annotated[DatabricksWorkspaceService, Depends(get_workspace_service)],
+    catalog_name: Annotated[str | None, Query()] = None,
+    include_permissions: Annotated[bool, Query()] = True,
+    force_refresh: Annotated[bool, Query()] = False,
+) -> UnityCatalogMetadataResponse:
+    """Discover Unity Catalog catalogs, schemas, tables, and effective grants."""
+    return await service.get_unity_catalog_metadata(
+        connection_id=connection_id,
+        catalog_name=catalog_name,
+        include_permissions=include_permissions,
+        force_refresh=force_refresh,
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/system-tables",
+    response_model=SystemTablesMetadataResponse,
+    summary="Get Live System Tables Metadata (Zero SQL)",
+    description="Discovers available system.* schemas, tables, column metadata, and SELECT grant status without executing SQL or starting compute.",
+)
+async def get_workspace_system_tables(
+    connection_id: str,
+    service: Annotated[DatabricksWorkspaceService, Depends(get_workspace_service)],
+    force_refresh: Annotated[bool, Query()] = False,
+    warehouse_id: Annotated[str | None, Query()] = None,
+) -> SystemTablesMetadataResponse:
+    """Discover system.* schemas and tables cleanly via UC REST APIs."""
+    return await service.get_system_tables_metadata(
+        connection_id=connection_id,
+        force_refresh=force_refresh,
+        warehouse_id=warehouse_id,
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/query-history",
+    response_model=LiveQueryHistoryResponse,
+    summary="Get Paginated Read-Only SQL Query History",
+    description="Retrieves paginated SQL query history metadata via Databricks Query History REST API without executing SQL or starting warehouses.",
+)
+async def get_workspace_query_history(
+    connection_id: str,
+    service: Annotated[DatabricksWorkspaceService, Depends(get_workspace_service)],
+    warehouse_id: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    start_time_ms: Annotated[int | None, Query(ge=0)] = None,
+    end_time_ms: Annotated[int | None, Query(ge=0)] = None,
+    query_source: Annotated[str | None, Query()] = None,
+    max_results: Annotated[int, Query(ge=1, le=100)] = 50,
+    page_token: Annotated[str | None, Query()] = None,
+) -> LiveQueryHistoryResponse:
+    """Retrieve paginated SQL query history metadata safely."""
+    return await service.get_query_history(
+        connection_id=connection_id,
+        warehouse_id=warehouse_id,
+        status_filter=status,
+        start_time_ms=start_time_ms,
+        end_time_ms=end_time_ms,
+        query_source=query_source,
+        max_results=max_results,
+        page_token=page_token,
+    )

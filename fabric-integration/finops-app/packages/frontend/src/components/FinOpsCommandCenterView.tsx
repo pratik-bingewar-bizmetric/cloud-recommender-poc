@@ -184,19 +184,20 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
       const res = await simulateFinOpsScenario(c, t, g);
       setSimResult(res);
     } catch {
-      // Fallback local formula
-      const base = 319500;
-      const resVal = base * (1 + g / 100) - (91420 * c) / 100 - (38460 * t) / 100;
-      const diff = 300000 - resVal;
-      setSimResult({
-        baseline_spend: base,
-        adjusted_spend: Math.round(resVal),
-        formatted_spend: `$${Math.round(resVal).toLocaleString()}`,
-        savings_vs_baseline: Math.round(base - resVal),
-        delta_label: diff >= 0 ? `Under budget by $${Math.abs(Math.round(diff)).toLocaleString()}` : `Over budget by $${Math.abs(Math.round(diff)).toLocaleString()}`,
-        is_favorable: diff >= 0,
-        budget_variance: Math.round(diff),
-      });
+      const base = forecastData?.kpis?.forecast_spend?.value ? Number(forecastData.kpis.forecast_spend.value) : 0;
+      if (base > 0) {
+        const resVal = base * (1 + g / 100) * (1 - (c * 0.4 + t * 0.2) / 100);
+        const diff = base - resVal;
+        setSimResult({
+          baseline_spend: base,
+          adjusted_spend: Math.round(resVal),
+          formatted_spend: `$${Math.round(resVal).toLocaleString()}`,
+          savings_vs_baseline: Math.round(base - resVal),
+          delta_label: diff >= 0 ? `Under baseline by $${Math.abs(Math.round(diff)).toLocaleString()}` : `Over baseline by $${Math.abs(Math.round(diff)).toLocaleString()}`,
+          is_favorable: diff >= 0,
+          budget_variance: Math.round(diff),
+        });
+      }
     }
   };
 
@@ -339,39 +340,39 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               {[
                 {
                   label: "Total cloud + Databricks spend",
-                  val: overviewData?.kpis.total_spend.formatted_value || "$284,620",
-                  delta: "↑ 8.4% vs previous period",
-                  isBad: true,
+                  val: overviewData?.kpis.total_spend?.formatted_value ?? (isLoading ? "..." : "—"),
+                  delta: overviewData?.kpis.total_spend?.provenance || (overviewData?.kpis.total_spend?.status ? `Status: ${overviewData.kpis.total_spend.status}` : (isLoading ? "Loading..." : "No telemetry")),
+                  isBad: overviewData?.kpis.total_spend?.status === "ESTIMATED",
                 },
                 {
                   label: "Databricks platform spend",
-                  val: overviewData?.kpis.databricks_spend.formatted_value || "$176,840",
-                  delta: "↑ 5.2% vs previous period",
-                  isBad: true,
+                  val: overviewData?.kpis.databricks_spend?.formatted_value ?? (isLoading ? "..." : "—"),
+                  delta: overviewData?.kpis.databricks_spend?.provenance || (overviewData?.kpis.databricks_spend?.status ? `Status: ${overviewData.kpis.databricks_spend.status}` : (isLoading ? "Loading..." : "No telemetry")),
+                  isBad: overviewData?.kpis.databricks_spend?.status === "ESTIMATED",
                 },
                 {
                   label: "AI & GenAI spend",
-                  val: overviewData?.kpis.ai_spend.formatted_value || "$38,460",
-                  delta: "↑ 18.7% vs previous period",
-                  isBad: true,
+                  val: overviewData?.kpis.ai_spend?.formatted_value ?? (isLoading ? "..." : "—"),
+                  delta: overviewData?.kpis.ai_spend?.provenance || (overviewData?.kpis.ai_spend?.status ? `Status: ${overviewData.kpis.ai_spend.status}` : (isLoading ? "Loading..." : "No telemetry")),
+                  isBad: overviewData?.kpis.ai_spend?.status === "ESTIMATED",
                 },
                 {
                   label: "Identified savings opportunity",
-                  val: overviewData?.kpis.savings_opportunity.formatted_value || "$31,280",
-                  delta: "11.0% of total spend",
+                  val: overviewData?.kpis.savings_opportunity?.formatted_value ?? (isLoading ? "..." : "—"),
+                  delta: overviewData?.kpis.savings_opportunity?.provenance || (overviewData?.kpis.savings_opportunity?.status ? `Status: ${overviewData.kpis.savings_opportunity.status}` : (isLoading ? "Loading..." : "No telemetry")),
                   isBad: false,
                 },
                 {
                   label: "Forecast month-end spend",
-                  val: overviewData?.kpis.forecast_spend.formatted_value || "$319,500",
-                  delta: "↑ $19.5K above budget",
-                  isBad: true,
+                  val: overviewData?.kpis.forecast_spend?.formatted_value ?? (isLoading ? "..." : "—"),
+                  delta: overviewData?.kpis.forecast_spend?.provenance || (overviewData?.kpis.forecast_spend?.status ? `Status: ${overviewData.kpis.forecast_spend.status}` : (isLoading ? "Loading..." : "No telemetry")),
+                  isBad: overviewData?.kpis.forecast_spend?.status === "ESTIMATED",
                 },
                 {
                   label: "Cost anomalies",
-                  val: overviewData?.kpis.anomalies.formatted_value || "7",
-                  delta: "3 high severity · 4 medium",
-                  isBad: true,
+                  val: overviewData?.kpis.anomalies?.formatted_value ?? (isLoading ? "..." : "0"),
+                  delta: overviewData?.kpis.anomalies?.provenance || (overviewData?.kpis.anomalies?.status ? `Status: ${overviewData.kpis.anomalies.status}` : (isLoading ? "Loading..." : "Zero detected")),
+                  isBad: Number(overviewData?.kpis.anomalies?.value || 0) > 0,
                 },
               ].map((k, idx) => (
                 <div key={idx} className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
@@ -1325,7 +1326,7 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
                   <div className="mt-4 p-4 rounded-xl bg-blue-50 border border-blue-200">
                     <div className="text-[11px] font-bold text-blue-900 uppercase">Scenario Month-End Spend</div>
                     <div className="text-2xl font-black text-blue-950 my-1">
-                      {simResult?.formatted_spend || "$300,000"}
+                      {simResult?.formatted_spend || "—"}
                     </div>
                     <div
                       className={`text-xs font-bold ${

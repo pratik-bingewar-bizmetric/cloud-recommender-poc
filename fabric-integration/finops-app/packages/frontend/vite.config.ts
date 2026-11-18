@@ -12,6 +12,47 @@ import { defineConfig, type PluginOption } from 'vite';
 import license from 'rollup-plugin-license';
 
 import { resolve } from 'path';
+import { execSync } from 'node:child_process';
+
+// Build identity: lets anyone prove which frontend build a deployment is serving. It is a commit
+// SHA + UTC build time (no secrets), exposed three ways: `__BUILD_INFO__` in the bundle, a
+// <meta name="finops-build"> tag in index.html, and /build-info.json in the output folder.
+function git(args: string): string {
+  try {
+    return execSync(`git ${args}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return '';
+  }
+}
+const buildInfo = {
+  commit: git('rev-parse --short=12 HEAD') || 'unknown',
+  branch: git('rev-parse --abbrev-ref HEAD') || 'unknown',
+  // true when the working tree had uncommitted changes at build time
+  dirty: git('status --porcelain').length > 0,
+  builtAt: new Date().toISOString(),
+};
+const buildInfoPlugin: PluginOption = {
+  name: 'finops-build-info',
+  transformIndexHtml() {
+    return [
+      {
+        tag: 'meta',
+        attrs: {
+          name: 'finops-build',
+          content: `${buildInfo.commit}${buildInfo.dirty ? '+dirty' : ''}@${buildInfo.builtAt}`,
+        },
+        injectTo: 'head',
+      },
+    ];
+  },
+  generateBundle() {
+    this.emitFile({
+      type: 'asset',
+      fileName: 'build-info.json',
+      source: JSON.stringify(buildInfo, null, 2),
+    });
+  },
+};
 
 const projectRoot = process.env.PROJECT_ROOT || import.meta.dirname;
 
@@ -55,7 +96,11 @@ export default defineConfig({
     tailwindcss(),
     rayfinLocalDev({ autoLogin: true, sourceActivity: true }),
     localNetworkAccessPlugin,
+    buildInfoPlugin,
   ],
+  define: {
+    __BUILD_INFO__: JSON.stringify(buildInfo),
+  },
   resolve: {
     alias: {
       '@': resolve(projectRoot, 'src'),
@@ -70,6 +115,12 @@ export default defineConfig({
       include: [/node_modules/],
     },
     rollupOptions: {
+      // Sign-in helper pages (MSAL v5 redirect bridge and popup relay) are separate entries.
+      input: {
+        main: resolve(projectRoot, 'index.html'),
+        redirect: resolve(projectRoot, 'redirect.html'),
+        'popup-relay': resolve(projectRoot, 'popup-relay.html'),
+      },
       plugins: [
         license({
           thirdParty: {

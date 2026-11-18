@@ -23,6 +23,9 @@ import {
 import {
   buildCanonicalFinancialSummary,
   formatFinancialCurrency,
+  NO_DATA_LABEL,
+  FINANCIAL_UNAVAILABLE_MESSAGES,
+  periodSuffix,
 } from "@/lib/financials";
 import { FinancialKpiDrawer } from "@/components/FinancialKpiDrawer";
 
@@ -41,8 +44,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   costBreakdown,
 }) => {
   const [timeRange, setTimeRange] = useState<TimeWindowPreset>("30d");
-  const [currency, setCurrency] = useState<"USD" | "INR">("USD");
-  const [hoveredBar, setHoveredBar] = useState<number | null>(null);
+  // Pricing catalogs report USD; amounts are shown as reported (no conversion, no toggle).
+  const currency = "USD" as const;
 
   // Drill-down drawer state
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
@@ -50,11 +53,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
 
   // Canonical Financial Summary
-  const financials: CanonicalFinancialSummary = useMemo(() => {
+  // null when there is no live source: the Dashboard never falls back to reference figures.
+  const financials: CanonicalFinancialSummary | null = useMemo(() => {
     return buildCanonicalFinancialSummary(
       connectedScope?.provider ?? "azure",
-      connectedScope?.id ?? "sub-prod-enterprise-01",
-      connectedScope?.name ?? "Production Enterprise Subscription",
+      connectedScope?.id ?? "",
+      connectedScope?.name ?? "",
       timeRange,
       currency,
       null,
@@ -63,9 +67,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     );
   }, [connectedScope, timeRange, currency, costBreakdown]);
 
-  const spendAmount = financials.estimated_monthly_spend;
-  const savingsAmount = financials.potential_monthly_savings;
-  const savingsPct = financials.savings_percentage_of_spend;
+  const spendAmount = financials?.estimated_monthly_spend ?? null;
+  const savingsAmount = financials?.potential_monthly_savings ?? null;
+  const savingsPct = financials?.savings_percentage_of_spend ?? null;
 
   const handleOpenDrawer = (kpi: FinancialKpiType, findingId?: string) => {
     setDrawerKpiType(kpi);
@@ -73,25 +77,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setIsDrawerOpen(true);
   };
 
-  // Monthly 6-Month Trend Data anchored to current reconciled spend
-  const monthlyTrend = useMemo(() => {
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
-    const base = spendAmount;
-    const multipliers = [0.76, 0.84, 0.88, 0.94, 0.97, 1.0];
-    const budgetThreshold = base * 1.05;
-
-    return months.map((month, idx) => ({
-      month,
-      cost: Number((base * multipliers[idx]).toFixed(2)),
-      budget: Number(budgetThreshold.toFixed(2)),
-      current: idx === months.length - 1,
-    }));
-  }, [spendAmount]);
-
-  const maxCost = useMemo(() => {
-    const maxVal = Math.max(...monthlyTrend.map((t) => t.cost), monthlyTrend[0]?.budget || 100);
-    return maxVal * 1.2;
-  }, [monthlyTrend]);
+  // No billing history source exists yet, so there is no trend to chart (previously invented from fixed multipliers).
+  if (!financials) {
+    return (
+      <div className="space-y-6 pb-12">
+        <div className="pb-2 border-b border-slate-200">
+          <h1 className="text-xl sm:text-2xl font-bold text-navy-900 tracking-tight font-heading">
+            Executive Cloud FinOps Dashboard
+          </h1>
+        </div>
+        <div
+          role="status"
+          className="app-card p-8 text-center space-y-2 border-amber-200 bg-amber-50/40"
+        >
+          <p className="text-sm font-bold text-navy-900">{NO_DATA_LABEL}</p>
+          <p className="text-xs text-navy-600">
+            {FINANCIAL_UNAVAILABLE_MESSAGES.NO_DATA} Connect a cloud scope with live authentication to see spend,
+            savings and category breakdowns. No reference or estimated figures are shown in their place.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-12">
@@ -141,31 +148,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ))}
           </div>
 
-          {/* Currency Toggle */}
-          <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs">
-            <button
-              type="button"
-              onClick={() => setCurrency("USD")}
-              className={`px-2.5 py-1 rounded-md font-mono transition ${
-                currency === "USD"
-                  ? "bg-white text-navy-900 shadow-2xs font-bold"
-                  : "text-navy-600 hover:text-navy-900"
-              }`}
-            >
-              $ USD
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrency("INR")}
-              className={`px-2.5 py-1 rounded-md font-mono transition ${
-                currency === "INR"
-                  ? "bg-white text-navy-900 shadow-2xs font-bold"
-                  : "text-navy-600 hover:text-navy-900"
-              }`}
-            >
-              ₹ INR
-            </button>
-          </div>
+          {/* Currency: pricing catalogs report USD. Shown as reported; there is no conversion. */}
+          <span
+            className="inline-flex items-center px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-100 text-xs font-mono text-navy-700"
+            title="Amounts are shown in the currency reported by the pricing source. No conversion is applied."
+          >
+            $ USD (as reported)
+          </span>
         </div>
       </div>
 
@@ -183,7 +172,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="text-2xl font-bold text-navy-900 font-mono tabular-nums">
                   {formatFinancialCurrency(spendAmount, currency)}
                 </span>
-                <span className="text-xs font-normal text-slate-400">/mo</span>
+                <span className="text-xs font-normal text-slate-400">{periodSuffix(spendAmount, "/mo")}</span>
               </div>
             </div>
             <div className="p-2 rounded-lg bg-blue-50 text-brand-600 border border-blue-200 group-hover:scale-105 transition">
@@ -210,7 +199,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span className="text-xs text-navy-500 font-medium">Active Discovered Resources</span>
               <div className="mt-1.5 flex items-baseline gap-2">
                 <span className="text-2xl font-bold text-navy-900 font-mono tabular-nums">
-                  {financials.included_resources_count}
+                  {financials.included_resources_count ?? NO_DATA_LABEL}
                 </span>
                 <span className="text-xs text-slate-500 font-normal">items</span>
               </div>
@@ -242,7 +231,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {formatFinancialCurrency(savingsAmount, currency)}
                 </span>
                 <span className="text-xs font-semibold text-accent-emerald bg-emerald-100 px-1.5 py-0.5 rounded">
-                  -{savingsPct}%
+                  {savingsPct === null ? "" : `-${savingsPct}%`}
                 </span>
               </div>
             </div>
@@ -272,7 +261,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <span className="text-2xl font-bold text-navy-900 font-mono tabular-nums">
                   {formatFinancialCurrency(financials.projected_annual_savings, currency)}
                 </span>
-                <span className="text-xs text-slate-400 font-normal">/yr</span>
+                <span className="text-xs text-slate-400 font-normal">{periodSuffix(financials.projected_annual_savings, "/yr")}</span>
               </div>
             </div>
             <div className="p-2 rounded-lg bg-amber-50 text-amber-600 border border-amber-200 group-hover:scale-105 transition">
@@ -292,88 +281,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Main Charts Row: Monthly Trend (SVG) + Reconciled Spend-by-Category */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Monthly Cost Trend Chart (2 cols) */}
+        {/* Monthly trend: no billing history is connected, so nothing is charted */}
         <div className="lg:col-span-2 app-card p-5">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-slate-100 gap-2">
-            <div>
-              <h2 className="text-sm font-bold text-navy-900 tracking-tight">
-                Monthly Cloud Spend Trajectory (6 Months)
-              </h2>
-              <p className="text-xs text-navy-500 mt-0.5">
-                Deterministic billing aggregation with monthly budget threshold at{" "}
-                {formatFinancialCurrency(monthlyTrend[0]?.budget || spendAmount, currency)}.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="inline-flex items-center gap-1.5 text-navy-600">
-                <span className="w-3 h-3 rounded bg-brand-600" /> Billed Spend
-              </span>
-              <span className="inline-flex items-center gap-1.5 text-navy-600">
-                <span className="w-3 h-0.5 bg-rose-400 border-dashed" /> Budget Target
-              </span>
-            </div>
-          </div>
-
-          {/* SVG Bar Chart */}
-          <div className="mt-6 relative h-56 flex items-end justify-between gap-4 px-2 pt-4">
-            {/* Budget Guide Line */}
-            <div
-              className="absolute left-0 right-0 border-b-2 border-dashed border-rose-300 pointer-events-none z-10"
-              style={{
-                bottom: `${Math.min(95, ((monthlyTrend[0]?.budget || spendAmount) / maxCost) * 100)}%`,
-              }}
-            >
-              <span className="absolute right-2 -top-4 text-[10px] font-mono text-rose-500 font-semibold bg-white px-1">
-                Budget: {formatFinancialCurrency(monthlyTrend[0]?.budget || spendAmount, currency)}
-              </span>
-            </div>
-
-            {monthlyTrend.map((item, idx) => {
-              const heightPct = Math.max(12, Math.min(100, (item.cost / maxCost) * 100));
-              const isHovered = hoveredBar === idx;
-
-              return (
-                <div
-                  key={item.month}
-                  className="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer"
-                  onMouseEnter={() => setHoveredBar(idx)}
-                  onMouseLeave={() => setHoveredBar(null)}
-                >
-                  {/* Tooltip */}
-                  {isHovered && (
-                    <div className="absolute top-0 bg-navy-900 text-white px-2.5 py-1 rounded shadow-lg text-[11px] font-mono z-20 pointer-events-none whitespace-nowrap">
-                      {item.month}: {formatFinancialCurrency(item.cost, currency)}
-                    </div>
-                  )}
-
-                  {/* Value on top of bar */}
-                  <span className="text-[10px] font-mono text-slate-500 mb-1 group-hover:text-navy-900 group-hover:font-bold transition">
-                    {formatFinancialCurrency(item.cost, currency, 0)}
-                  </span>
-
-                  {/* Bar */}
-                  <div className="w-full max-w-[48px] bg-slate-100 rounded-t-md overflow-hidden flex flex-col justify-end transition-all">
-                    <div
-                      className={`w-full rounded-t-md transition-all duration-300 ${
-                        item.current
-                          ? "bg-brand-600 group-hover:bg-brand-700 ring-2 ring-blue-300"
-                          : "bg-brand-500/80 group-hover:bg-brand-600"
-                      }`}
-                      style={{ height: `${heightPct}%` }}
-                    />
-                  </div>
-
-                  {/* Month Label */}
-                  <span
-                    className={`mt-2 text-xs font-medium ${
-                      item.current ? "text-brand-600 font-bold" : "text-navy-600"
-                    }`}
-                  >
-                    {item.month}
-                  </span>
-                </div>
-              );
-            })}
+          <h2 className="text-sm font-bold text-navy-900 tracking-tight">Monthly Cloud Spend Trajectory</h2>
+          <div role="status" className="mt-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-xs text-navy-600">
+            {FINANCIAL_UNAVAILABLE_MESSAGES.NO_BILLING_DATA} Monthly history and budget targets require ingested billing data.
           </div>
         </div>
 
@@ -386,7 +298,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   Spend Breakdown by Category
                 </h2>
                 <p className="text-xs text-navy-500 mt-0.5">
-                  100% reconciled to {formatFinancialCurrency(spendAmount, currency)}/mo
+                  100% reconciled to {formatFinancialCurrency(spendAmount, currency)}{periodSuffix(spendAmount, "/mo")}
                 </p>
               </div>
               <button
@@ -464,7 +376,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={() => handleOpenDrawer("savings")}
               className="text-xs font-semibold text-accent-emerald bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full hover:bg-emerald-100 transition"
             >
-              Save up to {formatFinancialCurrency(savingsAmount, currency)}/mo &rarr;
+              {savingsAmount === null
+                ? `Savings: ${NO_DATA_LABEL}`
+                : `Save up to ${formatFinancialCurrency(savingsAmount, currency)}/mo \u2192`}
             </button>
           </div>
 
@@ -501,7 +415,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/60">
                   <div className="text-left sm:text-right">
                     <span className="text-xs font-bold text-accent-emerald font-mono block">
-                      +{formatFinancialCurrency(finding.potential_monthly_savings, currency)}/mo
+                      {finding.potential_monthly_savings === null ? "" : "+"}
+                      {formatFinancialCurrency(finding.potential_monthly_savings, currency)}
+                      {periodSuffix(finding.potential_monthly_savings, "/mo")}
                     </span>
                     <span className="text-[10px] text-slate-400 font-mono">
                       Spend: {formatFinancialCurrency(finding.current_monthly_spend, currency)}

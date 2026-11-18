@@ -17,7 +17,10 @@ sys.path.insert(0, str(backend_dir / "src"))
 from alembic.config import Config  # noqa: E402
 
 from alembic import command  # noqa: E402
-from cloud_recommender.core.config import get_settings  # noqa: E402
+from cloud_recommender.core.config import (  # noqa: E402
+    get_operational_settings,
+    redact_connection_string,
+)
 
 
 def get_alembic_config() -> Config:
@@ -29,7 +32,7 @@ def get_alembic_config() -> Config:
     alembic_cfg = Config(str(ini_path))
     alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
 
-    settings = get_settings()
+    settings = get_operational_settings()
     safe_url = settings.database_url.replace("%", "%%")
     alembic_cfg.set_main_option("sqlalchemy.url", safe_url)
     return alembic_cfg
@@ -68,7 +71,11 @@ def run_upgrade(revision: str = "head") -> int:
         print("  Migration completed successfully (OK).", flush=True)
         return 0
     except Exception as exc:
-        print(f"  Migration failed: {exc}", file=sys.stderr, flush=True)
+        print(
+            f"  Migration failed: {redact_connection_string(str(exc), get_operational_settings().database_url)}",
+            file=sys.stderr,
+            flush=True,
+        )
         return 1
 
 
@@ -80,7 +87,11 @@ def check_current_revision() -> int:
         command.current(config)
         return 0
     except Exception as exc:
-        print(f"  Failed to query revision: {exc}", file=sys.stderr, flush=True)
+        print(
+            f"  Failed to query revision: {redact_connection_string(str(exc), get_operational_settings().database_url)}",
+            file=sys.stderr,
+            flush=True,
+        )
         return 1
 
 
@@ -100,17 +111,32 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    settings = get_settings()
-    target_display = settings.database_url.split("@")[-1] if "@" in settings.database_url else settings.database_url
-    print(f"Pre-flight: Checking PostgreSQL connectivity for target: {target_display}...", flush=True)
+    settings = get_operational_settings()
+    target_display = (
+        settings.database_url.split("@")[-1]
+        if "@" in settings.database_url
+        else settings.database_url
+    )
+    print(
+        f"Pre-flight: Checking PostgreSQL connectivity for target: {target_display}...", flush=True
+    )
 
     is_connected, detail = check_database_accessible(settings.database_url)
     if not is_connected:
         print(f"  Database Status : UNREACHABLE ({detail})", flush=True)
-        print("  Guidance        : Ensure PostgreSQL is running and accessible from this environment.", flush=True)
-        print("  Production Note : For Azure Databricks Apps, set DATABASE_URL to your Azure PostgreSQL Flexible Server.", flush=True)
+        print(
+            "  Guidance        : Ensure PostgreSQL is running and accessible from this environment.",
+            flush=True,
+        )
+        print(
+            "  Production Note : For Azure Databricks Apps, set DATABASE_URL to your Azure PostgreSQL Flexible Server.",
+            flush=True,
+        )
         if args.check_only:
-            print("  Check Verdict   : Pre-flight completed (Database is offline / unreachable).", flush=True)
+            print(
+                "  Check Verdict   : Pre-flight completed (Database is offline / unreachable).",
+                flush=True,
+            )
             return 0
         return 2
 

@@ -14,7 +14,7 @@ DEFAULT_LAKEHOUSE_CONFIG_PATH = (
     Path(__file__).resolve().parent.parent / "lakehouse" / "lakehouse_config.json"
 )
 
-DEFAULT_SUBSCRIPTION_ID = "f718c261-ab85-49fd-907e-99c022cc2aeb"
+DEFAULT_SUBSCRIPTION_ID = "9636348b-8445-4441-94d2-f6191f131721"
 DEFAULT_TENANT_ID = "fe82a67c-faa7-4d9a-bbfa-7d25b7047b41"
 DEFAULT_CONNECTION_ID = "conn_azure_sub1"
 DEFAULT_WORKSPACE_ID = "672a6995-4190-4000-befd-5cc6479c3f74"

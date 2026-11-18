@@ -19,6 +19,7 @@ import {
 } from "@/components/SectionCentralizedMonitoring";
 import { SectionMultiCloudCompare } from "@/components/SectionMultiCloudCompare";
 import { ConnectCloudView } from "@/components/ConnectCloudView";
+import { AzureLiveView } from "@/components/azure-live/AzureLiveView";
 import { ConfigurationView } from "@/components/ConfigurationView";
 import { DatabricksWorkspacesView } from "@/components/DatabricksWorkspacesView";
 import { FinOpsCommandCenterView } from "@/components/FinOpsCommandCenterView";
@@ -74,6 +75,8 @@ export default function Home() {
   // Cloud Connection Onboarding State (Default null = Connect Cloud View)
   const [activeConnection, setActiveConnection] =
     useState<CloudConnection | null>(null);
+  // Onboarding: the live service-principal connection is the default entry point.
+  const [onboardingMode, setOnboardingMode] = useState<"live" | "classic">("live");
 
   // Navigation & Shell State
   const [activeView, setActiveView] = useState<ViewMode>("finops");
@@ -495,6 +498,36 @@ export default function Home() {
 
         {/* Onboarding View Body */}
         <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-8">
+          <div className="mb-4 flex gap-2" role="tablist" aria-label="Connection method">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={onboardingMode === "live"}
+              onClick={() => setOnboardingMode("live")}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold border ${
+                onboardingMode === "live"
+                  ? "bg-brand-600 text-white border-brand-600"
+                  : "bg-white text-navy-800 border-slate-300"
+              }`}
+            >
+              Connect my Azure account (service principal)
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={onboardingMode === "classic"}
+              onClick={() => setOnboardingMode("classic")}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold border ${
+                onboardingMode === "classic"
+                  ? "bg-brand-600 text-white border-brand-600"
+                  : "bg-white text-navy-800 border-slate-300"
+              }`}
+            >
+              Existing connections
+            </button>
+          </div>
+          {onboardingMode === "live" && <AzureLiveView />}
+          {onboardingMode === "classic" && (
           <ConnectCloudView
             onConnectionSelected={(conn) => {
               setActiveConnection(conn);
@@ -517,6 +550,7 @@ export default function Home() {
               setActiveView("monitoring");
             }}
           />
+          )}
         </main>
       </div>
     );
@@ -948,6 +982,8 @@ export default function Home() {
           )}
 
           {/* SCREEN 9a: Subscription & Resource Hierarchy Intelligence */}
+          {activeView === "azure-live" && <AzureLiveView />}
+
           {activeView === "inventory" && <SectionCloudScopeInventory />}
 
           {/* SCREEN 9b: Multi-Cloud Comparison (Azure vs. GCP) */}

@@ -18,6 +18,7 @@ from cloud_recommender.schemas.monitoring import (
 from cloud_recommender.schemas.token_economics import TokenEconomicsSummary
 from cloud_recommender.services.inventory.azure_inventory import AzureInventoryService
 from cloud_recommender.services.inventory.gcp_inventory import GcpInventoryService
+from cloud_recommender.services.monitoring.capability_probe import probe_azure_monitoring
 from cloud_recommender.services.monitoring.monitoring_service import CentralizedMonitoringService
 
 router = APIRouter(prefix="/monitoring", tags=["Centralized Monitoring & Telemetry"])
@@ -111,24 +112,27 @@ async def search_monitoring_logs(
 async def get_monitoring_sources(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, Any]:
-    """Return active monitoring data sources and telemetry availability status."""
-    has_az_creds = bool(
-        settings.azure_subscription_id and settings.azure_tenant_id and settings.azure_client_id
-    )
-    has_gcp_creds = bool(settings.gcp_access_token or settings.google_application_credentials)
+    """Report monitoring capabilities that were actually probed with read-only calls.
 
+    Nothing is inferred from environment variables. Each capability carries the result of a real
+    read-only request (AVAILABLE, NO_DATA, ACCESS_DENIED, UNAVAILABLE, ERROR, NOT_PROBED) with the
+    exact HTTP status. Retention is not reported by these APIs, so it is never stated.
+    """
+    azure = await probe_azure_monitoring(settings)
+    gcp_configured = bool(settings.gcp_access_token or settings.google_application_credentials)
     return {
-        "azure_monitor": {
-            "status": "connected" if has_az_creds else "simulation_fixture",
-            "is_live": has_az_creds,
-            "capabilities": ["metrics", "activity_logs", "resource_health", "cost_management"],
-            "retention_days": 90 if has_az_creds else 30,
-        },
+        "azure_monitor": azure,
         "gcp_monitoring": {
-            "status": "connected" if has_gcp_creds else "simulation_fixture",
-            "is_live": has_gcp_creds,
-            "capabilities": ["cloud_monitoring", "cloud_logging", "asset_inventory"],
-            "retention_days": 30,
+            "status": "not_probed" if gcp_configured else "not_authenticated",
+            "is_live": False,
+            "capabilities": [],
+            "retention_days": None,
+            "probes": [],
+            "message": (
+                "GCP credentials are configured but GCP monitoring was not probed by this endpoint."
+                if gcp_configured
+                else "No GCP credentials are configured; nothing was probed."
+            ),
         },
         "policy": "Read-Only / Zero-Execution Enforced",
     }

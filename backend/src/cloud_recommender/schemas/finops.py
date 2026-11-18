@@ -21,8 +21,10 @@ class KpiStatus(StrEnum):
     STALE = "STALE"
     ERROR = "ERROR"
     LIVE = "LIVE"
+    CALCULATED = "CALCULATED"
     BASELINE = "BASELINE"
     ESTIMATED = "ESTIMATED"
+    BLOCKED_PENDING_APPROVAL = "BLOCKED_PENDING_APPROVAL"
     STOPPED_WAREHOUSE = "STOPPED_WAREHOUSE"
     UNAVAILABLE = "UNAVAILABLE"
     SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
@@ -78,6 +80,10 @@ class KpiMetric(BaseModel):
     )
     calculation_version: str = Field(default="v2.0.0-canonical", description="Algorithm version")
     coverage: float = Field(default=1.0, ge=0.0, le=1.0, description="Completeness ratio 0-1")
+    reason: str | None = Field(
+        default=None,
+        description="Why the value is unavailable and what would unblock it (null when a value exists)",
+    )
     limitations: str | None = Field(default=None, description="Known exclusions or data caveats")
 
 
@@ -86,6 +92,19 @@ class CanonicalKpiResponse(BaseModel):
 
     metric_id: str = Field(..., description="Canonical KPI identifier")
     metric: KpiMetric = Field(..., description="Canonical metric details")
+
+
+class SectionProvenance(BaseModel):
+    """Provenance of one dashboard section (LIVE, CALCULATED, UNAVAILABLE, BLOCKED_...)."""
+
+    classification: KpiStatus = Field(..., description="Data classification of the section")
+    source: str = Field(..., description="Databricks API or system table backing the section")
+    message: str | None = Field(default=None, description="Operator-facing explanation")
+    requirement: str | None = Field(
+        default=None, description="Permission / approval / compute needed to unblock"
+    )
+    retrieved_at: str | None = Field(default=None, description="ISO timestamp of retrieval")
+    record_count: int | None = Field(default=None, description="Records behind the section")
 
 
 # 1. Executive Cost Overview
@@ -103,7 +122,9 @@ class DecisionItem(BaseModel):
     priority: int
     title: str
     description: str
-    estimated_savings_monthly: float
+    estimated_savings_monthly: float | None = Field(
+        default=None, description="Calculated monthly savings; null when not calculable"
+    )
     formatted_savings: str
     impact: str  # High impact, Medium risk, Low risk
     status: str  # Approval required, Approved, Deferred, Implemented
@@ -141,6 +162,10 @@ class DecisionItem(BaseModel):
     recommended_action: str = Field(
         default="", description="Specific procedural action recommended"
     )
+    source_timestamp: str = Field(default="", description="ISO time the evidence was retrieved")
+    savings_status: KpiStatus = Field(
+        default=KpiStatus.UNAVAILABLE, description="CALCULATED when savings are derivable"
+    )
 
 
 class ExecutiveOverviewResponse(BaseModel):
@@ -150,6 +175,7 @@ class ExecutiveOverviewResponse(BaseModel):
     top_cost_drivers: list[CostDriverItem]
     decisions_requiring_attention: list[DecisionItem]
     global_filters: dict[str, Any]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 2. Cost Explorer
@@ -171,6 +197,7 @@ class CostExplorerResponse(BaseModel):
     daily_trend: list[dict[str, Any]]
     cost_by_product_family: list[dict[str, Any]]
     billing_ledger: list[CostExplorerItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 3. Cost Allocation
@@ -188,6 +215,7 @@ class CostAllocationResponse(BaseModel):
     spend_by_bu: list[dict[str, Any]]
     allocation_completeness: dict[str, int]
     rulebook: list[AllocationRuleItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 4. Compute & Warehouses
@@ -197,10 +225,10 @@ class ClusterInventoryItem(BaseModel):
     type: str  # Job, All-purpose
     owner: str
     node_profile: str
-    runtime_hrs: float
+    runtime_hrs: float | None = None
     cpu_utilization: str
-    dbu_mtd: float
-    cost_mtd: float
+    dbu_mtd: float | None = None
+    cost_mtd: float | None = None
     state: str
     finding: str  # Oversized, Idle windows, Efficient, Healthy
 
@@ -213,8 +241,8 @@ class WarehouseInventoryItem(BaseModel):
     uptime: str
     avg_utilization: str
     queue_p95: str
-    auto_stop_mins: int
-    cost_mtd: float
+    auto_stop_mins: int | None = None
+    cost_mtd: float | None = None
     state: str
     recommendation: str
 
@@ -222,13 +250,13 @@ class WarehouseInventoryItem(BaseModel):
 class JobEfficiencyItem(BaseModel):
     job_id: str
     name: str
-    runs: int
+    runs: int | None = None
     success_rate: str
-    retries: int
+    retries: int | None = None
     avg_duration: str
-    dbu_per_run: float
-    cost_per_run: float
-    cost_per_tb: float
+    dbu_per_run: float | None = None
+    cost_per_run: float | None = None
+    cost_per_tb: float | None = None
     signal: str
 
 
@@ -238,6 +266,7 @@ class ComputeWarehousesResponse(BaseModel):
     warehouses: list[WarehouseInventoryItem]
     jobs: list[JobEfficiencyItem]
     heatmap_utilization: list[int]  # 168 integers for hourly 7-day heatmap
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 5. AI & Token Economics
@@ -261,7 +290,7 @@ class ModelServingEndpointItem(BaseModel):
     capacity_utilization: str
     p95_latency: str
     availability: str
-    monthly_cost: float
+    monthly_cost: float | None = None
     action: str
 
 
@@ -294,7 +323,7 @@ class TrainingEvaluationItem(BaseModel):
     compute_hrs: str
     runs: int
     artifact_storage: str
-    spend: float
+    spend: float | None = None
     quality_lift: str
     decision: str
 
@@ -309,6 +338,7 @@ class AiEconomicsResponse(BaseModel):
     agents: list[AgentEconomicsItem]
     training: list[TrainingEvaluationItem]
     unit_economics: list[dict[str, Any]]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 6. Data & Storage
@@ -319,7 +349,7 @@ class StorageInventoryItem(BaseModel):
     last_read: str
     retention: str
     growth_month: str
-    monthly_cost: float
+    monthly_cost: float | None = None
     recommendation: str
 
 
@@ -328,6 +358,7 @@ class DataStorageResponse(BaseModel):
     storage_tiers: list[dict[str, Any]]
     lifecycle_opportunities: list[dict[str, Any]]
     tables: list[StorageInventoryItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 7. Network & Cloud Infrastructure
@@ -337,7 +368,7 @@ class CloudInfrastructureItem(BaseModel):
     resource: str
     region: str
     usage_driver: str
-    cost_mtd: float
+    cost_mtd: float | None = None
     allocation: str
     opportunity: str
 
@@ -345,6 +376,7 @@ class CloudInfrastructureItem(BaseModel):
 class NetworkCloudResponse(BaseModel):
     kpis: dict[str, KpiMetric]
     components: list[CloudInfrastructureItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 8. Optimization Advisor
@@ -356,6 +388,7 @@ class RecommendationActionRequest(BaseModel):
 class OptimizationAdvisorResponse(BaseModel):
     kpis: dict[str, KpiMetric]
     recommendations: list[DecisionItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 9. Forecast & Budgets
@@ -366,23 +399,25 @@ class ScenarioSimulationRequest(BaseModel):
 
 
 class ScenarioSimulationResponse(BaseModel):
-    baseline_spend: float
-    adjusted_spend: float
+    baseline_spend: float | None = None
+    adjusted_spend: float | None = None
     formatted_spend: str
-    savings_vs_baseline: float
+    savings_vs_baseline: float | None = None
     delta_label: str
-    is_favorable: bool
-    budget_variance: float
+    is_favorable: bool | None = None
+    budget_variance: float | None = None
+    status: KpiStatus = KpiStatus.CALCULATED
+    message: str | None = None
 
 
 class BudgetControlItem(BaseModel):
     budget_scope: str
     owner: str
     budget: float
-    actual: float
-    forecast: float
+    actual: float | None = None
+    forecast: float | None = None
     threshold: str
-    burn_pct: int
+    burn_pct: int | None = None
     status: str
 
 
@@ -390,7 +425,8 @@ class ForecastBudgetsResponse(BaseModel):
     kpis: dict[str, KpiMetric]
     budget_burn: list[dict[str, Any]]
     budget_controls: list[BudgetControlItem]
-    default_scenario: ScenarioSimulationResponse
+    default_scenario: ScenarioSimulationResponse | None = None
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 10. Anomaly Detection
@@ -451,11 +487,11 @@ class AnomalyStatusUpdateRequest(BaseModel):
 class AnomalyDetectionResponse(BaseModel):
     kpis: dict[str, KpiMetric]
     anomalies: list[AnomalyItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
-
-# -----------------------------------------------------------------------------
-# Module AI Analysis & Optimization Intelligence Layer
-# -----------------------------------------------------------------------------
+    # -----------------------------------------------------------------------------
+    # Module AI Analysis & Optimization Intelligence Layer
+    # -----------------------------------------------------------------------------
 
 
 class FinOpsAiOpportunity(BaseModel):
@@ -512,7 +548,7 @@ class PolicyCatalogueItem(BaseModel):
     control: str
     enforcement: str
     owner: str
-    exceptions: int
+    exceptions: int | None = None
     status: str
 
 
@@ -521,6 +557,7 @@ class GovernancePoliciesResponse(BaseModel):
     policies: list[PolicyCatalogueItem]
     checklist: list[dict[str, Any]]
     workflow_steps: list[str]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 12. Showback & Chargeback
@@ -528,8 +565,8 @@ class ChargebackStatementItem(BaseModel):
     business_unit: str
     direct_compute: float
     ai_tokens: float
-    storage: float
-    shared_allocation: float
+    storage: float | None = None
+    shared_allocation: float | None = None
     total: float
     budget_variance: str
     trend: str
@@ -538,6 +575,7 @@ class ChargebackStatementItem(BaseModel):
 class ShowbackChargebackResponse(BaseModel):
     kpis: dict[str, KpiMetric]
     statements: list[ChargebackStatementItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 13. Workload Economics
@@ -545,7 +583,7 @@ class WorkloadUnitEconomicsItem(BaseModel):
     workload: str
     workload_type: str
     owner: str
-    monthly_spend: float
+    monthly_spend: float | None = None
     volume: str
     unit_cost: str
     sla_quality: str
@@ -556,6 +594,7 @@ class WorkloadUnitEconomicsItem(BaseModel):
 class WorkloadEconomicsResponse(BaseModel):
     kpis: dict[str, KpiMetric]
     workloads: list[WorkloadUnitEconomicsItem]
+    provenance: dict[str, SectionProvenance] = Field(default_factory=dict)
 
 
 # 14. Reports & Audit
@@ -621,9 +660,10 @@ class QueryHistoryRecordItem(BaseModel):
     status: str  # FINISHED, FAILED, CANCELLED
     warehouse_id: str
     warehouse_name: str
-    rows_produced: int
-    bytes_read: int
-    bytes_written: int
+    rows_produced: int | None = None
+    bytes_read: int | None = None
+    bytes_written: int | None = None
+    end_time: str | None = None
     user: str
     sql_statement: str
     query_type: str
@@ -638,6 +678,9 @@ class QueryHistoryResponse(BaseModel):
     status_distribution: list[dict[str, Any]]
     daily_volume: list[dict[str, Any]]
     active_filters: dict[str, Any]
+    has_next_page: bool = False
+    next_page_token: str | None = None
+    provenance: SectionProvenance | None = None
 
 
 # 17. System Tables Explorer
