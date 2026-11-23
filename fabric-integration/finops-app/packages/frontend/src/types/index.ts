@@ -1574,3 +1574,117 @@ export interface SettingsIntegrationsData {
     sql_execution_note: string;
   };
 }
+
+// ---------------------------------------------------------------------------
+// GCP Service Account Integration & Resource Discovery Schemas
+// ---------------------------------------------------------------------------
+
+export type GcpConnectivityState =
+  | "SUCCESS"
+  | "API_DISABLED"
+  | "PERMISSION_DENIED"
+  | "AUTHENTICATION_FAILED"
+  | "RESOURCE_NOT_FOUND"
+  | "SERVICE_UNAVAILABLE"
+  | "DEFERRED"
+  | "NOT_TESTED";
+
+export interface GcpServiceStatus {
+  service: string;
+  service_name: string;
+  status: GcpConnectivityState;
+  api_endpoint: string;
+  required_role_or_permission?: string | null;
+  message?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface GcpTestConnectionRequest {
+  connection_name?: string;
+  project_id: string;
+  service_account_json: string;
+}
+
+export interface GcpTestConnectionResponse {
+  success: boolean;
+  project_id: string;
+  client_email: string;
+  private_key_id: string;
+  overall_status: string;
+  billing_status: "DEFERRED" | "NOT_CONFIGURED";
+  services: GcpServiceStatus[];
+  tested_at: string;
+  error_summary?: string | null;
+}
+
+export interface GcpCreateConnectionRequest {
+  name: string;
+  project_id: string;
+  service_account_json: string;
+}
+
+export interface GcpConnectionResponse {
+  id: string;
+  name: string;
+  provider: "gcp";
+  project_id: string;
+  client_email: string;
+  private_key_id: string;
+  status: string;
+  billing_status: string;
+  ownership: "owned" | "organization";
+  created_at: string;
+  last_verified_at?: string | null;
+  services: GcpServiceStatus[];
+  warnings: string[];
+}
+
+export interface GcpProjectMetadata {
+  project_id: string;
+  project_name?: string | null;
+  project_number?: string | null;
+  project_state?: string | null;
+  parent_type?: string | null;
+  parent_id?: string | null;
+}
+
+export interface GcpResourceItem {
+  resource_id: string;
+  resource_name: string;
+  resource_type: string;
+  project_id: string;
+  location?: string | null;
+  creation_time?: string | null;
+  state?: string | null;
+  labels: Record<string, string>;
+  details: Record<string, unknown>;
+}
+
+export interface GcpRecommenderItem {
+  recommendation_id: string;
+  category: string;
+  resource_id: string;
+  description: string;
+  state: string;
+  estimated_impact: Record<string, unknown>;
+}
+
+export interface GcpMonitoringSummary {
+  available_monitored_resources: string[];
+  metric_descriptors_count: number;
+  active_time_series_count: number;
+  message?: string | null;
+}
+
+export interface GcpDiscoveryResponse {
+  project_id: string;
+  project_metadata?: GcpProjectMetadata | null;
+  total_resources: number;
+  resources: GcpResourceItem[];
+  recommendations: GcpRecommenderItem[];
+  monitoring?: GcpMonitoringSummary | null;
+  services_status: GcpServiceStatus[];
+  discovered_at: string;
+  partial_discovery: boolean;
+  discovery_notes: string[];
+}

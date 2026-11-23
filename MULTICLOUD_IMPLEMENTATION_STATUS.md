@@ -3,7 +3,7 @@
 > **Document Status:** Active Living Implementation Map  
 > **Last Verified Date:** 2026-11-18  
 > **Repository:** `cloud-recommender-poc`  
-> **Branch:** `feature/backend-security-hardening`  
+> **Branch:** `feature/gcp-service-account-integration`  
 > **Target Cloud Platforms:** Microsoft Azure, Azure Databricks, Google Cloud Platform (GCP), Amazon Web Services (AWS)
 
 ---
@@ -27,15 +27,15 @@ Every tracked capability is evaluated against the following strict status defini
 
 | Capability Area | Microsoft Azure | Azure Databricks | Google Cloud Platform (GCP) | Amazon Web Services (AWS) |
 | :--- | :---: | :---: | :---: | :---: |
-| **Authentication** | **PARTIALLY WORKING** | **BLOCKED** (SP) / **WORKING** (CLI) | **IMPLEMENTED** | **NOT STARTED** |
-| **Authorization & IAM** | **WORKING** | **WORKING** | **IMPLEMENTED** | **NOT STARTED** |
-| **API Connectivity** | **WORKING** (Retail) / **IMPLEMENTED** (ARM) | **WORKING** (REST) / **BLOCKED** (OIDC SP) | **IMPLEMENTED** (API Key) / **IMPLEMENTED** (ADC) | **NOT STARTED** |
-| **Resource Discovery** | **IMPLEMENTED** | **IMPLEMENTED** (SP) / **WORKING** (CLI) | **IMPLEMENTED** | **NOT STARTED** |
-| **Billing Integration** | **WORKING** | **WORKING** (Reconciliation) | **IMPLEMENTED** (Catalog) | **IMPLEMENTED** (Catalog only) |
-| **Frontend Integration** | **WORKING** | **WORKING** | **PARTIALLY WORKING** | **NOT STARTED** |
-| **Backend Integration** | **WORKING** | **WORKING** | **IMPLEMENTED** | **NOT STARTED** |
-| **Automated Test Suite** | **WORKING** (100% Pass) | **WORKING** (100% Pass) | **WORKING** (100% Pass) | **NOT STARTED** |
-| **Live Runtime Status** | **PARTIALLY WORKING** | **PARTIALLY WORKING** | **NOT VERIFIED** | **NOT STARTED** |
+| **Authentication** | **PARTIALLY WORKING** | **BLOCKED** (SP) / **WORKING** (CLI) | **WORKING** (Live SA OAuth2 Verified) | **NOT STARTED** |
+| **Authorization & IAM** | **WORKING** | **WORKING** | **WORKING** (Read-Only & IAM Validated) | **NOT STARTED** |
+| **API Connectivity** | **WORKING** (Retail) / **IMPLEMENTED** (ARM) | **WORKING** (REST) / **BLOCKED** (OIDC SP) | **WORKING** (Service Usage Live / 8 Probes) | **NOT STARTED** |
+| **Resource Discovery** | **IMPLEMENTED** | **IMPLEMENTED** (SP) / **WORKING** (CLI) | **IMPLEMENTED** (Ready for Viewer Roles) | **NOT STARTED** |
+| **Billing Integration** | **WORKING** | **WORKING** (Reconciliation) | **DEFERRED** (Billing Intentionally Excluded) | **IMPLEMENTED** (Catalog only) |
+| **Frontend Integration** | **WORKING** | **WORKING** | **WORKING** (SA Upload & 8-Service Status) | **NOT STARTED** |
+| **Backend Integration** | **WORKING** | **WORKING** | **WORKING** (Dedicated `/api/v1/gcp/*` APIs) | **NOT STARTED** |
+| **Automated Test Suite** | **WORKING** (100% Pass) | **WORKING** (100% Pass) | **WORKING** (39 Passed, 100% Pass) | **NOT STARTED** |
+| **Live Runtime Status** | **PARTIALLY WORKING** | **PARTIALLY WORKING** | **PARTIALLY WORKING** (Auth & Probes Live) | **NOT STARTED** |
 
 ---
 
@@ -184,77 +184,116 @@ Every tracked capability is evaluated against the following strict status defini
 ## 5. Deep-Dive Provider Audit: Google Cloud Platform (GCP)
 
 ### 5.1 Authentication
-- **Status:** **IMPLEMENTED** (Runtime: **NOT VERIFIED**)
+- **Status:** **WORKING** (Live Runtime Verified)
 - **Details:**
-  - Three-tier ADC / Service Account / Token acquisition implemented in `GcpInventoryService.get_inventory_access_token()`:
-    1. Short-lived bearer token: `GCP_ACCESS_TOKEN`
-    2. Service Account JSON keyfile: `GOOGLE_APPLICATION_CREDENTIALS`
-    3. Local gcloud CLI session: `gcloud auth print-access-token`
-  - **Strict Auth Separation:** Public Cloud Billing Catalog API key (`GCP_CLOUD_API_KEY`) is strictly restricted to pricing catalog endpoints and is **never** used to query private inventory.
-  - **Live Runtime State:** Currently unauthenticated in active test runtime (`auth_method = "unauthenticated"`). A Service Account JSON file (`cloud-recommender-pricing-dev-de7e66b1e92c.json`) is available in user downloads and pending formal integration.
+  - **Service Account-Only Direct Authentication:** Implemented in `GcpAuthService` (`backend/src/cloud_recommender/services/gcp/auth_service.py`).
+  - **Zero CLI / ADC Fallback:** Uses official `google-auth` (`google.oauth2.service_account.Credentials.from_service_account_info`) to sign RSA JWTs and exchange for short-lived OAuth2 bearer tokens directly with `https://oauth2.googleapis.com/token`. Completely eliminates subprocess execution (`gcloud auth print-access-token`) and human-user ADC fallback.
+  - **Cryptographic Validation & Redaction:** Validates JSON structure, `type == "service_account"`, private key syntax, and project ID format. Secrets (`private_key`, access tokens) are strictly excluded from Pydantic schemas, HTTP responses, and logs.
+  - **Token Caching:** In-memory caching with 5-minute pre-expiration margin to avoid unnecessary Google OAuth2 round-trips.
+  - **Live Runtime Verification Evidence:**
+    - Service Account: `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com`
+    - Target Project: `cloud-recommender-pricing-dev`
+    - Private Key ID: `de7e66b1e92c76b0d6d8e8b9506341a453276def`
+    - Live OAuth2 Token Exchange: **SUCCESS** (Received valid bearer token `ya29.c.c...` from Google OAuth2 endpoint).
 
 ### 5.2 Authorization and IAM Permissions
-- **Status:** **IMPLEMENTED**
+- **Status:** **WORKING** (Read-Only Guardrails & Live IAM Validated)
 - **Details:**
-  - Required read-only IAM roles:
-    - `roles/browser` (Project browsing)
-    - `roles/cloudasset.viewer` (Asset Inventory discovery)
-    - `roles/billing.viewer` (Cloud Billing inspection)
-  - Zero-Execution boundary: All inventory discovery calls use HTTP GET.
+  - **Zero-Execution Invariant:** All discovery operations strictly execute read-only HTTP GET requests with OAuth2 read-only scopes (`https://www.googleapis.com/auth/cloud-platform.read-only`). Never requests write/mutating IAM roles (`Editor`, `Owner`).
+  - **Tenant & Ownership Isolation:** Connections are partitioned in persistent storage by `owner_key_for(user)`. Cross-tenant connection lookups return HTTP 404.
+  - **Live IAM Diagnostics:** Live runtime probe accurately detected specific permission boundaries:
+    - Service Account currently lacks Viewer roles (`roles/viewer`, `roles/cloudasset.viewer`, `roles/compute.viewer`, `roles/storage.viewer`, `roles/cloudsql.viewer`, `roles/monitoring.viewer`, `roles/recommender.viewer`).
+    - The engine gracefully returns structured `PERMISSION_DENIED` status badges per service without throwing uncaught exceptions or fabricating assets.
 
 ### 5.3 API Connectivity and Enabled API Status
-- **Status:** **IMPLEMENTED**
+- **Status:** **WORKING** (Service Usage Live / 8 Independent Probes)
 - **Details:**
-  - Cloud Resource Manager API v3 (`cloudresourcemanager.googleapis.com`): Projects search.
-  - Cloud Asset Inventory API v1 (`cloudasset.googleapis.com`): Resource search and relationships.
-  - Cloud Billing Catalog API v1 (`cloudbilling.googleapis.com`): Services and SKUs.
+  - Standardized status classification per service: `SUCCESS`, `API_DISABLED`, `PERMISSION_DENIED`, `AUTHENTICATION_FAILED`, `RESOURCE_NOT_FOUND`, `SERVICE_UNAVAILABLE`. Failure in one service does not block others.
+  - **Live 8-Service Connectivity Probing Results:**
+    1. **Cloud Resource Manager API** (`cloudresourcemanager.googleapis.com`): `API_DISABLED` (API disabled in `cloud-recommender-pricing-dev`).
+    2. **Service Usage API** (`serviceusage.googleapis.com`): `SUCCESS` (Discovered 28 enabled Google Cloud APIs in the project).
+    3. **Cloud Asset Inventory API** (`cloudasset.googleapis.com`): `PERMISSION_DENIED` (Missing `cloudasset.assets.searchAllResources` permission).
+    4. **Cloud Storage API** (`storage.googleapis.com`): `PERMISSION_DENIED` (Missing bucket listing permissions).
+    5. **Cloud SQL Admin API** (`sqladmin.googleapis.com`): `PERMISSION_DENIED` (Missing SQL instance listing permissions).
+    6. **Compute Engine API** (`compute.googleapis.com`): `PERMISSION_DENIED` (Missing `compute.instances.list` permission).
+    7. **Cloud Monitoring API** (`monitoring.googleapis.com`): `PERMISSION_DENIED` (Missing metric descriptor listing permissions).
+    8. **Cloud Recommender API** (`recommender.googleapis.com`): `PERMISSION_DENIED` (Missing recommendation viewer permissions).
 
 ### 5.4 Resource Discovery
-- **Status:** **IMPLEMENTED**
+- **Status:** **IMPLEMENTED** (Runtime: Gracefully Verified Empty Inventory)
 - **Details:**
-  - Hierarchy Modeling: Organization -> Folders -> Projects -> Resources.
-  - Strictly models `resource_group = None` (rejects Azure-style resource group hallucination).
-  - Validates project ID format (rejects Azure UUID subscription IDs for GCP projects).
-  - Detects Compute Engine VMs, Cloud SQL instances, Cloud Storage buckets, Cloud Run services, and GKE clusters.
+  - Implemented multi-service aggregation in `GcpConnectivityService.discover_resources()`:
+    - Primary: Cloud Asset Inventory `searchAllResources` with pagination.
+    - Fallback/Deep: Compute Engine instances, Cloud Storage buckets, Cloud SQL instances.
+    - Observability & Insights: Cloud Monitoring descriptors and Cloud Recommender idle/cost recommendations.
+  - Resource deduplication: Keyed by canonical resource URI / name so assets discovered across multiple endpoints are never duplicated.
+  - Hierarchy & Boundaries: Strictly models `resource_group = None` (rejecting Azure resource group conventions). Validates GCP project ID regex.
+  - Live Verification Behavior: Safely returned 0 discovered resources when IAM permissions were denied; no fabricated or hallucinated assets.
 
 ### 5.5 Billing Integration and Billing Data Coverage
-- **Status:** **IMPLEMENTED**
+- **Status:** **DEFERRED** (Phase 1 Scope Explicitly Excludes Billing)
 - **Details:**
-  - `GcpBillingCatalogClient` queries Google Cloud Billing Catalog API v1 with `GCP_CLOUD_API_KEY`.
-  - `GcpPricingEngine` implements deterministic pricing with offline benchmark dataset fallback (`GCP_BENCHMARK_DATASET`).
-  - Architecture comparator (`ArchitectureComparator.compare_azure_and_gcp`) produces equivalent BOM pricing for workload profiles.
+  - Target project `cloud-recommender-pricing-dev` has no active billing account linked.
+  - Zero billing APIs invoked during connection testing or discovery. Billing status reported as `DEFERRED`.
+  - Zero billable cloud resources created or mutated.
 
 ### 5.6 Frontend Integration
-- **Status:** **PARTIALLY WORKING**
+- **Status:** **WORKING**
 - **Details:**
-  - `financials.ts`: Implements `getGcpReferenceFinancials` and canonical financial summary models.
-  - Dedicated GCP project selector and live inventory views are partially wired compared to Azure FinOps Command Center.
+  - `GcpServiceAccountForm.tsx`: Service Account JSON upload or paste, automatic client email and private key ID extraction, asynchronous Test Connection, service-by-service connectivity cards with status badges, Save Connection with friendly name.
+  - `GcpResourceDiscoveryView.tsx`: Displays connected project metadata, read-only guardrail banner, resource inventory table with type filtering and pagination, Cloud Recommender optimization cards, and Cloud Monitoring descriptor summaries.
+  - `ConnectCloudView.tsx`: Tabbed cloud provider interface supporting Azure Service Principal, Databricks Workspace, and GCP Service Account connections.
+  - TypeScript types (`GcpConnection`, `GcpServiceConnectivity`, `GcpResourceItem`, `GcpDiscoveryResponse`) added to frontend schema definitions.
+  - Frontend build verified: Vite production build passed cleanly (`✓ built in 4.15s`).
 
 ### 5.7 Backend Integration
-- **Status:** **IMPLEMENTED**
+- **Status:** **WORKING**
 - **Details:**
-  - Endpoints in `api/routes/inventory.py`:
-    - `GET /api/v1/inventory/status` (Provider connection status)
-    - `GET /api/v1/inventory/gcp/projects` (List active projects)
-    - `POST /api/v1/inventory/gcp/analyze` (Analyze project hierarchy and assets)
-    - `POST /api/v1/inventory/compare` (Compare Azure vs GCP)
-  - Services in `services/inventory/gcp_inventory.py`, `services/pricing/gcp_billing_client.py`, and `services/pricing/gcp_engine.py`.
+  - Dedicated `/api/v1/gcp/*` endpoints in `backend/src/cloud_recommender/api/routes/gcp.py`:
+    - `POST /api/v1/gcp/connections/test`
+    - `POST /api/v1/gcp/connections`
+    - `GET /api/v1/gcp/connections`
+    - `GET /api/v1/gcp/connections/{id}`
+    - `DELETE /api/v1/gcp/connections/{id}`
+    - `GET /api/v1/gcp/projects`
+    - `GET /api/v1/gcp/resources`
+    - `GET /api/v1/gcp/services/status`
+  - Registered in API v1 router and configured in `USER_NON_GET_ENDPOINTS` route policy.
+  - Encrypted credential storage: Service account credentials encrypted at rest using AES-256-GCM via `CredentialCipher` in `ConnectionManager`.
+  - Existing `/api/v1/connections` endpoint updated to support `provider == "gcp"`.
 
 ### 5.8 Automated Test Results
-- **Status:** **WORKING**
+- **Status:** **WORKING** (100% Pass)
 - **Results:**
+  - `backend/tests/test_gcp_phase1_service_account.py`: 13 passed (JSON validation, token generation, caching, mock HTTP probes, API disabled / permission denied handling, AES-256-GCM lifecycle, tenant isolation, and API route integration).
   - `backend/tests/test_gcp_inventory_and_comparison.py`: 8 passed.
   - `backend/tests/test_gcp_pricing.py`: 3 passed.
   - `backend/tests/test_v5_1_gcp_isolation.py`: 15 passed.
-  - **Total GCP Tests:** 26 passed in 7.32s.
+  - **Total GCP Tests:** 39 passed in 7.43s.
 
 ### 5.9 Live Runtime Verification
-- **Status:** **NOT VERIFIED**
-- **Details:** Live runtime verification has not yet been executed against an active GCP project with valid credentials in this environment.
+- **Status:** **PARTIALLY WORKING** (Auth & Service Usage Live; Remaining Services Awaiting IAM Roles)
+- **Evidence:** Executed live verification using `.secrets/gcp-service-account.json` for `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com` (Key ID: `de7e66b1e92c76b0d6d8e8b9506341a453276def`, Client ID: `104716144021438715519`):
+  - **JSON Credential Validation:** `SUCCESS` (`type == "service_account"`, valid RSA private key).
+  - **Token Exchange:** `SUCCESS` (Direct RSA JWT signing via `google-auth` returned active bearer token with 3598s lifetime).
+  - **Principal Identity Verification:** `SUCCESS` (Google OAuth2 Tokeninfo cryptographically verified authorized party `azp = 104716144021438715519` matching `client_id`, with `https://www.googleapis.com/auth/cloud-platform.read-only` scope).
+  - **Sequential API Probing (Resource Manager & Asset Inventory First):**
+    1. `cloudresourcemanager.googleapis.com`: `API_DISABLED` (HTTP 403, API disabled in project).
+    2. `cloudasset.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing `cloudasset.assets.searchAllResources`).
+    3. `serviceusage.googleapis.com`: `SUCCESS` (HTTP 200, discovered 28 enabled Google APIs in `cloud-recommender-pricing-dev`).
+    4. `storage.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing bucket listing permission).
+    5. `sqladmin.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing SQL instance listing permission).
+    6. `compute.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing `compute.instances.list`).
+    7. `monitoring.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing metric descriptor listing permission).
+    8. `recommender.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing recommender viewer permission).
+  - **Read-Only Resource Discovery:** Cleanly discovered 0 resources without uncaught exceptions or data fabrication.
+  - **Persistent Connection Management:** Verified AES-256-GCM encrypted persistence in `ConnectionManager` with tenant isolation.
 
 ### 5.10 Known Limitations and Unresolved Issues
-- Requires configured `GOOGLE_APPLICATION_CREDENTIALS` pointing to valid Service Account JSON keyfile.
-- Target GCP project must have `cloudresourcemanager.googleapis.com` and `cloudasset.googleapis.com` APIs enabled.
+- To discover actual infrastructure resources, target project `cloud-recommender-pricing-dev` requires:
+  1. Enablement of `cloudresourcemanager.googleapis.com` and `cloudasset.googleapis.com`.
+  2. Granting `roles/viewer` (or granular viewer roles: `roles/cloudasset.viewer`, `roles/compute.viewer`, `roles/storage.viewer`) to `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com`.
+- Billing integration is deferred until an active Google Cloud Billing account is provisioned.
 
 ---
 
@@ -297,29 +336,32 @@ Every tracked capability is evaluated against the following strict status defini
 ## 7. Synthesis & Operational Status Summary
 
 ### 7.1 Verified Functionality (Confirmed Working)
-1. **Azure Retail Prices Deterministic Engine:** Public API live execution with offline cache fallback.
-2. **Databricks Billing Reconciliation Engine:** Mathematical reconciliation of $41.333929 ($0.7114689844/DBU) vs $127.81 ($2.20/DBU). Quantity coverage (70.20%) decoupled from record coverage (50.00%).
-3. **Fail-Closed Security Guardrails:** Both Azure and Databricks strictly refuse fallback to human CLI credentials when Service Principal authentication fails.
-4. **Read-Only Zero-Execution Invariants:** SQL AST parser rejects all mutations, comments, and non-allowlisted tables. Stopped warehouses remain in STOPPED state without startup.
-5. **Session Store & Multi-Tenant Boundaries:** SHA-256 session token hashing, 8-hour TTL, revocation via logout, and tenant-scoped connection ownership.
-6. **Frontend Stability:** Zero hardcoded mock numbers in FinOps Command Center. Vite production build completes in 7.23s.
+1. **GCP Service Account Authentication & Token Exchange:** Production-grade direct RSA JWT signing and OAuth2 token exchange with `https://oauth2.googleapis.com/token` via `google-auth`. Verified live with `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com`. Zero reliance on `gcloud` CLI or human ADC.
+2. **GCP Multi-Service Probing Engine:** Independent probing across 8 Google Cloud APIs (Resource Manager, Service Usage, Asset Inventory, Storage, SQL, Compute, Monitoring, Recommender). Live Service Usage probe verified 28 enabled Google APIs.
+3. **Azure Retail Prices Deterministic Engine:** Public API live execution with offline cache fallback.
+4. **Databricks Billing Reconciliation Engine:** Mathematical reconciliation of $41.333929 ($0.7114689844/DBU) vs $127.81 ($2.20/DBU). Quantity coverage (70.20%) decoupled from record coverage (50.00%).
+5. **Fail-Closed Security Guardrails:** Azure, Databricks, and GCP strictly refuse fallback to human CLI credentials. Structured error classification (`API_DISABLED`, `PERMISSION_DENIED`, etc.) without fabricating data.
+6. **Read-Only Zero-Execution Invariants:** All cloud discovery calls use HTTP GET with read-only scopes. Billing intentionally excluded / deferred.
+7. **Session Store, Encryption & Multi-Tenant Boundaries:** AES-256-GCM encrypted credential persistence, SHA-256 session token hashing, and tenant-scoped connection ownership.
+8. **Frontend Stability:** Modern reactive forms with JSON upload/paste, auto-extraction of metadata, 8-service connectivity badges, and live inventory viewer. Vite production build completes in 4.15s.
 
 ### 7.2 Failed Tests
 - **Zero test failures across all test suites:**
   - Backend Databricks & Billing Tests: **84 passed, 0 failed**.
-  - Backend GCP Tests: **26 passed, 0 failed**.
+  - Backend GCP Tests: **39 passed, 0 failed** (13 new Phase 1 tests + 26 existing tests).
   - Frontend Vitest Tests: **193 passed, 0 failed**.
   - Linting & Types: **0 Ruff errors, 0 Mypy errors**.
 
 ### 7.3 Blocked Dependencies
-1. **Azure Databricks Live SP Authentication:** Service Principal `1dc51b34-ba35-46c9-8f2a-71930fa5e9a7` is rejected with HTTP 403 by Databricks OAuth M2M (`Workspace 642006393507276 is inaccessible`) pending workspace assignment in the Databricks Account Console.
-2. **Azure Entra Live Secret:** The `AZURE_CLIENT_SECRET` configured in the local `.env` does not match the active secret value for client `1dc51b34-ba35-46c9-8f2a-71930fa5e9a7` in tenant `fe82a67c-faa7-4d9a-bbfa-7d25b7047b41` (returns `AADSTS7000215`).
+1. **GCP IAM Viewer Roles:** Service account `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com` requires IAM viewer roles (`roles/viewer`, `roles/cloudasset.viewer`, etc.) and `cloudresourcemanager.googleapis.com` enablement to discover actual cloud resources in `cloud-recommender-pricing-dev`.
+2. **Azure Databricks Live SP Authentication:** Service Principal `1dc51b34-ba35-46c9-8f2a-71930fa5e9a7` is rejected with HTTP 403 by Databricks OAuth M2M (`Workspace 642006393507276 is inaccessible`) pending workspace assignment in the Databricks Account Console.
+3. **Azure Entra Live Secret:** The `AZURE_CLIENT_SECRET` configured in the local `.env` does not match the active secret value for client `1dc51b34-ba35-46c9-8f2a-71930fa5e9a7` in tenant `fe82a67c-faa7-4d9a-bbfa-7d25b7047b41` (returns `AADSTS7000215`).
 
 ### 7.4 Remaining Work
-1. **GCP Live Authentication & Discovery:**
-   - Configure `GOOGLE_APPLICATION_CREDENTIALS` using the Service Account keyfile (`cloud-recommender-pricing-dev-de7e66b1e92c.json`).
-   - Validate live GCP project search and asset inventory discovery against active projects.
-   - Verify GCP Cloud Billing Catalog API live SKU pricing.
+1. **GCP IAM & Resource Discovery (Post-Phase 1):**
+   - Enable `cloudresourcemanager.googleapis.com` and `cloudasset.googleapis.com` in GCP project.
+   - Assign `roles/viewer` or `roles/cloudasset.viewer` to `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com`.
+   - Phase 2: GCP Billing Account linking and Cloud Billing BigQuery export ingestion (when billing is provisioned).
 2. **Databricks Account Console Assignment:**
    - Grant workspace access to Service Principal `1dc51b34-ba35-46c9-8f2a-71930fa5e9a7` in Databricks Account Console.
 3. **Distributed Session Storage:**

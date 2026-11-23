@@ -9,6 +9,7 @@ from cloud_recommender.api.routes.configuration import router as configuration_r
 from cloud_recommender.api.routes.connections import router as connections_router
 from cloud_recommender.api.routes.databricks import router as databricks_router
 from cloud_recommender.api.routes.finops import router as finops_router
+from cloud_recommender.api.routes.gcp import router as gcp_router
 from cloud_recommender.api.routes.health import router as health_router
 from cloud_recommender.api.routes.ingestion import router as ingestion_router
 from cloud_recommender.api.routes.inventory import router as inventory_router
@@ -54,3 +55,6 @@ api_v1_router.include_router(monitoring_router, dependencies=auth_deps)
 
 # Live Azure connection demo: user-supplied service principal, owner-bound sessions
 api_v1_router.include_router(azure_live_router, dependencies=auth_deps)
+
+# Google Cloud Platform (GCP) Service Account authentication, connectivity, and discovery
+api_v1_router.include_router(gcp_router, dependencies=auth_deps)

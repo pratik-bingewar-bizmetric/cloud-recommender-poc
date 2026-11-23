@@ -155,3 +155,7 @@ frontend/.next-*/
 
 # Local development credential-encryption key (generated on first use)
 backend/.local-secrets/
+
+# GCP Service Account credentials
+.secrets/
+**/gcp-service-account*.json

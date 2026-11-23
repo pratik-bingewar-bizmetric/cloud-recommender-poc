@@ -28,6 +28,7 @@ class IntegrationState(StrEnum):
     PERMISSION_DENIED = "permission_denied"
     NOT_CONFIGURED = "not_configured"
     UNAVAILABLE = "unavailable"
+    DEFERRED = "deferred"
     ERROR = "error"
 
 

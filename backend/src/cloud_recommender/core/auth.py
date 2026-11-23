@@ -92,6 +92,10 @@ USER_NON_GET_ENDPOINTS: frozenset[str] = frozenset(
         f"{_ROUTES}.connections.validate_owned_connection",
         f"{_ROUTES}.connections.update_connection",
         f"{_ROUTES}.connections.delete_connection",
+        # GCP Service Account connections and validation
+        f"{_ROUTES}.gcp.test_gcp_connection",
+        f"{_ROUTES}.gcp.create_gcp_connection",
+        f"{_ROUTES}.gcp.delete_gcp_connection",
     }
 )
 

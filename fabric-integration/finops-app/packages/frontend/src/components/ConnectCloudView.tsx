@@ -11,6 +11,7 @@ import { listConnections, validateConnection, createConnection, deleteConnection
 import { describeConnectionError } from "@/lib/connectionErrors";
 import { FabricAuthPendingNotice } from "@/components/FabricAuthPendingNotice";
 import { isFabricAuthPendingError, isFabricUdfAuthPending } from "@/lib/fabric-udf-status";
+import { GcpServiceAccountForm } from "@/components/gcp/GcpServiceAccountForm";
 import {
   ShieldCheck,
   CheckCircle2,
@@ -768,68 +769,14 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
 
               {/* TAB 2: Add New Connection Form */}
               {gcpTab === "new" && (
-                <form onSubmit={handleCreateGcp} className="space-y-3 text-xs">
-                  <div>
-                    <label className="block font-semibold text-navy-800 mb-1">
-                      Connection Name
-                    </label>
-                    <input
-                      type="text"
-                      value={newGcpName}
-                      onChange={(e) => setNewGcpName(e.target.value)}
-                      placeholder="e.g. Smart Expense GCP Production"
-                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-amber-500 focus:outline-none"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-navy-800 mb-1">
-                      GCP Project ID
-                    </label>
-                    <input
-                      type="text"
-                      value={newGcpProjectId}
-                      onChange={(e) => setNewGcpProjectId(e.target.value)}
-                      placeholder="e.g. my-production-project-1234"
-                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-amber-500 focus:outline-none"
-                      required
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block font-semibold text-navy-800 mb-1">
-                      OAuth2 Access Token or Service Account Key (Optional)
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={newGcpToken}
-                      onChange={(e) => setNewGcpToken(e.target.value)}
-                      placeholder="Bearer ya29... or paste service account key content"
-                      className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-amber-500 focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-500 flex items-start gap-1.5">
-                    <Key className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
-                    <span>
-                      Required IAM roles: <strong>roles/viewer</strong>, <strong>roles/monitoring.viewer</strong>, <strong>roles/logging.viewer</strong>.
-                    </span>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={authPending || validationStep === "validating" || validationStep === "discovering"}
-                    className="w-full py-2 px-4 rounded-lg bg-navy-900 hover:bg-navy-800 text-white font-medium text-xs shadow-2xs transition flex items-center justify-center gap-1.5 disabled:opacity-50"
-                  >
-                    {validationStep === "validating" ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Zap className="w-4 h-4" />
-                    )}
-                    <span>Test &amp; Connect Google Cloud</span>
-                  </button>
-                </form>
+                <GcpServiceAccountForm
+                  onSuccess={(created) => {
+                    loadConnections();
+                    setGcpTab("existing");
+                    setSelectedGcpId(created.id);
+                  }}
+                  onCancel={() => setGcpTab("existing")}
+                />
               )}
             </div>
 

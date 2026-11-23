@@ -991,3 +991,90 @@ export async function logoutSession(): Promise<LogoutResponse> {
   }
 }
 
+// ----------------------------------------------------------------------------
+// Dedicated GCP Service Account & Resource Discovery Endpoints
+// ----------------------------------------------------------------------------
+
+export async function testGcpConnection(
+  payload: import("@/types").GcpTestConnectionRequest
+): Promise<import("@/types").GcpTestConnectionResponse> {
+  const res = await apiFetch(`${API_BASE_URL}/gcp/connections/test`, {
+    method: "POST",
+    headers: await getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<import("@/types").GcpTestConnectionResponse>(res);
+}
+
+export async function createGcpConnection(
+  payload: import("@/types").GcpCreateConnectionRequest
+): Promise<import("@/types").GcpConnectionResponse> {
+  const res = await apiFetch(`${API_BASE_URL}/gcp/connections`, {
+    method: "POST",
+    headers: await getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  return handleResponse<import("@/types").GcpConnectionResponse>(res);
+}
+
+export async function listGcpConnections(): Promise<import("@/types").GcpConnectionResponse[]> {
+  const res = await apiFetch(`${API_BASE_URL}/gcp/connections`, {
+    method: "GET",
+    headers: await getHeaders(),
+  });
+  return handleResponse<import("@/types").GcpConnectionResponse[]>(res);
+}
+
+export async function getGcpConnection(
+  connectionId: string
+): Promise<import("@/types").GcpConnectionResponse> {
+  const res = await apiFetch(
+    `${API_BASE_URL}/gcp/connections/${encodeURIComponent(connectionId)}`,
+    {
+      method: "GET",
+      headers: await getHeaders(),
+    }
+  );
+  return handleResponse<import("@/types").GcpConnectionResponse>(res);
+}
+
+export async function deleteGcpConnection(connectionId: string): Promise<void> {
+  const res = await apiFetch(
+    `${API_BASE_URL}/gcp/connections/${encodeURIComponent(connectionId)}`,
+    {
+      method: "DELETE",
+      headers: await getHeaders(),
+    }
+  );
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, errorData);
+  }
+}
+
+export async function getGcpResources(
+  connectionId: string
+): Promise<import("@/types").GcpDiscoveryResponse> {
+  const res = await apiFetch(
+    `${API_BASE_URL}/gcp/resources?connection_id=${encodeURIComponent(connectionId)}`,
+    {
+      method: "GET",
+      headers: await getHeaders(),
+    }
+  );
+  return handleResponse<import("@/types").GcpDiscoveryResponse>(res);
+}
+
+export async function getGcpServicesStatus(
+  connectionId: string
+): Promise<import("@/types").GcpServiceStatus[]> {
+  const res = await apiFetch(
+    `${API_BASE_URL}/gcp/services/status?connection_id=${encodeURIComponent(connectionId)}`,
+    {
+      method: "GET",
+      headers: await getHeaders(),
+    }
+  );
+  return handleResponse<import("@/types").GcpServiceStatus[]>(res);
+}
+

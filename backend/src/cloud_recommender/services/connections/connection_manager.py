@@ -6,6 +6,9 @@ strictly separate from the cloud account being connected: the cloud credentials 
 the user, validated directly with Microsoft Entra ID, and stored only as ciphertext.
 """
 
+from __future__ import annotations
+
+import builtins
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -29,6 +32,11 @@ from cloud_recommender.schemas.connections import (
     IntegrationState,
     IntegrationStatus,
     UpdateConnectionRequest,
+)
+from cloud_recommender.schemas.gcp import (
+    GcpConnectionResponse,
+    GcpServiceConnectivityState,
+    GcpServiceStatus,
 )
 from cloud_recommender.services.azure_live.arm_client import AzureArmClient
 from cloud_recommender.services.azure_live.credentials import (
@@ -64,6 +72,35 @@ def _err(code: int, error_code: str, message: str, **extra: Any) -> HTTPExceptio
     )
 
 
+def to_gcp_connection_response(record: StoredConnection) -> GcpConnectionResponse:
+    last_val = record.last_validation or {}
+    services_raw = last_val.get("services", [])
+    services: list[GcpServiceStatus] = []
+    for s in services_raw:
+        if isinstance(s, dict):
+            try:
+                services.append(GcpServiceStatus(**s))
+            except Exception:
+                pass
+        elif isinstance(s, GcpServiceStatus):
+            services.append(s)
+    return GcpConnectionResponse(
+        id=record.id,
+        name=record.name,
+        provider="gcp",
+        project_id=record.scope_id,
+        client_email=record.credential_client_id or "",
+        private_key_id=str(record.integration_config.get("private_key_id", "")),
+        status=record.status,
+        billing_status="DEFERRED",
+        ownership="owned",
+        created_at=record.created_at,
+        last_verified_at=record.last_validated_at,
+        services=services,
+        warnings=list(last_val.get("warnings", [])),
+    )
+
+
 class ConnectionManager:
     """Application service behind /api/v1/connections for user-owned (persistent) connections."""
 
@@ -96,13 +133,61 @@ class ConnectionManager:
 
     def _view(self, record: StoredConnection) -> CloudConnection:
         validation = record.last_validation or {}
-        integrations = [IntegrationStatus(**i) for i in validation.get("integrations", [])]
+        if record.provider == "gcp":
+            services_data = validation.get("services", [])
+            integrations: list[IntegrationStatus] = []
+            for s in services_data:
+                state_val = s.get("status") if isinstance(s, dict) else getattr(s, "status", None)
+                if state_val is not None and hasattr(state_val, "value"):
+                    state_val = state_val.value
+                istate = (
+                    IntegrationState.CONNECTED
+                    if state_val == "SUCCESS"
+                    else (
+                        IntegrationState.DEFERRED
+                        if state_val == "DEFERRED"
+                        else (
+                            IntegrationState.PERMISSION_DENIED
+                            if state_val == "PERMISSION_DENIED"
+                            else IntegrationState.UNAVAILABLE
+                        )
+                    )
+                )
+                svc_id = str(s.get("service") if isinstance(s, dict) else getattr(s, "service", ""))
+                svc_msg = s.get("message") if isinstance(s, dict) else getattr(s, "message", None)
+                svc_role = (
+                    s.get("required_role_or_permission")
+                    if isinstance(s, dict)
+                    else getattr(s, "required_role_or_permission", None)
+                )
+                integrations.append(
+                    IntegrationStatus(
+                        integration=svc_id,
+                        state=istate,
+                        message=svc_msg,
+                        required_permission=svc_role,
+                        details=s.get("details", {})
+                        if isinstance(s, dict)
+                        else getattr(s, "details", {}),
+                    )
+                )
+        else:
+            integrations = [IntegrationStatus(**i) for i in validation.get("integrations", [])]
+
         labels = {
             "resource_manager": "resource_inventory",
             "cost_management": "cost_management",
             "monitor": "metrics",
             "databricks": "databricks",
             "fabric": "fabric",
+            "cloud_resource_manager": "resource_inventory",
+            "cloud_asset_inventory": "asset_inventory",
+            "cloud_storage": "storage",
+            "cloud_sql": "sql",
+            "compute_engine": "compute",
+            "cloud_monitoring": "metrics",
+            "cloud_recommender": "recommendations",
+            "service_usage": "service_usage",
         }
         capabilities = [
             labels[i.integration]
@@ -273,9 +358,26 @@ class ConnectionManager:
     # ------------------------------------------------------------------- commands
 
     async def create(self, owner_key: str, req: CreateConnectionRequest) -> CloudConnection:
+        if req.provider == CloudProvider.GCP:
+            if not req.gcp_service_account_json:
+                raise _err(
+                    422,
+                    "MISSING_REQUIRED_FIELDS",
+                    "Service Account JSON is required for GCP persistent connection.",
+                    fields=["gcp_service_account_json"],
+                )
+            gcp_resp = await self.create_gcp(
+                owner_key=owner_key,
+                name=req.name,
+                project_id=req.scope_id,
+                service_account_json=req.gcp_service_account_json,
+            )
+            stored_gcp = await self._owned(owner_key, gcp_resp.id)
+            return self._view(stored_gcp)
+
         if req.provider != CloudProvider.AZURE:
             raise _err(
-                400, "UNSUPPORTED_PROVIDER", "Persistent connections currently support Azure only."
+                400, "UNSUPPORTED_PROVIDER", "Persistent connections support Azure and GCP only."
             )
         method = req.auth_method or AUTH_SP
         subscription_id = require_guid(req.scope_id, "scope_id (subscription ID)")
@@ -398,6 +500,44 @@ class ConnectionManager:
     async def validate(self, owner_key: str, connection_id: str) -> CloudConnection:
         """Re-validate with the stored credential (decrypted only for this call)."""
         record = await self._owned(owner_key, connection_id)
+        if record.provider == "gcp":
+            secret = self._decrypt(record)
+            if not secret:
+                raise _err(
+                    400, "MISSING_CREDENTIALS", "Stored GCP Service Account credentials not found."
+                )
+            from cloud_recommender.services.gcp.connectivity_service import (
+                get_gcp_connectivity_service,
+            )
+
+            conn_service = get_gcp_connectivity_service()
+            test_res = await conn_service.test_connection(
+                service_account_json=secret,
+                project_id=record.scope_id,
+                connection_name=record.name,
+            )
+            status_str = (
+                "connected"
+                if test_res.overall_status in ("Connected", "Partially Connected")
+                else (
+                    "permission_denied"
+                    if test_res.overall_status == "Permission Denied"
+                    else "auth_failed"
+                )
+            )
+            record.last_validation = {
+                "services": [s.model_dump(mode="json") for s in test_res.services],
+                "overall_status": test_res.overall_status,
+                "warnings": [
+                    s.message
+                    for s in test_res.services
+                    if s.status != GcpServiceConnectivityState.SUCCESS and s.message
+                ],
+            }
+            record.status = status_str
+            record.last_validated_at = datetime.now(UTC)
+            return self._view(await self._repo.update(record))
+
         secret = self._decrypt(record)
         cfg = record.integration_config
         validation = await self._validate(
@@ -500,6 +640,154 @@ class ConnectionManager:
             token,
             connection_id=record.id,
         )
+
+    # ------------------------------------------------------------- GCP Methods
+
+    async def create_gcp(
+        self,
+        owner_key: str,
+        name: str,
+        project_id: str,
+        service_account_json: str,
+    ) -> GcpConnectionResponse:
+        if not name or not name.strip() or len(name.strip()) < 2 or len(name.strip()) > 100:
+            raise _err(
+                422,
+                "INVALID_CONNECTION_NAME",
+                "Connection name must be between 2 and 100 characters.",
+            )
+        clean_project = (project_id or "").strip()
+        if not clean_project or len(clean_project) < 4 or len(clean_project) > 30:
+            raise _err(
+                422,
+                "INVALID_PROJECT_ID",
+                "GCP project ID must be between 4 and 30 characters.",
+            )
+
+        existing = await self._repo.list(owner_key)
+        for ec in existing:
+            if ec.provider == "gcp" and ec.scope_id.lower() == clean_project.lower():
+                raise _err(
+                    409,
+                    "DUPLICATE_CONNECTION",
+                    f"A connection for GCP project '{clean_project}' already exists.",
+                )
+
+        from cloud_recommender.services.gcp.connectivity_service import (
+            get_gcp_connectivity_service,
+        )
+
+        conn_service = get_gcp_connectivity_service()
+        test_res = await conn_service.test_connection(
+            service_account_json=service_account_json,
+            project_id=clean_project,
+            connection_name=name.strip(),
+        )
+        if not test_res.success and test_res.overall_status in (
+            "Authentication Failed",
+            "Permission Denied",
+        ):
+            raise _err(
+                400,
+                "GCP_VALIDATION_FAILED",
+                test_res.error_summary
+                or f"Failed to validate GCP project '{project_id}': {test_res.overall_status}",
+            )
+
+        if await self._repo.count(owner_key) >= self._settings.connections_max_per_user:
+            raise _err(
+                409,
+                "CONNECTION_LIMIT_REACHED",
+                "Maximum number of connections reached. Delete one first.",
+            )
+
+        cipher = self._cipher()
+        connection_id = str(uuid.uuid4())
+        ciphertext, kid = cipher.encrypt(service_account_json.strip(), connection_id, owner_key)
+
+        status_str = (
+            "connected"
+            if test_res.overall_status in ("Connected", "Partially Connected")
+            else (
+                "permission_denied"
+                if test_res.overall_status == "Permission Denied"
+                else "auth_failed"
+            )
+        )
+        record = StoredConnection(
+            id=connection_id,
+            owner_key=owner_key,
+            provider="gcp",
+            auth_method="service_account",
+            name=name.strip(),
+            scope_id=test_res.project_id,
+            credential_tenant_id=None,
+            credential_client_id=test_res.client_email,
+            secret_ciphertext=ciphertext,
+            secret_kid=kid,
+            integration_config={
+                "private_key_id": test_res.private_key_id,
+                "client_email": test_res.client_email,
+                "token_uri": "https://oauth2.googleapis.com/token",
+            },
+            last_validation={
+                "services": [s.model_dump(mode="json") for s in test_res.services],
+                "overall_status": test_res.overall_status,
+                "warnings": [
+                    s.message
+                    for s in test_res.services
+                    if s.status != GcpServiceConnectivityState.SUCCESS and s.message
+                ],
+            },
+            status=status_str,
+            last_validated_at=datetime.now(UTC),
+        )
+        try:
+            stored = await self._repo.add(record)
+        except DuplicateConnectionError:
+            raise _err(
+                409,
+                "DUPLICATE_CONNECTION",
+                "You already have a connection for this GCP project and Service Account.",
+            ) from None
+        logger.info(
+            "gcp_connection_created",
+            connection_id=stored.id,
+            project_id=stored.scope_id,
+            client_email=stored.credential_client_id,
+        )
+        return to_gcp_connection_response(stored)
+
+    async def list_gcp(self, owner_key: str) -> builtins.list[GcpConnectionResponse]:
+        records = await self._repo.list(owner_key)
+        return [to_gcp_connection_response(r) for r in records if r.provider == "gcp"]
+
+    async def get_gcp(self, owner_key: str, connection_id: str) -> GcpConnectionResponse:
+        record = await self._owned(owner_key, connection_id)
+        if record.provider != "gcp":
+            raise _err(
+                404,
+                "CONNECTION_NOT_FOUND",
+                f"Connection '{connection_id}' is not a GCP connection.",
+            )
+        return to_gcp_connection_response(record)
+
+    async def decrypt_gcp_secret(
+        self, owner_key: str, connection_id: str
+    ) -> tuple[StoredConnection, str]:
+        record = await self._owned(owner_key, connection_id)
+        if record.provider != "gcp":
+            raise _err(
+                404,
+                "CONNECTION_NOT_FOUND",
+                f"Connection '{connection_id}' is not a GCP connection.",
+            )
+        secret = self._decrypt(record)
+        if not secret:
+            raise _err(
+                400, "MISSING_CREDENTIALS", "Stored GCP Service Account credentials not found."
+            )
+        return record, secret
 
 
 def is_persistent_connection_id(value: str) -> bool:

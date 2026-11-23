@@ -88,12 +88,11 @@ async def create_connection(
     manager: Manager,
     service: ConnectionService = Depends(get_connection_service),
 ) -> CloudConnection:
-    """Azure connections are validated with the supplied service principal and saved encrypted.
+    """Azure and GCP connections are validated with supplied credentials and saved encrypted.
 
-    The owner is taken from the validated token, never from the request. GCP keeps its existing
-    behaviour (not yet persistent).
+    The owner is taken from the validated token, never from the request.
     """
-    if request.provider == CloudProvider.AZURE:
+    if request.provider in (CloudProvider.AZURE, CloudProvider.GCP):
         return await manager.create(owner_key_for(user), request)
     return await service.create_connection(request)
 
