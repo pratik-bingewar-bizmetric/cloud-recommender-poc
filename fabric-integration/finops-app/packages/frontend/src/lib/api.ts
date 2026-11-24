@@ -940,6 +940,17 @@ export async function getFinOpsSettingsIntegrations(
   return handleResponse<import("@/types").SettingsIntegrationsData>(res);
 }
 
+export async function approveAndRunDatabricksIngestion(
+  request: import("@/types").ApproveAndRunIngestionRequest = {}
+): Promise<import("@/types").ApproveAndRunIngestionResponse> {
+  const res = await apiFetch(`${API_BASE_URL}/finops/ingestion/approve-and-run`, {
+    method: "POST",
+    headers: await getHeaders(),
+    body: JSON.stringify(request),
+  });
+  return handleResponse<import("@/types").ApproveAndRunIngestionResponse>(res);
+}
+
 export async function connectServicePrincipal(
   request: ServicePrincipalConnectRequest
 ): Promise<ServicePrincipalConnectResponse> {

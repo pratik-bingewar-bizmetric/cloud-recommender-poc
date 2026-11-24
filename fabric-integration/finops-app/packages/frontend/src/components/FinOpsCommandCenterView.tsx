@@ -19,6 +19,7 @@ import {
   ReportsAuditData,
   SettingsIntegrationsData,
   ScenarioSimulationResult,
+  ApproveAndRunIngestionResponse,
 } from "@/types";
 import {
   getFinOpsOverview,
@@ -38,6 +39,7 @@ import {
   getFinOpsWorkloadEconomics,
   getFinOpsReportsAudit,
   getFinOpsSettingsIntegrations,
+  approveAndRunDatabricksIngestion,
 } from "@/lib/api";
 import {
   TrendingUp,
@@ -110,6 +112,9 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isIngesting, setIsIngesting] = useState<boolean>(false);
+  const [ingestionResult, setIngestionResult] = useState<ApproveAndRunIngestionResponse | null>(null);
+  const [isApprovalModalOpen, setIsApprovalModalOpen] = useState<boolean>(false);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -177,6 +182,33 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
   useEffect(() => {
     loadModuleData();
   }, [loadModuleData]);
+
+  const handleApproveAndStartIngestion = useCallback(
+    async (sourceTable: "system.billing.usage" | "system.billing.list_prices" = "system.billing.usage") => {
+      setIsIngesting(true);
+      try {
+        const res = await approveAndRunDatabricksIngestion({
+          workspace_id: "642006393507276",
+          source_table: sourceTable,
+          approval_purpose: "Application-managed operator approval for Databricks live billing ingestion",
+        });
+        setIngestionResult(res);
+        if (res.status === "completed") {
+          showToast(`Ingestion completed: ${res.extracted_count} extracted, ${res.persisted_to_db_count} persisted.`);
+          await loadModuleData();
+        } else if (res.error_code === "WAREHOUSE_STOPPED") {
+          showToast("Execution blocked: SQL Warehouse is STOPPED. Please start warehouse first.");
+        } else {
+          showToast(`Ingestion ${res.status}: ${res.error_message || "Operation completed"}`);
+        }
+      } catch (err: any) {
+        showToast(`Ingestion error: ${err.message || "Failed to trigger ingestion"}`);
+      } finally {
+        setIsIngesting(false);
+      }
+    },
+    [loadModuleData, showToast]
+  );
 
   // Recalculate scenario simulation
   const handleRecalculateScenario = async (c: number, t: number, g: number) => {
@@ -335,6 +367,84 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
         {/* ------------------------------------------------------------------ */}
         {activeModule === "overview" && (
           <div className="space-y-6">
+            {/* System Tables & Warehouse Governance Banner */}
+            {overviewData?.kpis.total_spend?.status === "BLOCKED_PENDING_APPROVAL" && (
+              <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 flex flex-col gap-3 shadow-2xs">
+                <div className="flex items-start gap-3.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 text-xs text-amber-900 space-y-1">
+                    <div className="font-semibold text-amber-950 flex items-center gap-2">
+                      <span>Live Billing Data Blocked · SQL Warehouse Compute Suspended</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-900 uppercase">
+                        Approval Required
+                      </span>
+                    </div>
+                    <p className="text-[#475467] leading-relaxed">
+                      The Databricks workspace is <strong>Connected</strong> (via Azure CLI <code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">pratik.bingewar@bizmetric.com</code>) and Unity Catalog system tables (<code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">system.billing.usage</code>, <code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">system.billing.list_prices</code>) are verified accessible. However, the target SQL Warehouse <strong>Serverless Starter Warehouse</strong> (<code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">05ed10a52697a344</code>) is currently <strong>STOPPED</strong>.
+                    </p>
+                    <p className="text-[#475467] leading-relaxed">
+                      <strong>Zero-Execution &amp; FinOps Governance Policy:</strong> Compute is never automatically resumed. To ingest live billing telemetry, an authorized operator (<code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">FinOpsAdmin</code>) can approve and trigger application-managed ingestion below.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-1 border-t border-amber-200/60 flex-wrap">
+                  <button
+                    onClick={() => handleApproveAndStartIngestion("system.billing.usage")}
+                    disabled={isIngesting}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shadow-2xs transition disabled:opacity-50"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>{isIngesting ? "Approving & Ingesting..." : "Approve & Start Ingestion (Usage)"}</span>
+                  </button>
+                  <button
+                    onClick={() => handleApproveAndStartIngestion("system.billing.list_prices")}
+                    disabled={isIngesting}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-300 bg-white hover:bg-amber-50 text-amber-900 font-semibold text-xs shadow-2xs transition disabled:opacity-50"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-amber-700" />
+                    <span>{isIngesting ? "Approving..." : "Approve & Ingest Rate Card"}</span>
+                  </button>
+                  {isIngesting && (
+                    <span className="text-xs text-amber-800 flex items-center gap-1.5 animate-pulse">
+                      <RefreshCw className="w-3 h-3 animate-spin text-amber-700" />
+                      Validating RBAC, issuing audit token, and executing ingestion...
+                    </span>
+                  )}
+                </div>
+
+                {/* Ingestion Audit & Progress Result Display */}
+                {ingestionResult && (
+                  <div className="mt-2 p-3 bg-white border border-amber-200 rounded-lg text-xs space-y-1.5">
+                    <div className="flex items-center justify-between font-semibold">
+                      <span className="flex items-center gap-1.5">
+                        {ingestionResult.status === "completed" ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <AlertTriangle className="w-4 h-4 text-amber-600" />
+                        )}
+                        <span>Run {ingestionResult.run_id}: Status {ingestionResult.status.toUpperCase()}</span>
+                      </span>
+                      <span className="text-[11px] font-mono text-slate-500">
+                        Token Audit ID: {ingestionResult.approval_token_id}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-700 pt-1">
+                      <div>Extracted: <strong className="text-navy-900">{ingestionResult.extracted_count}</strong></div>
+                      <div>Inserted: <strong className="text-navy-900">{ingestionResult.inserted_count}</strong></div>
+                      <div>Persisted to DB: <strong className="text-emerald-700">{ingestionResult.persisted_to_db_count}</strong></div>
+                      <div>Reconciliation: <strong className="text-navy-900">{ingestionResult.reconciliation_status || "N/A"}</strong></div>
+                    </div>
+                    {ingestionResult.error_message && (
+                      <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900">
+                        <strong>Operational Notice:</strong> {ingestionResult.error_message}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 6 KPI Cards */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
               {[
@@ -636,27 +746,73 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </button>
             </div>
 
+            {/* System Tables & Warehouse Governance Banner */}
+            {costData?.kpis.gross_consumption?.status === "BLOCKED_PENDING_APPROVAL" && (
+              <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 flex flex-col gap-2.5 shadow-2xs">
+                <div className="flex items-start gap-3.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1 text-xs text-amber-900 space-y-1">
+                    <div className="font-semibold text-amber-950 flex items-center gap-2">
+                      <span>Cost Explorer Telemetry Blocked · SQL Warehouse Compute Suspended</span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-900 uppercase">
+                        Approval Required
+                      </span>
+                    </div>
+                    <p className="text-[#475467] leading-relaxed">
+                      Live consumption ledger requires approved access to <code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">system.billing.usage</code>. Target SQL Warehouse <code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">05ed10a52697a344</code> is currently STOPPED.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 pt-1 border-t border-amber-200/60">
+                  <button
+                    onClick={() => handleApproveAndStartIngestion("system.billing.usage")}
+                    disabled={isIngesting}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shadow-2xs transition disabled:opacity-50"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>{isIngesting ? "Approving & Ingesting..." : "Approve & Start Ingestion"}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* 4 KPIs */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Gross consumption</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$176,840</div>
-                <div className="text-[11px] text-slate-500">Before credits and adjustments</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {costData?.kpis.gross_consumption?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {costData?.kpis.gross_consumption?.provenance || (costData?.kpis.gross_consumption?.status ? `Status: ${costData.kpis.gross_consumption.status}` : "Before credits and adjustments")}
+                </div>
               </div>
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Effective rate</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$0.148</div>
-                <div className="text-[11px] text-slate-500">Blended cost / DBU</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {costData?.kpis.effective_rate?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {costData?.kpis.effective_rate?.provenance || (costData?.kpis.effective_rate?.status ? `Status: ${costData.kpis.effective_rate.status}` : "Blended cost / DBU")}
+                </div>
               </div>
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Unallocated spend</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$12,480</div>
-                <div className="text-[11px] text-rose-600 font-semibold">7.1% needs tagging</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {costData?.kpis.unallocated_spend?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
+                <div className="text-[11px] text-rose-600 font-semibold">
+                  {costData?.kpis.unallocated_spend?.provenance || (costData?.kpis.unallocated_spend?.status ? `Status: ${costData.kpis.unallocated_spend.status}` : "Needs tagging")}
+                </div>
               </div>
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Credits / discounts</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$8,260</div>
-                <div className="text-[11px] text-slate-500">Applied commercial adjustments</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {costData?.kpis.credits_discounts?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {costData?.kpis.credits_discounts?.provenance || (costData?.kpis.credits_discounts?.status ? `Status: ${costData.kpis.credits_discounts.status}` : "Applied commercial adjustments")}
+                </div>
               </div>
             </div>
 
@@ -741,25 +897,55 @@ export const FinOpsCommandCenterView: React.FC<FinOpsCommandCenterViewProps> = (
               </button>
             </div>
 
+            {/* System Tables & Warehouse Governance Banner */}
+            {allocData?.kpis.allocated_spend?.status === "BLOCKED_PENDING_APPROVAL" && (
+              <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 flex items-start gap-3.5 shadow-2xs">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex-1 text-xs text-amber-900 space-y-1">
+                  <div className="font-semibold text-amber-950 flex items-center gap-2">
+                    <span>Cost Allocation Blocked · Awaiting System Tables Telemetry</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-200 text-amber-900 uppercase">
+                      Approval Required
+                    </span>
+                  </div>
+                  <p className="text-[#475467] leading-relaxed">
+                    Cost allocation attribution requires metered usage records from <code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">system.billing.usage</code>. SQL Warehouse <code className="bg-amber-100/70 px-1 py-0.5 rounded text-amber-800">05ed10a52697a344</code> is STOPPED.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Allocated spend</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$164,360</div>
-                <div className="text-[11px] text-emerald-700 font-semibold">92.9% of total</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {allocData?.kpis.allocated_spend?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
+                <div className="text-[11px] text-emerald-700 font-semibold">
+                  {allocData?.kpis.allocated_spend?.provenance || (allocData?.kpis.allocated_spend?.status ? `Status: ${allocData.kpis.allocated_spend.status}` : "Direct tag attribution")}
+                </div>
               </div>
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Unallocated spend</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$12,480</div>
-                <div className="text-[11px] text-rose-600 font-semibold">Needs owner mapping</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {allocData?.kpis.unallocated_spend?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
+                <div className="text-[11px] text-rose-600 font-semibold">
+                  {allocData?.kpis.unallocated_spend?.provenance || (allocData?.kpis.unallocated_spend?.status ? `Status: ${allocData.kpis.unallocated_spend.status}` : "Needs owner mapping")}
+                </div>
               </div>
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Active allocation rules</div>
-                <div className="text-2xl font-black text-[#182230] my-1">28</div>
-                <div className="text-[11px] text-slate-500">Tag, workspace & custom</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {allocData?.kpis.active_rules?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
+                <div className="text-[11px] text-slate-500">Tag, workspace &amp; custom</div>
               </div>
               <div className="bg-white border border-[#e5eaf1] rounded-xl p-4 shadow-2xs">
                 <div className="text-[11px] font-semibold text-[#667085]">Shared cost pool</div>
-                <div className="text-2xl font-black text-[#182230] my-1">$21,600</div>
+                <div className="text-2xl font-black text-[#182230] my-1">
+                  {allocData?.kpis.shared_pool?.formatted_value ?? (isLoading ? "..." : "—")}
+                </div>
                 <div className="text-[11px] text-slate-500">Allocated by agreed driver</div>
               </div>
             </div>

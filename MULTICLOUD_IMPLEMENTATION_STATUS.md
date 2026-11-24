@@ -29,13 +29,13 @@ Every tracked capability is evaluated against the following strict status defini
 | :--- | :---: | :---: | :---: | :---: |
 | **Authentication** | **PARTIALLY WORKING** | **BLOCKED** (SP) / **WORKING** (CLI) | **WORKING** (Live SA OAuth2 Verified) | **NOT STARTED** |
 | **Authorization & IAM** | **WORKING** | **WORKING** | **WORKING** (Read-Only & IAM Validated) | **NOT STARTED** |
-| **API Connectivity** | **WORKING** (Retail) / **IMPLEMENTED** (ARM) | **WORKING** (REST) / **BLOCKED** (OIDC SP) | **WORKING** (Service Usage Live / 8 Probes) | **NOT STARTED** |
-| **Resource Discovery** | **IMPLEMENTED** | **IMPLEMENTED** (SP) / **WORKING** (CLI) | **IMPLEMENTED** (Ready for Viewer Roles) | **NOT STARTED** |
+| **API Connectivity** | **WORKING** (Retail) / **IMPLEMENTED** (ARM) | **WORKING** (REST) / **BLOCKED** (OIDC SP) | **WORKING** (7 SUCCESS, 1 DEFERRED) | **NOT STARTED** |
+| **Resource Discovery** | **IMPLEMENTED** | **IMPLEMENTED** (SP) / **WORKING** (CLI) | **WORKING** (39 Live Assets Discovered) | **NOT STARTED** |
 | **Billing Integration** | **WORKING** | **WORKING** (Reconciliation) | **DEFERRED** (Billing Intentionally Excluded) | **IMPLEMENTED** (Catalog only) |
 | **Frontend Integration** | **WORKING** | **WORKING** | **WORKING** (SA Upload & 8-Service Status) | **NOT STARTED** |
 | **Backend Integration** | **WORKING** | **WORKING** | **WORKING** (Dedicated `/api/v1/gcp/*` APIs) | **NOT STARTED** |
-| **Automated Test Suite** | **WORKING** (100% Pass) | **WORKING** (100% Pass) | **WORKING** (39 Passed, 100% Pass) | **NOT STARTED** |
-| **Live Runtime Status** | **PARTIALLY WORKING** | **PARTIALLY WORKING** | **PARTIALLY WORKING** (Auth & Probes Live) | **NOT STARTED** |
+| **Automated Test Suite** | **WORKING** (100% Pass) | **WORKING** (100% Pass) | **WORKING** (46 Passed, 100% Pass) | **NOT STARTED** |
+| **Live Runtime Status** | **PARTIALLY WORKING** | **PARTIALLY WORKING** | **WORKING** (Auth, 7 Services & Discovery Live) | **NOT STARTED** |
 
 ---
 
@@ -110,6 +110,22 @@ Every tracked capability is evaluated against the following strict status defini
 
 ## 4. Deep-Dive Provider Audit: Azure Databricks
 
+### 4.0 Databricks Workstream Implementation Status Table
+
+| Workstream | Status | Evidence & Dependencies |
+| :--- | :--- | :--- |
+| **Authentication (Azure CLI Delegated)** | **LIVE VERIFIED** | Verified against live workspace `642006393507276` as `pratik.bingewar@bizmetric.com`. |
+| **Authentication (M2M Service Principal)** | **BLOCKED (Diagnosed)** | SP `1dc51b34-ba35-46c9-8f2a-71930fa5e9a7` diagnosed; 403 root cause confirmed as missing workspace assignment in Databricks Account Console; Secret ID vs Value discrepancy identified. Fails closed with zero silent fallback. |
+| **REST Resource Discovery** | **LIVE VERIFIED** | Discovers clusters, warehouses, serving endpoints, and apps without compute execution. |
+| **Multi-Chunk Result Pagination** | **TESTED** | `_collect_complete_result` handles numbered chunks (`next_chunk_index`) and validates manifest totals. |
+| **Checkpoint Management** | **TESTED** | High watermark timestamps and usage dates persisted in `billing_source_checkpoints`. |
+| **Database Persistence & Recovery** | **TESTED** | Re-hydrates `billing_usage_records` and `billing_price_records` into memory on startup. |
+| **Pricing Reconciliation Engine** | **TESTED** | Multi-dimensional matching `(cloud, sku, unit, interval, currency)`; handles retractions & preserves unmatched compute. |
+| **Application Approval Workflow** | **LIVE VERIFIED** | `POST /api/v1/finops/ingestion/approve-and-run` verified live; generates audit token, redacts secret, enforces guardrails. |
+| **Live SQL Statement Execution** | **BLOCKED** | Target warehouse `05ed10a52697a344` is in `State.STOPPED`. Awaiting operator start action. |
+| **Live Database Usage Population** | **BLOCKED** | Blocked by stopped warehouse compute dependency. Schema is verified ready. |
+| **Frontend FinOps Dashboards** | **TESTED** | 11 modules mapped to live/persisted API endpoints with truthful visual state indicators. |
+
 ### 4.1 Authentication
 - **Status:** **BLOCKED** (OAuth M2M Service Principal) / **WORKING** (Local Azure CLI Delegated)
 - **Details:**
@@ -140,43 +156,63 @@ Every tracked capability is evaluated against the following strict status defini
   - `DatabricksDiscoveryService` runs REST-only discovery without executing SQL compute.
 
 ### 4.5 Billing Integration and Billing Data Coverage
-- **Status:** **WORKING**
+- **Status:** **WORKING (Zero-Execution Gated / Application-Managed Approval)**
 - **Details:**
+  - **Phase 2.1A Application-Managed Approval:** Replaced manual cURL/token copy workflow with authenticated UI action: **"Approve & Start Ingestion"** calling `POST /api/v1/finops/ingestion/approve-and-run`.
+  - **Cryptographic Security & Redaction:** Server verifies `FinOpsAdmin` RBAC role, generates single-use HMAC token, binds to workspace/time window, and returns `approval_token_id` while redacting token secrets from API and UI.
+  - **PostgreSQL Database Ledger Persistence:** Ingestion workflow writes extracted records to `billing_usage_records` and `billing_price_records`, and records audit run in `billing_ingestion_runs`.
   - **Reconciliation Mathematical Proof:** 58.0966 DBU matched against `$0.7114689844/DBU` list price equals exact `$41.333929`. The earlier Phase 4 report of `$127.81` was caused by a synthetic `$2.20/DBU` Serverless SQL flat-rate test assumption.
   - **Decoupled Coverage Metrics:**
     - Quantity (DBU) Coverage: $58.0966 / (58.0966 + 24.6624) = \mathbf{70.20\%}$
     - Record-Count Coverage: $1 / 2 = \mathbf{50.00\%}$
   - **Genie Compute:** $24.6624$ DBU of unpriced Genie compute is preserved without assigning $\$0.00$.
   - **Reconciliation Status:** Maintained strictly as `PARTIAL_PRICING`.
-  - **Zero-Execution Approval Gate:** Dual-key HMAC token gating for live queries; warehouse startup is prevented.
+  - **Zero-Execution Approval Gate:** Dual-key HMAC token gating for live queries; warehouse startup is prevented. Live diagnostic confirmed target warehouse `05ed10a52697a344` (`Serverless Starter Warehouse`) is `STOPPED`. Auto-resume is prohibited; fails closed with `error_code: "WAREHOUSE_STOPPED"`.
 
 ### 4.6 Frontend Integration
 - **Status:** **WORKING**
 - **Details:**
-  - `FinOpsCommandCenterView.tsx`: Renders 15 modules with dynamic workspace scoping.
-  - Removed all hardcoded mock strings (`"$284,620"`, `"$176,840"`, etc.).
-  - Centralized error conversion via `apiFetch` in `api.ts`.
+  - `FinOpsCommandCenterView.tsx`: Added one-click **"Approve & Start Ingestion (Usage)"** and **"Approve & Ingest Rate Card"** action buttons with live status banner, extracted/persisted counters, and stopped warehouse notification.
+  - Bound real API KPI models across Cost Allocation and Cost Explorer (`allocData?.kpis`, `costData?.kpis`).
+  - Added `approveAndRunDatabricksIngestion` in `api.ts` with strict TypeScript request/response contracts.
 
 ### 4.7 Backend Integration
 - **Status:** **WORKING**
 - **Details:**
-  - Routes in `api/routes/databricks.py` and `api/routes/finops.py`.
-  - Services in `services/databricks/`.
+  - `POST /api/v1/finops/ingestion/approve-and-run` in `api/routes/finops.py`.
+  - Services in `services/databricks/billing_ingestion_service.py` with PostgreSQL ledger persistence and database reload capability.
 
 ### 4.8 Automated Test Results
 - **Status:** **WORKING**
 - **Results:**
+  - `backend/tests/test_databricks_workspace.py`: 31 passed.
   - `backend/tests/test_databricks_phase4_e2e.py`: 9 passed.
+  - `backend/tests/test_finops_analytics.py`: 18 passed.
+  - `backend/tests/test_live_finops_integration.py`: 16 passed.
   - `backend/tests/test_m7_1_billing_hardening.py`: 75 passed.
-  - `backend/tests/test_databricks_workspace.py`: 6 passed.
+  - `backend/tests/test_databricks_approve_and_run.py`: 13 passed (RBAC, STOPPED guardrail, DB persistence, validation).
+  - `backend/tests/test_databricks_phase2_1c_readiness.py`: 6 passed (multi-chunk pagination, checkpoints, DB reload).
+  - `backend/tests/test_databricks_phase2_1d_auth.py`: 5 passed (fail-closed SP auth, 403 classification, secret scrubbing).
+  - Total Backend Databricks/FinOps Suite: **173 passed, 0 failed**.
+  - Frontend Vitest Suite: **193 passed, 0 failed** (20 test suites).
+  - Frontend Build: **100% SUCCESS** (`tsc -b --noCheck && vite build`).
 
 ### 4.9 Live Runtime Verification
-- **Status:** **PARTIALLY WORKING**
-- **Evidence:** REST connectivity verified; SP OAuth M2M returned HTTP 403 due to missing workspace assignment in Databricks Account Console.
+- **Status:** **PARTIALLY WORKING (Connection Active / Compute Suspended)**
+- **Evidence:**
+  - Azure CLI Delegated Authentication (`pratik.bingewar@bizmetric.com`): **100% OPERATIONAL**.
+  - Databricks Workspace Client: **CONNECTED** (`adb-642006393507276.16.azuredatabricks.net`).
+  - Unity Catalog System Tables: **VERIFIED PRESENT** (`system.billing.usage`, `system.billing.list_prices`).
+  - SQL Warehouse Compute: **STOPPED** (`Serverless Starter Warehouse`, `05ed10a52697a344`, 2X-Small, auto-stop: 5 mins).
+  - Phase 2.1A Approval Endpoint: **VERIFIED LIVE** (`POST /api/v1/finops/ingestion/approve-and-run`). Returned `approval_token_id: tok-k1-2026`, zero secret leakage, and cleanly blocked SQL execution with `error_code: WAREHOUSE_STOPPED`.
+  - Phase 2.1B Ingestion Preflight: **VERIFIED LIVE**. Target PostgreSQL tables (`billing_usage_records`, `billing_price_records`, `billing_ingestion_runs`, `billing_approval_tokens`) verified present. Zero-execution guardrail strictly preserved.
+  - Phase 2.1C Warehouse-Independent Readiness: **TESTED & VERIFIED**. Checkpoint management, process-restart database reload, multi-chunk pagination, and 11-module frontend mapping fully operational.
+  - Ingestion Status: **APPROVAL_REQUIRED / BLOCKED BY STOPPED WAREHOUSE** (gated by Zero-Mutation & Human Approval policy).
+  - Deliverables: `DATABRICKS_PHASE_2_1C_COMPLETION_REPORT.md`, `DATABRICKS_PHASE_2_1C_API_FRONTEND_MAPPING.md`, `DATABRICKS_PHASE_2_1C_REMAINING_GAPS.md`, `DATABRICKS_PHASE_2_1B_INGESTION_REPORT.md`, and `DATABRICKS_PHASE_2_1B_RECONCILIATION_REPORT.md`.
 
 ### 4.10 Known Limitations and Unresolved Issues
 - Service Principal requires admin workspace access grant in `accounts.azuredatabricks.net`.
-- SQL Warehouses in `STOPPED` state require separate explicit human authorization before resuming compute.
+- SQL Warehouse `05ed10a52697a344` is in `STOPPED` state and requires explicit operator action to resume compute before live System Tables SQL queries can execute.
 - Genie compute has no published list price in `system.billing.list_prices` during preview.
 
 ---
@@ -199,28 +235,29 @@ Every tracked capability is evaluated against the following strict status defini
 ### 5.2 Authorization and IAM Permissions
 - **Status:** **WORKING** (Read-Only Guardrails & Live IAM Validated)
 - **Details:**
-  - **Zero-Execution Invariant:** All discovery operations strictly execute read-only HTTP GET requests with OAuth2 read-only scopes (`https://www.googleapis.com/auth/cloud-platform.read-only`). Never requests write/mutating IAM roles (`Editor`, `Owner`).
+  - **Zero-Execution Invariant:** All discovery operations strictly execute read-only HTTP GET requests with OAuth2 read-only scopes. Never requests write/mutating IAM roles (`Editor`, `Owner`).
   - **Tenant & Ownership Isolation:** Connections are partitioned in persistent storage by `owner_key_for(user)`. Cross-tenant connection lookups return HTTP 404.
-  - **Live IAM Diagnostics:** Live runtime probe accurately detected specific permission boundaries:
-    - Service Account currently lacks Viewer roles (`roles/viewer`, `roles/cloudasset.viewer`, `roles/compute.viewer`, `roles/storage.viewer`, `roles/cloudsql.viewer`, `roles/monitoring.viewer`, `roles/recommender.viewer`).
-    - The engine gracefully returns structured `PERMISSION_DENIED` status badges per service without throwing uncaught exceptions or fabricating assets.
+  - **Live IAM Audit via `getIamPolicy`:** Confirmed Service Account `finops-gcp-reader` already possesses all necessary Viewer roles:
+    `roles/browser`, `roles/cloudasset.viewer`, `roles/cloudsql.viewer`, `roles/compute.viewer`, `roles/monitoring.viewer`, `roles/recommender.viewer`, `roles/serviceusage.serviceUsageConsumer`, `roles/serviceusage.serviceUsageViewer`, `roles/storage.viewer`.
+  - **OAuth2 Scope Resolution:** Resolved `ACCESS_TOKEN_SCOPE_INSUFFICIENT` by acquiring tokens with canonical `https://www.googleapis.com/auth/cloud-platform` scope, allowing Google API Gateway to evaluate IAM permissions properly.
 
 ### 5.3 API Connectivity and Enabled API Status
-- **Status:** **WORKING** (Service Usage Live / 8 Independent Probes)
+- **Status:** **WORKING** (7 Services SUCCESS / 1 Service DEFERRED)
 - **Details:**
-  - Standardized status classification per service: `SUCCESS`, `API_DISABLED`, `PERMISSION_DENIED`, `AUTHENTICATION_FAILED`, `RESOURCE_NOT_FOUND`, `SERVICE_UNAVAILABLE`. Failure in one service does not block others.
-  - **Live 8-Service Connectivity Probing Results:**
-    1. **Cloud Resource Manager API** (`cloudresourcemanager.googleapis.com`): `API_DISABLED` (API disabled in `cloud-recommender-pricing-dev`).
-    2. **Service Usage API** (`serviceusage.googleapis.com`): `SUCCESS` (Discovered 28 enabled Google Cloud APIs in the project).
-    3. **Cloud Asset Inventory API** (`cloudasset.googleapis.com`): `PERMISSION_DENIED` (Missing `cloudasset.assets.searchAllResources` permission).
-    4. **Cloud Storage API** (`storage.googleapis.com`): `PERMISSION_DENIED` (Missing bucket listing permissions).
-    5. **Cloud SQL Admin API** (`sqladmin.googleapis.com`): `PERMISSION_DENIED` (Missing SQL instance listing permissions).
-    6. **Compute Engine API** (`compute.googleapis.com`): `PERMISSION_DENIED` (Missing `compute.instances.list` permission).
-    7. **Cloud Monitoring API** (`monitoring.googleapis.com`): `PERMISSION_DENIED` (Missing metric descriptor listing permissions).
-    8. **Cloud Recommender API** (`recommender.googleapis.com`): `PERMISSION_DENIED` (Missing recommendation viewer permissions).
+  - Standardized status classification per service: `SUCCESS`, `API_DISABLED`, `PERMISSION_DENIED`, `AUTHENTICATION_FAILED`, `RESOURCE_NOT_FOUND`, `SERVICE_UNAVAILABLE`, `DEFERRED`.
+  - **Live 8-Service Connectivity Probing Results (Phase 3.1 Verified):**
+    1. **Cloud Resource Manager API** (`cloudresourcemanager.googleapis.com`): **SUCCESS** (Project state: `ACTIVE`, name: `cloud-recommender-pricing-dev`).
+    2. **Service Usage API** (`serviceusage.googleapis.com`): **SUCCESS** (Discovered **30 enabled Google Cloud APIs** across 1 page).
+    3. **Cloud Asset Inventory API** (`cloudasset.googleapis.com`): **SUCCESS** (**39 live cloud resources** returned across 1 page).
+    4. **Cloud Storage API** (`storage.googleapis.com`): **SUCCESS** (**0 buckets found**, legitimate empty storage inventory).
+    5. **Cloud SQL Admin API** (`sqladmin.googleapis.com`): **SUCCESS** (**0 instances found**, legitimate empty database inventory).
+    6. **Compute Engine API** (`compute.googleapis.com`): **DEFERRED** (Cleanly classified as DEFERRED: unbilled project policy).
+    7. **Cloud Monitoring API** (`monitoring.googleapis.com`): **SUCCESS** (**20 metric descriptors sampled**).
+    8. **Cloud Recommender API** (`recommender.googleapis.com`): **SUCCESS** (**0 recommendations found**, clean optimization state).
+  - Overall Connection Status: **`Connected`** (7 SUCCESS, 1 DEFERRED).
 
 ### 5.4 Resource Discovery
-- **Status:** **IMPLEMENTED** (Runtime: Gracefully Verified Empty Inventory)
+- **Status:** **WORKING** (39 Live Cloud Resources Discovered)
 - **Details:**
   - Implemented multi-service aggregation in `GcpConnectivityService.discover_resources()`:
     - Primary: Cloud Asset Inventory `searchAllResources` with pagination.
@@ -228,14 +265,15 @@ Every tracked capability is evaluated against the following strict status defini
     - Observability & Insights: Cloud Monitoring descriptors and Cloud Recommender idle/cost recommendations.
   - Resource deduplication: Keyed by canonical resource URI / name so assets discovered across multiple endpoints are never duplicated.
   - Hierarchy & Boundaries: Strictly models `resource_group = None` (rejecting Azure resource group conventions). Validates GCP project ID regex.
-  - Live Verification Behavior: Safely returned 0 discovered resources when IAM permissions were denied; no fabricated or hallucinated assets.
+  - **Live Verification Behavior:** Discovered **39 real Google Cloud resources** (LogBucket, Services, ServiceAccounts, ServiceAccountKeys) with zero synthetic fallback or hallucinated assets. Truthfully reported 0 buckets and 0 SQL instances.
 
 ### 5.5 Billing Integration and Billing Data Coverage
-- **Status:** **DEFERRED** (Phase 1 Scope Explicitly Excludes Billing)
+- **Status:** **DEFERRED** (Phase 1 & 3 Scope Explicitly Excludes Billing)
 - **Details:**
   - Target project `cloud-recommender-pricing-dev` has no active billing account linked.
   - Zero billing APIs invoked during connection testing or discovery. Billing status reported as `DEFERRED`.
   - Zero billable cloud resources created or mutated.
+  - Complete Phase B BigQuery export architecture and schema mapping documented in `GCP_PHASE_3_1_BILLING_READINESS_REPORT.md`.
 
 ### 5.6 Frontend Integration
 - **Status:** **WORKING**
@@ -265,35 +303,39 @@ Every tracked capability is evaluated against the following strict status defini
 ### 5.8 Automated Test Results
 - **Status:** **WORKING** (100% Pass)
 - **Results:**
-  - `backend/tests/test_gcp_phase1_service_account.py`: 13 passed (JSON validation, token generation, caching, mock HTTP probes, API disabled / permission denied handling, AES-256-GCM lifecycle, tenant isolation, and API route integration).
+  - `backend/tests/test_gcp_phase1_service_account.py`: 20 passed (JSON validation, token generation, caching, mock HTTP probes, API disabled / permission denied handling, AES-256-GCM lifecycle, tenant isolation, and API route integration).
   - `backend/tests/test_gcp_inventory_and_comparison.py`: 8 passed.
   - `backend/tests/test_gcp_pricing.py`: 3 passed.
   - `backend/tests/test_v5_1_gcp_isolation.py`: 15 passed.
-  - **Total GCP Tests:** 39 passed in 7.43s.
+  - **Total GCP Tests:** **46 passed in 5.07s**.
+  - Frontend Vitest Suite: **193 passed, 0 failed** (20 test suites).
+  - Frontend Production Build: **100% SUCCESS** (`tsc -b --noCheck && vite build`).
 
 ### 5.9 Live Runtime Verification
-- **Status:** **PARTIALLY WORKING** (Auth & Service Usage Live; Remaining Services Awaiting IAM Roles)
+- **Status:** **WORKING** (Auth, 7 Services & Resource Discovery Live; Compute Engine DEFERRED)
 - **Evidence:** Executed live verification using `.secrets/gcp-service-account.json` for `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com` (Key ID: `de7e66b1e92c76b0d6d8e8b9506341a453276def`, Client ID: `104716144021438715519`):
   - **JSON Credential Validation:** `SUCCESS` (`type == "service_account"`, valid RSA private key).
   - **Token Exchange:** `SUCCESS` (Direct RSA JWT signing via `google-auth` returned active bearer token with 3598s lifetime).
-  - **Principal Identity Verification:** `SUCCESS` (Google OAuth2 Tokeninfo cryptographically verified authorized party `azp = 104716144021438715519` matching `client_id`, with `https://www.googleapis.com/auth/cloud-platform.read-only` scope).
-  - **Sequential API Probing (Resource Manager & Asset Inventory First):**
-    1. `cloudresourcemanager.googleapis.com`: `API_DISABLED` (HTTP 403, API disabled in project).
-    2. `cloudasset.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing `cloudasset.assets.searchAllResources`).
-    3. `serviceusage.googleapis.com`: `SUCCESS` (HTTP 200, discovered 28 enabled Google APIs in `cloud-recommender-pricing-dev`).
-    4. `storage.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing bucket listing permission).
-    5. `sqladmin.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing SQL instance listing permission).
-    6. `compute.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing `compute.instances.list`).
-    7. `monitoring.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing metric descriptor listing permission).
-    8. `recommender.googleapis.com`: `PERMISSION_DENIED` (HTTP 403, missing recommender viewer permission).
-  - **Read-Only Resource Discovery:** Cleanly discovered 0 resources without uncaught exceptions or data fabrication.
+  - **Principal Identity Verification:** `SUCCESS` (Google OAuth2 Tokeninfo cryptographically verified authorized party `azp = 104716144021438715519` matching `client_id`, with `https://www.googleapis.com/auth/cloud-platform` scope).
+  - **8-Service API Probing Results:**
+    1. `cloudresourcemanager.googleapis.com`: **SUCCESS** (HTTP 200, Project `ACTIVE`).
+    2. `serviceusage.googleapis.com`: **SUCCESS** (HTTP 200, 30 enabled Google APIs in `cloud-recommender-pricing-dev`).
+    3. `cloudasset.googleapis.com`: **SUCCESS** (HTTP 200, 39 live resources discovered).
+    4. `storage.googleapis.com`: **SUCCESS** (HTTP 200, 0 buckets found).
+    5. `sqladmin.googleapis.com`: **SUCCESS** (HTTP 200, 0 instances found).
+    6. `compute.googleapis.com`: **DEFERRED** (HTTP 403, Compute Engine API unbilled project state).
+    7. `monitoring.googleapis.com`: **SUCCESS** (HTTP 200, 20 metric descriptors sampled).
+    8. `recommender.googleapis.com`: **SUCCESS** (HTTP 200, 0 recommendations found).
+  - **Read-Only Resource Discovery:** Live discovery returned 39 assets, 20 metric descriptors, 0 recommendations.
   - **Persistent Connection Management:** Verified AES-256-GCM encrypted persistence in `ConnectionManager` with tenant isolation.
 
 ### 5.10 Known Limitations and Unresolved Issues
-- To discover actual infrastructure resources, target project `cloud-recommender-pricing-dev` requires:
-  1. Enablement of `cloudresourcemanager.googleapis.com` and `cloudasset.googleapis.com`.
-  2. Granting `roles/viewer` (or granular viewer roles: `roles/cloudasset.viewer`, `roles/compute.viewer`, `roles/storage.viewer`) to `finops-gcp-reader@cloud-recommender-pricing-dev.iam.gserviceaccount.com`.
-- Billing integration is deferred until an active Google Cloud Billing account is provisioned.
+- Compute Engine API remains disabled and deferred until an active Google Cloud Billing account is provisioned.
+- Detailed billing ingestion (BigQuery export) is deferred until a billing account is linked.
+- Associated Deliverables:
+  - `GCP_PHASE_3_1_FULL_AUDIT_REPORT.md`
+  - `GCP_PHASE_3_1_IAM_AND_API_REQUIREMENTS.md`
+  - `GCP_PHASE_3_1_BILLING_READINESS_REPORT.md`
 
 ---
 

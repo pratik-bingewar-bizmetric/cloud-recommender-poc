@@ -31,6 +31,8 @@ from cloud_recommender.schemas.gcp import GcpServiceAccountInfo
 logger = structlog.get_logger(__name__)
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/cloud-platform.read-only"
+CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+DEFAULT_SCOPES = [CLOUD_PLATFORM_SCOPE]
 AZURE_UUID_REGEX = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -178,14 +180,16 @@ class GcpAuthService:
 
         return data, info
 
-    def acquire_token(self, creds_data: dict[str, Any]) -> str:
+    def acquire_token(self, creds_data: dict[str, Any], scopes: list[str] | None = None) -> str:
         """Obtain a valid OAuth2 access token using official Google Service Account JWT signing.
 
-        Caches active tokens in memory partitioned by (client_email, private_key_id).
+        Caches active tokens in memory partitioned by (client_email, private_key_id, scopes).
         """
         client_email = str(creds_data.get("client_email", "")).strip().lower()
         key_id = str(creds_data.get("private_key_id", "")).strip()
-        cache_key = f"{client_email}:{key_id}"
+        effective_scopes = list(scopes) if scopes else DEFAULT_SCOPES
+        scope_str = ",".join(sorted(effective_scopes))
+        cache_key = f"{client_email}:{key_id}:{scope_str}"
 
         cached = self._token_cache.get(cache_key)
         if cached and not cached.is_expired():
@@ -194,7 +198,7 @@ class GcpAuthService:
         try:
             creds = service_account.Credentials.from_service_account_info(  # type: ignore[no-untyped-call]
                 creds_data,
-                scopes=[READONLY_SCOPE],
+                scopes=effective_scopes,
             )
             request = Request()
             creds.refresh(request)

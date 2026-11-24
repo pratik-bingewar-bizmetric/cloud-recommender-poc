@@ -83,7 +83,7 @@ show_error_codes = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 # A single test must never hang the suite: the thread method also works on Windows and ends the
 # run with a traceback of the stuck test. Ceiling only; the slowest test takes a small fraction.
 timeout = 180

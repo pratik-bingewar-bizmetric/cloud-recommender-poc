@@ -177,7 +177,7 @@ class DatabricksSqlService:
         client_secret: str | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.auth_service = auth_service or DatabricksAuthService()
+        self.auth_service = auth_service or DatabricksAuthService(settings=self.settings)
         self._client = workspace_client
 
         # Direct overrides if supplied
@@ -218,6 +218,8 @@ class DatabricksSqlService:
             profile=self.profile,
             client_id=self.client_id,
             client_secret=self.client_secret,
+            auth_type=self.auth_type,
+            environment=self.settings.app_env,
         )
 
     def check_warehouse_status(self) -> WarehouseHealthResult:

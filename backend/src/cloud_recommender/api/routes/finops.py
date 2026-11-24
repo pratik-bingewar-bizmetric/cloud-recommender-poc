@@ -19,6 +19,8 @@ from cloud_recommender.core.auth import (
 )
 from cloud_recommender.core.config import Settings, get_settings
 from cloud_recommender.schemas.billing_ingestion import (
+    ApproveAndRunIngestionRequest,
+    ApproveAndRunIngestionResponse,
     BillingApprovalTokenRequest,
     BillingApprovalTokenResponse,
     BillingIngestionRunResponse,
@@ -767,14 +769,191 @@ def issue_approval_token(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
 
+@router.post("/ingestion/approve-and-run", response_model=ApproveAndRunIngestionResponse)
+def approve_and_run_ingestion(
+    request: ApproveAndRunIngestionRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
+) -> ApproveAndRunIngestionResponse:
+    """Application-managed approval token generation and ingestion run execution.
+
+    Validates user RBAC, issues an internal single-use cryptographic approval token,
+    binds approval to the user/workspace/scope, executes the read-only ingestion,
+    persists extracted records to PostgreSQL, and redacts token secrets from responses.
+    Zero-mutation guardrail: does NOT auto-resume stopped warehouse compute.
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    # Fallback for direct test harness invocation
+    if not isinstance(current_user, AuthenticatedUser):
+        current_user = get_current_user()
+
+    # 1. Enforce authentication
+    if not current_user or not getattr(current_user, "is_authenticated", False):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "UNAUTHENTICATED",
+                "message": "Authentication is required to approve and execute ingestion.",
+            },
+        )
+
+    # 2. Enforce RBAC
+    allowed_roles = set(RESTRICTED_ROLES)
+    caller_roles = getattr(current_user, "roles", []) or []
+    if not any(r in allowed_roles for r in caller_roles):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "INSUFFICIENT_PERMISSIONS",
+                "message": (
+                    f"Caller lacks required roles to approve ingestion. "
+                    f"Required one of: {sorted(allowed_roles)}. Assigned roles: {caller_roles}."
+                ),
+            },
+        )
+
+    # 3. Server-derived identity
+    approver_sub = (
+        getattr(current_user, "preferred_username", None)
+        or getattr(current_user, "sub", None)
+        or "authenticated-operator"
+    )
+    approver_roles = caller_roles
+
+    # 4. Resolve SQL service and check warehouse status (Zero-Mutation Guardrail)
+    sql_svc = service._get_sql_service_for_workspace(request.workspace_id)
+    wh_health = sql_svc.check_warehouse_status()
+
+    # 5. Build validated statement
+    run_req_for_stmt = IngestionRunCreateRequest(
+        workspace_id=request.workspace_id,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        source_table=request.source_table,
+        limit=request.limit,
+    )
+    sql_stmt, source_table = service._build_statement(run_req_for_stmt)
+
+    # If warehouse is STOPPED, generate audit approval record but fail closed without compute mutation
+    if wh_health.warehouse_state == "STOPPED" or "STOPPED" in str(wh_health.status).upper():
+        token = sql_svc.issue_approval_token(
+            query=sql_stmt,
+            warehouse_id=wh_health.warehouse_id,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            ttl_seconds=300,
+            approver_sub=approver_sub,
+            approver_roles=approver_roles,
+            max_rows=request.limit,
+            approval_purpose=request.approval_purpose,
+            session=_as_ledger(ledger),
+        )
+        token_id = f"tok-{token.split(':')[1]}" if token.startswith("v2:") else "tok-audit"
+        return ApproveAndRunIngestionResponse(
+            run_id=f"run-{uuid.uuid4().hex[:8]}",
+            workspace_id=request.workspace_id,
+            source_table=request.source_table,
+            status="failed",
+            approver_sub=approver_sub,
+            approval_token_id=token_id,
+            warehouse_id=wh_health.warehouse_id,
+            warehouse_status=wh_health.warehouse_state or wh_health.status,
+            extracted_count=0,
+            inserted_count=0,
+            duplicate_count=0,
+            retraction_count=0,
+            error_count=0,
+            persisted_to_db_count=0,
+            result_complete=False,
+            error_code="WAREHOUSE_STOPPED",
+            error_message=(
+                f"Execution blocked: Target SQL Warehouse '{wh_health.warehouse_name}' "
+                f"({wh_health.warehouse_id}) is STOPPED. Auto-resume is prohibited under FinOps "
+                "zero-execution guardrails. Please start the warehouse in Databricks before running ingestion."
+            ),
+            reconciliation_status="NO_DATA",
+            started_at=datetime.now(UTC).isoformat(),
+            completed_at=datetime.now(UTC).isoformat(),
+        )
+
+    # Warehouse is RUNNING (or mock/test mode): issue token and run ingestion internally
+    token = sql_svc.issue_approval_token(
+        query=sql_stmt,
+        warehouse_id=wh_health.warehouse_id,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        ttl_seconds=300,
+        approver_sub=approver_sub,
+        approver_roles=approver_roles,
+        max_rows=request.limit,
+        approval_purpose=request.approval_purpose,
+        session=_as_ledger(ledger),
+    )
+    token_id = f"tok-{token.split(':')[1]}" if token.startswith("v2:") else "tok-audit"
+
+    # Execute ingestion internally using the server-generated token
+    approved_run_req = IngestionRunCreateRequest(
+        workspace_id=request.workspace_id,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        source_table=request.source_table,
+        limit=request.limit,
+        is_approved=True,
+        approval_token=token,
+    )
+    run_res = service.run_ingestion(approved_run_req, ledger=_as_ledger(ledger))
+
+    # Newly ingested records were persisted to the database ledger during run_ingestion
+    persisted_count = run_res.inserted_count
+
+    recon = service.get_billing_reconciliation(workspace_id=request.workspace_id)
+
+    return ApproveAndRunIngestionResponse(
+        run_id=run_res.run_id,
+        workspace_id=request.workspace_id,
+        source_table=request.source_table,
+        status=run_res.status,
+        approver_sub=approver_sub,
+        approval_token_id=token_id,
+        warehouse_id=wh_health.warehouse_id,
+        warehouse_status=wh_health.warehouse_state or wh_health.status,
+        extracted_count=run_res.extracted_count,
+        inserted_count=run_res.inserted_count,
+        duplicate_count=run_res.duplicate_count,
+        retraction_count=run_res.retraction_count,
+        error_count=run_res.error_count,
+        persisted_to_db_count=persisted_count,
+        result_complete=run_res.result_complete,
+        error_code=run_res.error_code,
+        error_message=run_res.error_message,
+        reconciliation_status=recon.reconciliation_status,
+        started_at=run_res.started_at,
+        completed_at=run_res.completed_at,
+    )
+
+
+def _ensure_loaded(service: BillingIngestionService, ledger: Any) -> None:
+    """Ensure in-memory stores are populated from PostgreSQL if available."""
+    l_handle = _as_ledger(ledger)
+    if l_handle is not None and not service._usage_store:
+        service.load_persisted_records(l_handle)
+    if l_handle is not None and not service._price_store:
+        service.load_persisted_price_records(l_handle)
+
+
 @router.get("/billing/summary", response_model=BillingSummaryResponse)
 def get_billing_summary(
     workspace_id: str = Query("642006393507276", description="Target workspace ID"),
     resource_id: str | None = Query(None, description="Exact resource ID filter"),
     resource_type: str | None = Query(None, description="Resource type filter"),
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingSummaryResponse:
     """Retrieve canonical DBU consumption and spend summary with exact scope filtering."""
+    _ensure_loaded(service, ledger)
     return service.get_billing_summary(
         workspace_id=_param(workspace_id, "642006393507276"),
         resource_id=_param(resource_id, None),
@@ -797,12 +976,14 @@ def get_billing_usage(
         False, description="Return {total, offset, limit, records} instead of a bare list"
     ),
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingUsageEnvelope | list[BillingUsageRecord]:
     """List normalized billing usage events with parameter filtering.
 
     Default response is the legacy bare list. ``envelope=true`` returns the paginated envelope
     the frontend contract expects (``total`` is the pre-pagination match count).
     """
+    _ensure_loaded(service, ledger)
     matches = service.list_usage_records(
         workspace_id=_param(workspace_id, "642006393507276"),
         sku_name=_param(sku_name, None),
@@ -833,8 +1014,10 @@ def get_billing_pricing(
     limit: int | None = Query(None, ge=1, description="Maximum number of records to return"),
     envelope: bool = Query(False, description="Return {total, records} instead of a bare list"),
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingPriceEnvelope | list[BillingPriceRecord]:
     """List the ingested rate card (empty until an approved list_prices ingestion)."""
+    _ensure_loaded(service, ledger)
     prices = service.list_price_records()
     sku = _param(sku_name, None)
     if sku:
@@ -852,6 +1035,33 @@ def get_billing_pricing(
 def get_billing_reconciliation(
     workspace_id: str = Query("642006393507276", description="Target workspace ID"),
     service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
 ) -> BillingReconciliationResponse:
     """Retrieve mathematical reconciliation between usage records, list prices, and retractions."""
+    _ensure_loaded(service, ledger)
     return service.get_billing_reconciliation(workspace_id=workspace_id)
+
+
+@router.get("/billing/checkpoint")
+def get_billing_checkpoint(
+    workspace_id: str = Query("642006393507276", description="Target workspace ID"),
+    table_name: str = Query("system.billing.usage", description="System table name"),
+    service: BillingIngestionService = Depends(get_billing_service),
+    ledger: Any = Depends(get_billing_ledger),
+) -> dict[str, Any]:
+    """Retrieve high-watermark checkpoint for incremental ingestion tracking."""
+    l_handle = _as_ledger(ledger)
+    cp = service.get_checkpoint_from_db(
+        workspace_id=workspace_id, table_name=table_name, ledger=l_handle
+    )
+    if cp is None:
+        return {
+            "workspace_id": workspace_id,
+            "table_name": table_name,
+            "status": "NO_CHECKPOINT",
+            "high_watermark_timestamp": None,
+            "latest_usage_date": None,
+            "records_ingested_total": 0,
+            "last_checkpoint_at": None,
+        }
+    return {"status": "CHECKPOINT_ACTIVE", **cp}

@@ -56,6 +56,7 @@ from cloud_recommender.services.databricks.sql_client import (
     DatabricksSqlService,
     StatementIncompleteError,
     WarehouseStoppedError,
+    _ledger_call,
 )
 from cloud_recommender.services.databricks.workspace_service import (
     DatabricksWorkspaceService,
@@ -378,6 +379,8 @@ class BillingIngestionService:
                 **kw,
             )
             self._runs_store.append(res)
+            if ledger is not None:
+                self.persist_ingestion_run_to_db(res, ledger)
             return res
 
         sql_stmt, source_table = self._build_statement(request)
@@ -439,6 +442,8 @@ class BillingIngestionService:
                     else:
                         prices.append(price)
                 price_stats = self.ingest_price_records(prices)
+                if ledger is not None:
+                    self.persist_price_records_to_db(prices, ledger)
                 return _run(
                     run_status,
                     extracted_count=len(raw_rows),
@@ -457,6 +462,12 @@ class BillingIngestionService:
                 else:
                     parsed.append(rec)
             stats = self.ingest_records(parsed)
+            if ledger is not None:
+                self.persist_usage_records_to_db(parsed, ledger)
+                if parsed:
+                    self.persist_checkpoint_to_db(
+                        request.workspace_id, request.source_table, parsed, ledger
+                    )
             return _run(
                 run_status,
                 extracted_count=len(raw_rows),
@@ -706,6 +717,362 @@ class BillingIngestionService:
             "inserted_count": inserted,
             "duplicate_count": duplicates,
         }
+
+    # ------------------------------------------------------------------ persistence
+
+    def persist_usage_records_to_db(self, records: list[BillingUsageRecord], ledger: Any) -> int:
+        """Persist normalized usage records to PostgreSQL billing_usage_records idempotently."""
+        if ledger is None or not records:
+            return 0
+        from sqlalchemy import select
+
+        from cloud_recommender.db.models import BillingUsageRecordModel
+
+        def _persist(sync_session: Any) -> int:
+            saved = 0
+            for r in records:
+                existing = sync_session.execute(
+                    select(BillingUsageRecordModel.id).where(
+                        BillingUsageRecordModel.record_id == r.record_id,
+                        BillingUsageRecordModel.source_row_hash == (r.source_row_hash or ""),
+                    )
+                ).scalar_one_or_none()
+                if existing is not None:
+                    continue
+                start_dt = parse_timestamp(r.usage_start_time) or datetime.now(UTC)
+                end_dt = parse_timestamp(r.usage_end_time) or datetime.now(UTC)
+                model = BillingUsageRecordModel(
+                    record_id=r.record_id,
+                    source_row_hash=r.source_row_hash or "",
+                    workspace_id=r.workspace_id,
+                    account_id=r.account_id,
+                    sku_name=r.sku_name,
+                    cloud=r.cloud,
+                    usage_start_time=start_dt,
+                    usage_end_time=end_dt,
+                    usage_date=r.usage_date,
+                    usage_unit=r.usage_unit,
+                    usage_quantity=r.usage_quantity,
+                    record_type=r.record_type,
+                    ingestion_date=r.ingestion_date,
+                    billing_origin_product=r.billing_origin_product,
+                    product_features_json=r.product_features,
+                    usage_metadata_json=r.usage_metadata,
+                    custom_tags_json=r.custom_tags,
+                    resource_type=r.resource_type,
+                    resource_id=r.resource_id,
+                    pricing_matched=r.pricing_matched,
+                    effective_cost=r.effective_cost,
+                    currency=r.currency,
+                    price_tier=r.price_tier,
+                    cost_basis=r.cost_basis.value
+                    if hasattr(r.cost_basis, "value")
+                    else str(r.cost_basis),
+                    match_status=r.match_status.value
+                    if hasattr(r.match_status, "value")
+                    else str(r.match_status),
+                )
+                sync_session.add(model)
+                saved += 1
+            if saved > 0:
+                try:
+                    sync_session.commit()
+                except Exception:
+                    sync_session.rollback()
+                    raise
+            return saved
+
+        try:
+            return _ledger_call(ledger, _persist)
+        except Exception as exc:
+            logger.warning("persist_usage_records_to_db_failed", error=str(exc))
+            return 0
+
+    def persist_price_records_to_db(self, prices: list[BillingPriceRecord], ledger: Any) -> int:
+        """Persist price records to PostgreSQL billing_price_records idempotently."""
+        if ledger is None or not prices:
+            return 0
+        from sqlalchemy import select
+
+        from cloud_recommender.db.models import BillingPriceRecordModel
+
+        def _persist(sync_session: Any) -> int:
+            saved = 0
+            for p in prices:
+                start_dt = parse_timestamp(p.price_start_time) or datetime.now(UTC)
+                end_dt = parse_timestamp(p.price_end_time) if p.price_end_time else None
+                existing = sync_session.execute(
+                    select(BillingPriceRecordModel.id).where(
+                        BillingPriceRecordModel.sku_name == p.sku_name,
+                        BillingPriceRecordModel.cloud == p.cloud,
+                        BillingPriceRecordModel.currency_code == p.currency_code,
+                        BillingPriceRecordModel.usage_unit == p.usage_unit,
+                        BillingPriceRecordModel.price_start_time == start_dt,
+                    )
+                ).scalar_one_or_none()
+                if existing is not None:
+                    continue
+                model = BillingPriceRecordModel(
+                    account_id=p.account_id,
+                    sku_name=p.sku_name,
+                    cloud=p.cloud,
+                    currency_code=p.currency_code,
+                    usage_unit=p.usage_unit,
+                    price_default=p.price_default,
+                    price_promotional=p.price_promotional,
+                    price_effective_list=p.price_effective_list,
+                    price_start_time=start_dt,
+                    price_end_time=end_dt,
+                )
+                sync_session.add(model)
+                saved += 1
+            if saved > 0:
+                try:
+                    sync_session.commit()
+                except Exception:
+                    sync_session.rollback()
+                    raise
+            return saved
+
+        try:
+            return _ledger_call(ledger, _persist)
+        except Exception as exc:
+            logger.warning("persist_price_records_to_db_failed", error=str(exc))
+            return 0
+
+    def persist_ingestion_run_to_db(self, run: BillingIngestionRunResponse, ledger: Any) -> None:
+        """Persist run audit log to PostgreSQL billing_ingestion_runs."""
+        if ledger is None:
+            return
+        from cloud_recommender.db.models import BillingIngestionRunModel
+
+        def _persist(sync_session: Any) -> None:
+            start_dt = parse_timestamp(run.started_at) or datetime.now(UTC)
+            comp_dt = parse_timestamp(run.completed_at) if run.completed_at else None
+            model = BillingIngestionRunModel(
+                run_id=run.run_id,
+                workspace_id=run.workspace_id,
+                source_table=run.source_table,
+                requested_period_start=run.requested_period_start,
+                requested_period_end=run.requested_period_end,
+                started_at=start_dt,
+                completed_at=comp_dt,
+                status=run.status,
+                extracted_count=run.extracted_count,
+                inserted_count=run.inserted_count,
+                duplicate_count=run.duplicate_count,
+                retraction_count=run.retraction_count,
+                error_count=run.error_count,
+                shared_record_id_count=run.shared_record_id_count,
+                result_complete=run.result_complete,
+                error_code=run.error_code,
+                error_message=run.error_message,
+            )
+            sync_session.add(model)
+            try:
+                sync_session.commit()
+            except Exception:
+                sync_session.rollback()
+                raise
+
+        try:
+            _ledger_call(ledger, _persist)
+        except Exception as exc:
+            logger.warning("persist_ingestion_run_to_db_failed", error=str(exc))
+
+    def load_persisted_records(self, ledger: Any) -> int:
+        """Load records from PostgreSQL billing_usage_records into in-memory _usage_store."""
+        if ledger is None:
+            return 0
+        from sqlalchemy import select
+
+        from cloud_recommender.db.models import BillingUsageRecordModel
+
+        def _load(sync_session: Any) -> list[BillingUsageRecord]:
+            stmt = select(BillingUsageRecordModel)
+            db_records = sync_session.execute(stmt).scalars().all()
+            loaded: list[BillingUsageRecord] = []
+            for m in db_records:
+                rec = BillingUsageRecord(
+                    record_id=m.record_id,
+                    workspace_id=m.workspace_id,
+                    account_id=m.account_id,
+                    sku_name=m.sku_name,
+                    cloud=m.cloud,
+                    usage_start_time=m.usage_start_time.isoformat(),
+                    usage_end_time=m.usage_end_time.isoformat(),
+                    usage_date=m.usage_date,
+                    usage_unit=m.usage_unit,
+                    usage_quantity=m.usage_quantity,
+                    record_type=m.record_type,
+                    ingestion_date=m.ingestion_date,
+                    billing_origin_product=m.billing_origin_product,
+                    product_features=getattr(m, "product_features_json", {}) or {},
+                    usage_metadata=getattr(m, "usage_metadata_json", {}) or {},
+                    custom_tags=getattr(m, "custom_tags_json", {}) or {},
+                    effective_cost=m.effective_cost,
+                    pricing_matched=m.pricing_matched,
+                    currency=m.currency,
+                    price_tier=m.price_tier,
+                    cost_basis=CostBasis(m.cost_basis) if m.cost_basis else CostBasis.METERED_USAGE,
+                    match_status=MatchStatus(m.match_status)
+                    if m.match_status
+                    else MatchStatus.NO_PRICE,
+                    resource_type=m.resource_type,
+                    resource_id=m.resource_id,
+                    source_row_hash=m.source_row_hash,
+                )
+                loaded.append(rec)
+            return loaded
+
+        try:
+            records = _ledger_call(ledger, _load)
+            for r in records:
+                self._usage_store[r.record_id] = r
+            return len(records)
+        except Exception as exc:
+            logger.warning("load_persisted_records_failed", error=str(exc))
+            return 0
+
+    def load_persisted_price_records(self, ledger: Any) -> int:
+        """Load records from PostgreSQL billing_price_records into in-memory _price_store."""
+        if ledger is None:
+            return 0
+        from sqlalchemy import select
+
+        from cloud_recommender.db.models import BillingPriceRecordModel
+
+        def _load(sync_session: Any) -> list[BillingPriceRecord]:
+            stmt = select(BillingPriceRecordModel)
+            db_records = sync_session.execute(stmt).scalars().all()
+            loaded: list[BillingPriceRecord] = []
+            for m in db_records:
+                rec = BillingPriceRecord(
+                    sku_name=m.sku_name,
+                    cloud=m.cloud,
+                    currency_code=m.currency_code,
+                    price_default=m.price_default,
+                    price_promotional=m.price_promotional,
+                    price_effective_list=m.price_effective_list,
+                    usage_unit=m.usage_unit,
+                    price_start_time=m.price_start_time.isoformat(),
+                    price_end_time=m.price_end_time.isoformat() if m.price_end_time else None,
+                    account_id=m.account_id,
+                )
+                loaded.append(rec)
+            return loaded
+
+        try:
+            prices = _ledger_call(ledger, _load)
+            if prices:
+                self.ingest_price_records(prices)
+            return len(prices)
+        except Exception as exc:
+            logger.warning("load_persisted_price_records_failed", error=str(exc))
+            return 0
+
+    def persist_checkpoint_to_db(
+        self,
+        workspace_id: str,
+        table_name: str,
+        records: list[BillingUsageRecord],
+        ledger: Any,
+    ) -> None:
+        """Persist or update high-watermark checkpoint in billing_source_checkpoints."""
+        if ledger is None or not records:
+            return
+        from sqlalchemy import select
+
+        from cloud_recommender.db.models import BillingSourceCheckpointModel
+
+        latest_date = max((r.usage_date for r in records if r.usage_date), default=None)
+        latest_ts = None
+        for r in records:
+            dt = parse_timestamp(r.usage_end_time)
+            if dt and (latest_ts is None or dt > latest_ts):
+                latest_ts = dt
+
+        def _norm(dt: datetime | None) -> datetime | None:
+            if dt is None:
+                return None
+            return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+        def _persist(sync_session: Any) -> None:
+            stmt = select(BillingSourceCheckpointModel).where(
+                BillingSourceCheckpointModel.workspace_id == workspace_id,
+                BillingSourceCheckpointModel.table_name == table_name,
+            )
+            cp = sync_session.execute(stmt).scalar_one_or_none()
+            if cp is None:
+                cp = BillingSourceCheckpointModel(
+                    workspace_id=workspace_id,
+                    table_name=table_name,
+                    high_watermark_timestamp=_norm(latest_ts),
+                    latest_usage_date=latest_date,
+                    records_ingested_total=len(records),
+                )
+                sync_session.add(cp)
+            else:
+                cp_ts = _norm(cp.high_watermark_timestamp)
+                cur_ts = _norm(latest_ts)
+                if cur_ts and (cp_ts is None or cur_ts > cp_ts):
+                    cp.high_watermark_timestamp = cur_ts
+                if latest_date and (
+                    cp.latest_usage_date is None or latest_date > cp.latest_usage_date
+                ):
+                    cp.latest_usage_date = latest_date
+                cp.records_ingested_total += len(records)
+                cp.last_checkpoint_at = datetime.now(UTC)
+            try:
+                sync_session.commit()
+            except Exception:
+                sync_session.rollback()
+                raise
+
+        try:
+            _ledger_call(ledger, _persist)
+        except Exception as exc:
+            logger.warning("persist_checkpoint_to_db_failed", error=str(exc))
+
+    def get_checkpoint_from_db(
+        self,
+        workspace_id: str,
+        table_name: str,
+        ledger: Any,
+    ) -> dict[str, Any] | None:
+        """Retrieve latest high-watermark checkpoint for workspace and table."""
+        if ledger is None:
+            return None
+        from sqlalchemy import select
+
+        from cloud_recommender.db.models import BillingSourceCheckpointModel
+
+        def _get(sync_session: Any) -> dict[str, Any] | None:
+            stmt = select(BillingSourceCheckpointModel).where(
+                BillingSourceCheckpointModel.workspace_id == workspace_id,
+                BillingSourceCheckpointModel.table_name == table_name,
+            )
+            cp = sync_session.execute(stmt).scalar_one_or_none()
+            if cp is None:
+                return None
+            return {
+                "workspace_id": cp.workspace_id,
+                "table_name": cp.table_name,
+                "high_watermark_timestamp": (
+                    cp.high_watermark_timestamp.isoformat() if cp.high_watermark_timestamp else None
+                ),
+                "latest_usage_date": cp.latest_usage_date,
+                "records_ingested_total": cp.records_ingested_total,
+                "last_checkpoint_at": (
+                    cp.last_checkpoint_at.isoformat() if cp.last_checkpoint_at else None
+                ),
+            }
+
+        try:
+            return _ledger_call(ledger, _get)
+        except Exception as exc:
+            logger.warning("get_checkpoint_from_db_failed", error=str(exc))
+            return None
 
     # ------------------------------------------------------------------ summary
 

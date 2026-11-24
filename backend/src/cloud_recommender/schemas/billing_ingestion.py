@@ -532,3 +532,90 @@ class BillingApprovalTokenResponse(BaseModel):
     )
     expires_at: str = Field(..., description="Expiry timestamp in ISO 8601")
     status: str = Field(default="ISSUED", description="ISSUED, EXPIRED, or CONSUMED")
+
+
+class ApproveAndRunIngestionRequest(BaseModel):
+    """Payload to trigger application-managed ingestion approval and execution."""
+
+    workspace_id: str = Field(
+        default="642006393507276", description="Target Databricks workspace ID (digits only)"
+    )
+    start_date: str = Field(
+        default_factory=_default_window_start, description="Start date YYYY-MM-DD"
+    )
+    end_date: str = Field(default_factory=_default_window_end, description="End date YYYY-MM-DD")
+    source_table: Literal["system.billing.usage", "system.billing.list_prices"] = Field(
+        default="system.billing.usage", description="Allow-listed billing system table to ingest"
+    )
+    limit: int = Field(default=1000, ge=1, le=50000, description="Bounded row limit")
+    approval_purpose: str = Field(
+        default="Application-managed operator approval for Databricks billing ingestion",
+        description="Auditable approval justification",
+    )
+
+    @field_validator("workspace_id")
+    @classmethod
+    def _check_workspace(cls, v: str) -> str:
+        try:
+            return validate_workspace_id(v)
+        except BillingQueryValidationError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _check_dates(cls, v: str) -> str:
+        try:
+            return validate_iso_date(v)
+        except BillingQueryValidationError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("limit")
+    @classmethod
+    def _check_limit(cls, v: int) -> int:
+        try:
+            return validate_limit(v)
+        except BillingQueryValidationError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @model_validator(mode="after")
+    def _check_window(self) -> "ApproveAndRunIngestionRequest":
+        if self.start_date > self.end_date:
+            raise ValueError("start_date must not be after end_date.")
+        return self
+
+
+class ApproveAndRunIngestionResponse(BaseModel):
+    """Result of application-managed ingestion approval and run without secret leakage."""
+
+    run_id: str = Field(..., description="Unique run identifier")
+    workspace_id: str = Field(..., description="Target workspace ID")
+    source_table: str = Field(default="system.billing.usage", description="Primary source table")
+    status: str = Field(..., description="completed, incomplete, failed, or approval_required")
+    approver_sub: str = Field(..., description="Server-verified approver identity")
+    approval_token_id: str = Field(
+        ..., description="Auditable token ID (token secret is never exposed)"
+    )
+    warehouse_id: str = Field(default="05ed10a52697a344", description="Target SQL warehouse ID")
+    warehouse_status: str = Field(
+        ..., description="Observed warehouse status (e.g. WAREHOUSE_STOPPED, AVAILABLE)"
+    )
+    extracted_count: int = Field(default=0, description="Rows extracted from System Tables")
+    inserted_count: int = Field(default=0, description="Rows inserted into repository")
+    duplicate_count: int = Field(default=0, description="Duplicate rows skipped")
+    retraction_count: int = Field(default=0, description="Retraction rows handled")
+    error_count: int = Field(default=0, description="Malformed rows skipped")
+    persisted_to_db_count: int = Field(
+        default=0, description="Rows persisted to PostgreSQL billing_usage_records"
+    )
+    result_complete: bool | None = Field(
+        default=None, description="Whether the extract was complete"
+    )
+    error_code: str | None = Field(default=None, description="Error code if failed")
+    error_message: str | None = Field(
+        default=None, description="Human-readable error or blocker message"
+    )
+    reconciliation_status: str | None = Field(
+        default=None, description="Reconciliation status after ingestion"
+    )
+    started_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    completed_at: str | None = Field(default=None)

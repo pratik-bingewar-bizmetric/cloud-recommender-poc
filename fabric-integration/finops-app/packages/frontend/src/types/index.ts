@@ -1095,6 +1095,38 @@ export interface IngestionRunSummaryResponse {
   error_message?: string | null;
 }
 
+export interface ApproveAndRunIngestionRequest {
+  workspace_id?: string;
+  start_date?: string;
+  end_date?: string;
+  source_table?: "system.billing.usage" | "system.billing.list_prices";
+  limit?: number;
+  approval_purpose?: string;
+}
+
+export interface ApproveAndRunIngestionResponse {
+  run_id: string;
+  workspace_id: string;
+  source_table: string;
+  status: "completed" | "incomplete" | "failed" | "approval_required";
+  approver_sub: string;
+  approval_token_id: string;
+  warehouse_id: string;
+  warehouse_status: string;
+  extracted_count: number;
+  inserted_count: number;
+  duplicate_count: number;
+  retraction_count: number;
+  error_count: number;
+  persisted_to_db_count: number;
+  result_complete?: boolean | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  reconciliation_status?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Milestone 6 Phase 3: Databricks Workspace Connectivity & Discovery Types
 // ---------------------------------------------------------------------------
