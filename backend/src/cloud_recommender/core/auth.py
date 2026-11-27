@@ -96,6 +96,10 @@ USER_NON_GET_ENDPOINTS: frozenset[str] = frozenset(
         f"{_ROUTES}.gcp.test_gcp_connection",
         f"{_ROUTES}.gcp.create_gcp_connection",
         f"{_ROUTES}.gcp.delete_gcp_connection",
+        # AWS connections and validation
+        f"{_ROUTES}.aws.test_aws_connection",
+        f"{_ROUTES}.aws.create_aws_connection",
+        f"{_ROUTES}.aws.delete_aws_connection",
     }
 )
 

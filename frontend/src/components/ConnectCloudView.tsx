@@ -53,8 +53,8 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // Top-Level Provider Filter: "all" | "azure" | "gcp"
-  const [providerFilter, setProviderFilter] = useState<"all" | "azure" | "gcp">("all");
+  // Top-Level Provider Filter: "all" | "azure" | "gcp" | "aws"
+  const [providerFilter, setProviderFilter] = useState<"all" | "azure" | "gcp" | "aws">("all");
 
   // Reconnection / Probe states
   const [activeValidatingConnId, setActiveValidatingConnId] = useState<string | null>(null);
@@ -74,11 +74,20 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
   const [isAddConnectionOpen, setIsAddConnectionOpen] = useState<boolean>(false);
 
   // Add Connection Form States
-  const [addEcosystem, setAddEcosystem] = useState<"azure" | "gcp">("azure");
+  const [addEcosystem, setAddEcosystem] = useState<"azure" | "gcp" | "aws">("azure");
   const [newConnName, setNewConnName] = useState<string>("");
   const [newScopeId, setNewScopeId] = useState<string>("");
   const [newTenantId, setNewTenantId] = useState<string>("");
   const [newAuthMethod, setNewAuthMethod] = useState<string>("service_principal");
+  // AWS specific fields
+  const [newAwsRegion, setNewAwsRegion] = useState<string>("eu-north-1");
+  const [newAwsAuthMethod, setNewAwsAuthMethod] = useState<string>("access_keys");
+  const [newAwsAccessKeyId, setNewAwsAccessKeyId] = useState<string>("");
+  const [newAwsSecretAccessKey, setNewAwsSecretAccessKey] = useState<string>("");
+  const [newAwsSessionToken, setNewAwsSessionToken] = useState<string>("");
+  const [newAwsProfile, setNewAwsProfile] = useState<string>("finops-dev");
+  const [newAwsRoleArn, setNewAwsRoleArn] = useState<string>("");
+  const [newAwsExternalId, setNewAwsExternalId] = useState<string>("");
   // Service principal credentials. The secret lives only in this component's state and is
   // cleared after a successful save; non-secret fields are kept after a failed attempt.
   const [newClientId, setNewClientId] = useState<string>("");
@@ -265,12 +274,21 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
     const isAzureSp = addEcosystem === "azure" && newAuthMethod === "service_principal";
     const missing: string[] = [];
     if (!newConnName.trim()) missing.push("Account name");
-    if (!newScopeId.trim()) missing.push(addEcosystem === "azure" ? "Subscription ID" : "Project ID");
+    if (!newScopeId.trim()) missing.push(addEcosystem === "azure" ? "Subscription ID" : addEcosystem === "aws" ? "AWS Account ID" : "Project ID");
     if (isAzureSp) {
       if (!GUID.test(newTenantId.trim())) missing.push("Tenant ID (GUID)");
       if (!GUID.test(newClientId.trim())) missing.push("Client ID (GUID)");
       if (!newClientSecret) missing.push("Client secret");
       if (addEcosystem === "azure" && !GUID.test(newScopeId.trim())) missing.push("Subscription ID (GUID)");
+    }
+    if (addEcosystem === "aws") {
+      if (!/^\d{12}$/.test(newScopeId.trim())) missing.push("12-digit AWS Account ID");
+      if (newAwsAuthMethod === "access_keys") {
+        if (!newAwsAccessKeyId.trim()) missing.push("AWS Access Key ID");
+        if (!newAwsSecretAccessKey) missing.push("AWS Secret Access Key");
+      } else if (newAwsAuthMethod === "assume_role") {
+        if (!newAwsRoleArn.trim()) missing.push("IAM Role ARN");
+      }
     }
     if (missing.length > 0) {
       setFormError({
@@ -303,9 +321,23 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                 : {}),
             }
           : {}),
+        ...(addEcosystem === "aws"
+          ? {
+              aws_account_id: newScopeId.trim(),
+              aws_region: newAwsRegion.trim() || "eu-north-1",
+              aws_auth_method: newAwsAuthMethod as CreateConnectionRequest["aws_auth_method"],
+              aws_access_key_id: newAwsAccessKeyId.trim() || undefined,
+              aws_secret_access_key: newAwsSecretAccessKey || undefined,
+              aws_session_token: newAwsSessionToken.trim() || undefined,
+              aws_profile: newAwsProfile.trim() || undefined,
+              aws_role_arn: newAwsRoleArn.trim() || undefined,
+              aws_external_id: newAwsExternalId.trim() || undefined,
+            }
+          : {}),
       };
       const created = await createConnection(req);
       setNewClientSecret(""); // clear the secret immediately after submission succeeded
+      setNewAwsSecretAccessKey("");
       await refreshConnections();
       if (created?.id) setActiveConnectionId(created.id);
       setIsAddConnectionOpen(false);
@@ -402,6 +434,11 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                 id: "azure" as const,
                 label: "Microsoft Azure",
                 count: connections.filter((c) => c.provider === "azure").length,
+              },
+              {
+                id: "aws" as const,
+                label: "Amazon Web Services",
+                count: connections.filter((c) => c.provider === "aws").length,
               },
               {
                 id: "gcp" as const,
@@ -516,6 +553,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
         {filteredConnections.map((conn) => {
           const isActive = conn.id === activeConnectionId;
           const isAzure = conn.provider === "azure";
+          const isAws = conn.provider === "aws";
           const isValidatingThis = activeValidatingConnId === conn.id && validationStep !== "idle";
 
           return (
@@ -535,10 +573,12 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                       className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shrink-0 shadow-2xs ${
                         isAzure
                           ? "bg-blue-600 text-white"
-                          : "bg-amber-600 text-white"
+                          : isAws
+                            ? "bg-orange-500 text-white"
+                            : "bg-amber-600 text-white"
                       }`}
                     >
-                      {isAzure ? "Az" : "GCP"}
+                      {isAzure ? "Az" : isAws ? "AWS" : "GCP"}
                     </div>
                     <div>
                       <h3 className="font-bold text-sm text-navy-950 flex items-center gap-2">
@@ -546,7 +586,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                       </h3>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[11px] font-semibold text-slate-500">
-                          {isAzure ? "Microsoft Azure" : "Google Cloud"}
+                          {isAzure ? "Microsoft Azure" : isAws ? "Amazon Web Services" : "Google Cloud"}
                         </span>
                         <span className="text-slate-300">&bull;</span>
                         <span className="text-[11px] font-medium text-slate-400">
@@ -963,14 +1003,14 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
                 1. Select Cloud Ecosystem
               </label>
-              <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="grid grid-cols-3 gap-2 text-xs">
                 <button
                   type="button"
                   onClick={() => {
                     setAddEcosystem("azure");
                     setNewAuthMethod("Azure CLI Credentials");
                   }}
-                  className={`p-3 rounded-xl border flex items-center gap-3 transition text-left ${
+                  className={`p-3 rounded-xl border flex items-center gap-2.5 transition text-left ${
                     addEcosystem === "azure"
                       ? "border-blue-500 bg-blue-50/50 text-blue-900 font-bold ring-2 ring-blue-500/20"
                       : "border-slate-200 hover:border-slate-300 text-slate-700"
@@ -980,8 +1020,30 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                     Az
                   </div>
                   <div>
-                    <div className="font-bold text-xs">Microsoft Azure</div>
-                    <div className="text-[10px] text-slate-500">ARM, Databricks, Fabric</div>
+                    <div className="font-bold text-xs">Azure</div>
+                    <div className="text-[10px] text-slate-500">ARM, Databricks</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddEcosystem("aws");
+                    setNewAuthMethod("access_keys");
+                    setNewAwsAuthMethod("access_keys");
+                  }}
+                  className={`p-3 rounded-xl border flex items-center gap-2.5 transition text-left ${
+                    addEcosystem === "aws"
+                      ? "border-orange-500 bg-orange-50/50 text-orange-900 font-bold ring-2 ring-orange-500/20"
+                      : "border-slate-200 hover:border-slate-300 text-slate-700"
+                  }`}
+                >
+                  <div className="w-8 h-8 rounded-lg bg-orange-500 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                    AWS
+                  </div>
+                  <div>
+                    <div className="font-bold text-xs">AWS</div>
+                    <div className="text-[10px] text-slate-500">EC2, S3, RDS</div>
                   </div>
                 </button>
 
@@ -991,7 +1053,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                     setAddEcosystem("gcp");
                     setNewAuthMethod("GCP Service Account");
                   }}
-                  className={`p-3 rounded-xl border flex items-center gap-3 transition text-left ${
+                  className={`p-3 rounded-xl border flex items-center gap-2.5 transition text-left ${
                     addEcosystem === "gcp"
                       ? "border-amber-500 bg-amber-50/50 text-amber-900 font-bold ring-2 ring-amber-500/20"
                       : "border-slate-200 hover:border-slate-300 text-slate-700"
@@ -1002,7 +1064,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                   </div>
                   <div>
                     <div className="font-bold text-xs">Google Cloud</div>
-                    <div className="text-[10px] text-slate-500">Projects, BigQuery, VMs</div>
+                    <div className="text-[10px] text-slate-500">Projects, BigQuery</div>
                   </div>
                 </button>
               </div>
@@ -1020,7 +1082,9 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                   placeholder={
                     addEcosystem === "azure"
                       ? "e.g. Azure Enterprise Production Subscription"
-                      : "e.g. Smart Expense GCP Production Project"
+                      : addEcosystem === "aws"
+                        ? "e.g. AWS Production Account (435305479688)"
+                        : "e.g. Smart Expense GCP Production Project"
                   }
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs focus:ring-1 focus:ring-brand-500 focus:outline-none"
                   required
@@ -1029,7 +1093,7 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
 
               <div>
                 <label className="block font-semibold text-navy-900 mb-1">
-                  {addEcosystem === "azure" ? "Azure Subscription ID" : "GCP Project ID"}
+                  {addEcosystem === "azure" ? "Azure Subscription ID" : addEcosystem === "aws" ? "AWS Account ID (12 Digits)" : "GCP Project ID"}
                 </label>
                 <input
                   type="text"
@@ -1038,37 +1102,60 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                   placeholder={
                     addEcosystem === "azure"
                       ? "Azure subscription ID (GUID)"
-                      : "e.g. smart-expense-prod-8812"
+                      : addEcosystem === "aws"
+                        ? "e.g. 435305479688"
+                        : "e.g. smart-expense-prod-8812"
                   }
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
                   required
                 />
               </div>
 
-              <div>
-                <label className="block font-semibold text-navy-900 mb-1">
-                  {addEcosystem === "azure" ? "Azure Tenant ID" : "GCP Organization ID (Optional)"}
-                </label>
-                <input
-                  type="text"
-                  value={newTenantId}
-                  onChange={(e) => setNewTenantId(e.target.value)}
-                  placeholder={
-                    addEcosystem === "azure"
-                      ? "e.g. fe82a67c-faa7-4d9a-bbfa-7d25b7047b41"
-                      : "e.g. organizations/44910293817"
-                  }
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
-                />
-              </div>
+              {addEcosystem === "aws" ? (
+                <div>
+                  <label className="block font-semibold text-navy-900 mb-1">
+                    Default Region
+                  </label>
+                  <input
+                    type="text"
+                    value={newAwsRegion}
+                    onChange={(e) => setNewAwsRegion(e.target.value)}
+                    placeholder="e.g. eu-north-1 or us-east-1"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block font-semibold text-navy-900 mb-1">
+                    {addEcosystem === "azure" ? "Azure Tenant ID" : "GCP Organization ID (Optional)"}
+                  </label>
+                  <input
+                    type="text"
+                    value={newTenantId}
+                    onChange={(e) => setNewTenantId(e.target.value)}
+                    placeholder={
+                      addEcosystem === "azure"
+                        ? "e.g. fe82a67c-faa7-4d9a-bbfa-7d25b7047b41"
+                        : "e.g. organizations/44910293817"
+                    }
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block font-semibold text-navy-900 mb-1">
                   Authentication Method
                 </label>
                 <select
-                  value={newAuthMethod}
-                  onChange={(e) => setNewAuthMethod(e.target.value)}
+                  value={addEcosystem === "aws" ? newAwsAuthMethod : newAuthMethod}
+                  onChange={(e) => {
+                    if (addEcosystem === "aws") {
+                      setNewAwsAuthMethod(e.target.value);
+                    } else {
+                      setNewAuthMethod(e.target.value);
+                    }
+                  }}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs bg-white focus:ring-1 focus:ring-brand-500 focus:outline-none font-medium"
                 >
                   {addEcosystem === "azure" ? (
@@ -1076,6 +1163,12 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                       <option value="service_principal">Service Principal (recommended; works everywhere)</option>
                       <option value="azure_cli">Azure CLI (local development only)</option>
                       <option value="managed_identity">Managed Identity (Azure-hosted backend only)</option>
+                    </>
+                  ) : addEcosystem === "aws" ? (
+                    <>
+                      <option value="access_keys">AWS Access Keys (Temporary / Reader IAM User)</option>
+                      <option value="profile">Local AWS CLI Profile (~/.aws/credentials)</option>
+                      <option value="assume_role">IAM Role Assumption (STS AssumeRole)</option>
                     </>
                   ) : (
                     <>
@@ -1085,6 +1178,103 @@ export const ConnectCloudView: React.FC<ConnectCloudViewProps> = ({
                   )}
                 </select>
               </div>
+
+              {addEcosystem === "aws" && newAwsAuthMethod === "access_keys" && (
+                <div className="space-y-3 p-3 rounded-xl border border-orange-100 bg-orange-50/40">
+                  <p className="text-[11px] text-slate-600">
+                    Use read-only IAM access keys. All credentials are encrypted using AES-256-GCM at rest.
+                  </p>
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      Access Key ID <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newAwsAccessKeyId}
+                      onChange={(e) => setNewAwsAccessKeyId(e.target.value)}
+                      placeholder="e.g. AKIA..."
+                      autoComplete="off"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      Secret Access Key <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={newAwsSecretAccessKey}
+                      onChange={(e) => setNewAwsSecretAccessKey(e.target.value)}
+                      placeholder="Secret access key value"
+                      autoComplete="new-password"
+                      spellCheck={false}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      Session Token (Optional)
+                    </label>
+                    <input
+                      type="password"
+                      value={newAwsSessionToken}
+                      onChange={(e) => setNewAwsSessionToken(e.target.value)}
+                      placeholder="Required only for temporary STS session credentials"
+                      autoComplete="off"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {addEcosystem === "aws" && newAwsAuthMethod === "profile" && (
+                <div className="space-y-3 p-3 rounded-xl border border-orange-100 bg-orange-50/40">
+                  <p className="text-[11px] text-slate-600">
+                    Uses local AWS credentials from <code>~/.aws/credentials</code>.
+                  </p>
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      Profile Name
+                    </label>
+                    <input
+                      type="text"
+                      value={newAwsProfile}
+                      onChange={(e) => setNewAwsProfile(e.target.value)}
+                      placeholder="finops-dev or default"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {addEcosystem === "aws" && newAwsAuthMethod === "assume_role" && (
+                <div className="space-y-3 p-3 rounded-xl border border-orange-100 bg-orange-50/40">
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      IAM Role ARN <span className="text-rose-600">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={newAwsRoleArn}
+                      onChange={(e) => setNewAwsRoleArn(e.target.value)}
+                      placeholder="arn:aws:iam::435305479688:role/finops-reader"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-navy-900 mb-1">
+                      External ID (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={newAwsExternalId}
+                      onChange={(e) => setNewAwsExternalId(e.target.value)}
+                      placeholder="STS AssumeRole External ID"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-xs font-mono focus:ring-1 focus:ring-brand-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
 
               {addEcosystem === "azure" && newAuthMethod === "service_principal" && (
                 <div className="space-y-3 p-3 rounded-xl border border-blue-100 bg-blue-50/40">

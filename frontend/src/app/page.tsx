@@ -23,8 +23,10 @@ import { SectionMultiCloudCompare } from "@/components/SectionMultiCloudCompare"
 import { ConnectCloudView } from "@/components/ConnectCloudView";
 import { SettingsModal } from "@/components/SettingsModal";
 import { ConfigurationView } from "@/components/ConfigurationView";
+import { AwsResourceDiscoveryView } from "@/components/AwsResourceDiscoveryView";
 import { DatabricksWorkspaceDetailView } from "@/components/DatabricksWorkspaceDetailView";
 import { FinOpsCommandCenterView } from "@/components/FinOpsCommandCenterView";
+import { NotificationSimulator } from "@/components/notifications/NotificationSimulator";
 import { TopLoadingProgressBar } from "@/components/shared/TopLoadingProgressBar";
 import { CloudScope, DatabricksModuleId } from "@/types/navigation";
 import {
@@ -601,20 +603,25 @@ export default function Home() {
           <ConnectCloudView
             onConnectionSelected={(conn) => {
               setActiveConnection(conn);
-              const isGcp = conn.provider === "gcp";
+              const prov = conn.provider;
               const newScope: CloudScope = {
-                provider: isGcp ? "gcp" : "azure",
-                scope_type: isGcp ? "all" : "azure_subscription",
+                provider: prov,
+                scope_type: prov === "azure" ? "azure_subscription" : "all",
                 account_id: conn.id,
                 tenant_id: conn.tenant_or_org_id || undefined,
-                subscription_ids: !isGcp ? [conn.scope_id] : undefined,
-                subscription_id: !isGcp ? conn.scope_id : undefined,
+                subscription_ids: prov === "azure" ? [conn.scope_id] : undefined,
+                subscription_id: prov === "azure" ? conn.scope_id : undefined,
+                region: prov === "aws" ? (conn.tenant_or_org_id || "eu-north-1") : undefined,
                 display_name: conn.display_name || conn.name,
                 is_multi_scope: false,
                 status: "connected",
               };
               handleUpdateCloudScope(newScope);
-              setActiveView("configuration");
+              if (prov === "aws") {
+                setActiveView("aws");
+              } else {
+                setActiveView("configuration");
+              }
             }}
           />
         </main>
@@ -672,14 +679,15 @@ export default function Home() {
           onSearchChange={setSearchQuery}
           connectedScope={{
             provider:
-              activeCloudScope.provider === "databricks" || activeCloudScope.provider === "mixed"
+              activeConnection?.provider ||
+              (activeCloudScope.provider === "databricks" || activeCloudScope.provider === "mixed"
                 ? "azure"
-                : activeCloudScope.provider,
-            name: activeCloudScope.display_name,
+                : activeCloudScope.provider),
+            name: activeConnection?.display_name || activeConnection?.name || activeCloudScope.display_name,
             id:
+              activeConnection?.scope_id ||
               activeCloudScope.workspace_id ||
               activeCloudScope.resource_group ||
-              activeConnection?.scope_id ||
               "-",
           }}
           onSwitchConnection={() => setActiveView("connections")}
@@ -1079,22 +1087,32 @@ export default function Home() {
               currentActiveConnectionId={activeConnection?.id ?? ""}
               onConnectionSelected={(conn) => {
                 setActiveConnection(conn);
-                const isGcp = conn.provider === "gcp";
+                const prov = conn.provider;
                 const newScope: CloudScope = {
-                  provider: isGcp ? "gcp" : "azure",
-                  scope_type: isGcp ? "all" : "azure_subscription",
-                  subscription_ids: !isGcp ? [conn.scope_id] : undefined,
-                  subscription_id: !isGcp ? conn.scope_id : undefined,
+                  provider: prov,
+                  scope_type: prov === "azure" ? "azure_subscription" : "all",
+                  account_id: conn.id,
+                  tenant_id: conn.tenant_or_org_id || undefined,
+                  subscription_ids: prov === "azure" ? [conn.scope_id] : undefined,
+                  subscription_id: prov === "azure" ? conn.scope_id : undefined,
+                  region: prov === "aws" ? (conn.tenant_or_org_id || "eu-north-1") : undefined,
                   display_name: conn.display_name || conn.name,
                   is_multi_scope: false,
                   status: "connected",
                 };
                 handleUpdateCloudScope(newScope);
-                setActiveView("configuration");
+                if (prov === "aws") {
+                  setActiveView("aws");
+                } else {
+                  setActiveView("configuration");
+                }
               }}
               onCancel={() => setActiveView("configuration")}
             />
           )}
+
+          {/* SCREEN 10C: AWS Dedicated Cloud Intelligence & Discovery */}
+          {activeView === "aws" && <AwsResourceDiscoveryView />}
 
           {/* SCREEN 11: Azure Databricks Multi-Module Workspace View (11 Operations Modules) */}
           {activeView === "databricks" && (() => {
@@ -1212,6 +1230,9 @@ export default function Home() {
         backendStatus={backendStatus}
         targetRegion={targetRegion}
       />
+
+      {/* Floating FinOps Notification Simulator */}
+      <NotificationSimulator />
     </div>
   );
 }

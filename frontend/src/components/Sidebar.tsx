@@ -48,7 +48,8 @@ export type ViewMode =
   | "configuration"
   | "databricks"
   | "finops"
-  | "connections";
+  | "connections"
+  | "aws";
 
 interface SidebarProps {
   currentView: ViewMode;
@@ -509,6 +510,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {!isCollapsed && <span className="truncate">Subscriptions</span>}
               </div>
             </button>
+
+            {/* AWS FinOps & Resource Discovery Tab */}
+            {activeScope?.provider === "aws" && (
+              <button
+                type="button"
+                onClick={() => handleNavClick("aws")}
+                title={isCollapsed ? "AWS Cloud Intelligence" : undefined}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition ${
+                  currentView === "aws"
+                    ? "bg-amber-50 text-amber-800 font-semibold border border-amber-200"
+                    : "text-navy-700 hover:bg-amber-50/50 hover:text-amber-900"
+                } ${isCollapsed ? "justify-center" : "justify-between"}`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className={currentView === "aws" ? "text-amber-600" : "text-slate-500"}>
+                    <Server className="w-4 h-4" />
+                  </span>
+                  {!isCollapsed && <span className="truncate">AWS Cloud Discovery</span>}
+                </div>
+                {!isCollapsed && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider bg-amber-100 text-amber-700">
+                    Live
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* EXPANDABLE MONITORING GROUP */}
             <div className="pt-0.5">

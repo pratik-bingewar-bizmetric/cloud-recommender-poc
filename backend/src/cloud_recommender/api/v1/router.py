@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from cloud_recommender.api.routes.analysis import router as analysis_router
 from cloud_recommender.api.routes.architecture import router as architecture_router
 from cloud_recommender.api.routes.auth import router as auth_router
+from cloud_recommender.api.routes.aws import router as aws_router
 from cloud_recommender.api.routes.azure_live import router as azure_live_router
 from cloud_recommender.api.routes.catalog import router as catalog_router
 from cloud_recommender.api.routes.configuration import router as configuration_router
@@ -58,3 +59,6 @@ api_v1_router.include_router(azure_live_router, dependencies=auth_deps)
 
 # Google Cloud Platform (GCP) Service Account authentication, connectivity, and discovery
 api_v1_router.include_router(gcp_router, dependencies=auth_deps)
+
+# Amazon Web Services (AWS) authentication, connectivity, resource discovery, and findings
+api_v1_router.include_router(aws_router, dependencies=auth_deps)

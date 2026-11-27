@@ -9,6 +9,8 @@ the user, validated directly with Microsoft Entra ID, and stored only as ciphert
 from __future__ import annotations
 
 import builtins
+import json
+import re
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -24,6 +26,11 @@ from cloud_recommender.db.repositories.connection_repo import (
     ConnectionRepository,
     DuplicateConnectionError,
     StoredConnection,
+)
+from cloud_recommender.schemas.aws import (
+    AwsConnectionResponse,
+    AwsServiceConnectivityState,
+    AwsServiceStatus,
 )
 from cloud_recommender.schemas.common import CloudProvider
 from cloud_recommender.schemas.connections import (
@@ -91,6 +98,36 @@ def to_gcp_connection_response(record: StoredConnection) -> GcpConnectionRespons
         project_id=record.scope_id,
         client_email=record.credential_client_id or "",
         private_key_id=str(record.integration_config.get("private_key_id", "")),
+        status=record.status,
+        billing_status="DEFERRED",
+        ownership="owned",
+        created_at=record.created_at,
+        last_verified_at=record.last_validated_at,
+        services=services,
+        warnings=list(last_val.get("warnings", [])),
+    )
+
+
+def to_aws_connection_response(record: StoredConnection) -> AwsConnectionResponse:
+    last_val = record.last_validation or {}
+    services_raw = last_val.get("services", [])
+    services: list[AwsServiceStatus] = []
+    for s in services_raw:
+        if isinstance(s, dict):
+            try:
+                services.append(AwsServiceStatus(**s))
+            except Exception:
+                pass
+        elif isinstance(s, AwsServiceStatus):
+            services.append(s)
+    return AwsConnectionResponse(
+        id=record.id,
+        name=record.name,
+        provider="aws",
+        account_id=record.scope_id,
+        arn=record.credential_client_id or f"arn:aws:iam::{record.scope_id}:caller",
+        default_region=record.credential_tenant_id or "eu-north-1",
+        auth_method=record.auth_method,
         status=record.status,
         billing_status="DEFERRED",
         ownership="owned",
@@ -171,6 +208,48 @@ class ConnectionManager:
                         else getattr(s, "details", {}),
                     )
                 )
+        elif record.provider == "aws":
+            services_data = validation.get("services", [])
+            integrations = []
+            for s in services_data:
+                state_val = s.get("status") if isinstance(s, dict) else getattr(s, "status", None)
+                if state_val is not None and hasattr(state_val, "value"):
+                    state_val = state_val.value
+                istate = (
+                    IntegrationState.CONNECTED
+                    if state_val == "SUCCESS"
+                    else (
+                        IntegrationState.DEFERRED
+                        if state_val == "DEFERRED"
+                        else (
+                            IntegrationState.PERMISSION_DENIED
+                            if state_val == "PERMISSION_DENIED"
+                            else (
+                                IntegrationState.NOT_CONFIGURED
+                                if state_val == "NOT_CONFIGURED"
+                                else IntegrationState.UNAVAILABLE
+                            )
+                        )
+                    )
+                )
+                svc_id = str(s.get("service") if isinstance(s, dict) else getattr(s, "service", ""))
+                svc_msg = s.get("message") if isinstance(s, dict) else getattr(s, "message", None)
+                svc_role = (
+                    s.get("required_role_or_permission")
+                    if isinstance(s, dict)
+                    else getattr(s, "required_role_or_permission", None)
+                )
+                integrations.append(
+                    IntegrationStatus(
+                        integration=svc_id,
+                        state=istate,
+                        message=svc_msg,
+                        required_permission=svc_role,
+                        details=s.get("details", {})
+                        if isinstance(s, dict)
+                        else getattr(s, "details", {}),
+                    )
+                )
         else:
             integrations = [IntegrationStatus(**i) for i in validation.get("integrations", [])]
 
@@ -188,6 +267,14 @@ class ConnectionManager:
             "cloud_monitoring": "metrics",
             "cloud_recommender": "recommendations",
             "service_usage": "service_usage",
+            "sts": "identity_verification",
+            "iam": "iam_security",
+            "ec2": "compute_instances",
+            "s3": "object_storage",
+            "lambda": "serverless_compute",
+            "rds": "relational_databases",
+            "cloudwatch": "monitoring_metrics",
+            "cost_explorer": "cost_explorer",
         }
         capabilities = [
             labels[i.integration]
@@ -375,9 +462,32 @@ class ConnectionManager:
             stored_gcp = await self._owned(owner_key, gcp_resp.id)
             return self._view(stored_gcp)
 
+        if req.provider == CloudProvider.AWS:
+            secret_key_val = (
+                req.aws_secret_access_key.get_secret_value() if req.aws_secret_access_key else ""
+            )
+            session_tok_val = (
+                req.aws_session_token.get_secret_value() if req.aws_session_token else ""
+            )
+            aws_resp = await self.create_aws(
+                owner_key=owner_key,
+                name=req.name,
+                account_id=req.scope_id or req.aws_account_id or "",
+                default_region=req.aws_region or "eu-north-1",
+                auth_method=req.aws_auth_method or "profile",
+                profile_name=req.aws_profile,
+                role_arn=req.aws_role_arn,
+                external_id=req.aws_external_id,
+                access_key_id=req.aws_access_key_id,
+                secret_access_key=secret_key_val,
+                session_token=session_tok_val,
+            )
+            stored_aws = await self._owned(owner_key, aws_resp.id)
+            return self._view(stored_aws)
+
         if req.provider != CloudProvider.AZURE:
             raise _err(
-                400, "UNSUPPORTED_PROVIDER", "Persistent connections support Azure and GCP only."
+                400, "UNSUPPORTED_PROVIDER", "Persistent connections support Azure, GCP, and AWS."
             )
         method = req.auth_method or AUTH_SP
         subscription_id = require_guid(req.scope_id, "scope_id (subscription ID)")
@@ -535,6 +645,54 @@ class ConnectionManager:
                 ],
             }
             record.status = status_str
+            record.last_validated_at = datetime.now(UTC)
+            return self._view(await self._repo.update(record))
+
+        if record.provider == "aws":
+            secret = self._decrypt(record)
+            from cloud_recommender.services.aws.connectivity_service import (
+                get_aws_connectivity_service,
+            )
+
+            cfg = record.integration_config or {}
+            sec_dict: dict[str, Any] = {}
+            if secret:
+                try:
+                    sec_dict = json.loads(secret)
+                except Exception:
+                    pass
+            aws_conn_service = get_aws_connectivity_service()
+            test_res_aws = await aws_conn_service.test_connection(
+                account_id=record.scope_id,
+                default_region=record.credential_tenant_id or "eu-north-1",
+                auth_method=record.auth_method,
+                profile_name=cfg.get("profile_name"),
+                role_arn=cfg.get("role_arn"),
+                external_id=cfg.get("external_id"),
+                access_key_id=cfg.get("access_key_id"),
+                secret_access_key=sec_dict.get("secret_access_key"),
+                session_token=sec_dict.get("session_token"),
+                connection_name=record.name,
+            )
+            aws_status_str = (
+                "connected"
+                if test_res_aws.overall_status in ("Connected", "Partially Connected")
+                else (
+                    "permission_denied"
+                    if test_res_aws.overall_status == "Permission Denied"
+                    else "auth_failed"
+                )
+            )
+            record.last_validation = {
+                "services": [s.model_dump(mode="json") for s in test_res_aws.services],
+                "overall_status": test_res_aws.overall_status,
+                "warnings": [
+                    s.message
+                    for s in test_res_aws.services
+                    if s.status != AwsServiceConnectivityState.SUCCESS and s.message
+                ],
+            }
+            record.status = aws_status_str
             record.last_validated_at = datetime.now(UTC)
             return self._view(await self._repo.update(record))
 
@@ -788,6 +946,178 @@ class ConnectionManager:
                 400, "MISSING_CREDENTIALS", "Stored GCP Service Account credentials not found."
             )
         return record, secret
+
+    # ------------------------------------------------------------- AWS Methods
+
+    async def create_aws(
+        self,
+        owner_key: str,
+        name: str,
+        account_id: str,
+        default_region: str = "eu-north-1",
+        auth_method: str = "profile",
+        profile_name: str | None = None,
+        role_arn: str | None = None,
+        external_id: str | None = None,
+        access_key_id: str | None = None,
+        secret_access_key: str | None = None,
+        session_token: str | None = None,
+    ) -> AwsConnectionResponse:
+        if not name or not name.strip() or len(name.strip()) < 2 or len(name.strip()) > 100:
+            raise _err(
+                422,
+                "INVALID_CONNECTION_NAME",
+                "Connection name must be between 2 and 100 characters.",
+            )
+        clean_account = (account_id or "").strip()
+        if not re.match(r"^\d{12}$", clean_account):
+            raise _err(
+                422,
+                "INVALID_ACCOUNT_ID",
+                "AWS Account ID must be a 12-digit number.",
+            )
+
+        existing = await self._repo.list(owner_key)
+        for ec in existing:
+            if ec.provider == "aws" and ec.scope_id.lower() == clean_account.lower():
+                raise _err(
+                    409,
+                    "DUPLICATE_CONNECTION",
+                    f"A connection for AWS account '{clean_account}' already exists.",
+                )
+
+        from cloud_recommender.services.aws.connectivity_service import (
+            get_aws_connectivity_service,
+        )
+
+        conn_service = get_aws_connectivity_service()
+        test_res = await conn_service.test_connection(
+            account_id=clean_account,
+            default_region=default_region,
+            auth_method=auth_method,
+            profile_name=profile_name,
+            role_arn=role_arn,
+            external_id=external_id,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
+            session_token=session_token,
+            connection_name=name.strip(),
+        )
+        if not test_res.success and test_res.overall_status in (
+            "Authentication Failed",
+            "Access Denied",
+        ):
+            raise _err(
+                400,
+                "AWS_VALIDATION_FAILED",
+                test_res.error_summary
+                or f"Failed to validate AWS account '{clean_account}': {test_res.overall_status}",
+            )
+
+        if await self._repo.count(owner_key) >= self._settings.connections_max_per_user:
+            raise _err(
+                409,
+                "CONNECTION_LIMIT_REACHED",
+                "Maximum number of connections reached. Delete one first.",
+            )
+
+        cipher = self._cipher()
+        connection_id = str(uuid.uuid4())
+
+        # Store secret payload encrypted if provided
+        secret_payload = json.dumps(
+            {
+                "secret_access_key": secret_access_key or "",
+                "session_token": session_token or "",
+            }
+        )
+        ciphertext, kid = cipher.encrypt(secret_payload, connection_id, owner_key)
+
+        status_str = (
+            "connected"
+            if test_res.overall_status in ("Connected", "Partially Connected")
+            else (
+                "permission_denied" if test_res.overall_status == "Access Denied" else "auth_failed"
+            )
+        )
+        record = StoredConnection(
+            id=connection_id,
+            owner_key=owner_key,
+            provider="aws",
+            auth_method=auth_method,
+            name=name.strip(),
+            scope_id=test_res.account_id,
+            credential_tenant_id=default_region,
+            credential_client_id=test_res.arn,
+            secret_ciphertext=ciphertext,
+            secret_kid=kid,
+            integration_config={
+                "profile_name": profile_name,
+                "role_arn": role_arn,
+                "external_id": external_id,
+                "access_key_id": access_key_id,
+                "default_region": default_region,
+            },
+            last_validation={
+                "services": [s.model_dump(mode="json") for s in test_res.services],
+                "overall_status": test_res.overall_status,
+                "warnings": [
+                    s.message
+                    for s in test_res.services
+                    if s.status != AwsServiceConnectivityState.SUCCESS and s.message
+                ],
+            },
+            status=status_str,
+            last_validated_at=datetime.now(UTC),
+        )
+        try:
+            stored = await self._repo.add(record)
+        except DuplicateConnectionError:
+            raise _err(
+                409,
+                "DUPLICATE_CONNECTION",
+                "You already have a connection for this AWS account.",
+            ) from None
+        logger.info(
+            "aws_connection_created",
+            connection_id=stored.id,
+            account_id=stored.scope_id,
+            arn=stored.credential_client_id,
+        )
+        return to_aws_connection_response(stored)
+
+    async def list_aws(self, owner_key: str) -> builtins.list[AwsConnectionResponse]:
+        records = await self._repo.list(owner_key)
+        return [to_aws_connection_response(r) for r in records if r.provider == "aws"]
+
+    async def get_aws(self, owner_key: str, connection_id: str) -> AwsConnectionResponse:
+        record = await self._owned(owner_key, connection_id)
+        if record.provider != "aws":
+            raise _err(
+                404,
+                "CONNECTION_NOT_FOUND",
+                f"Connection '{connection_id}' is not an AWS connection.",
+            )
+        return to_aws_connection_response(record)
+
+    async def decrypt_aws_secret(
+        self, owner_key: str, connection_id: str
+    ) -> tuple[StoredConnection, dict[str, Any]]:
+        record = await self._owned(owner_key, connection_id)
+        if record.provider != "aws":
+            raise _err(
+                404,
+                "CONNECTION_NOT_FOUND",
+                f"Connection '{connection_id}' is not an AWS connection.",
+            )
+        secret = self._decrypt(record)
+        data: dict[str, Any] = {}
+        if secret:
+            try:
+                data = json.loads(secret)
+            except Exception:
+                pass
+        return record, data
 
 
 def is_persistent_connection_id(value: str) -> bool:

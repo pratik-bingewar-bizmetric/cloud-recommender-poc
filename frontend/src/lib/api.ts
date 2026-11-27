@@ -1222,5 +1222,236 @@ export async function updateFinOpsAnomalyStatus(
   return handleResponse<{ anomaly_id: string; status: string; updated_at: string }>(res);
 }
 
+// ---------------------------------------------------------------------------
+// AWS Integration API Client
+// ---------------------------------------------------------------------------
+
+export async function testAwsConnection(data: {
+  account_id: string;
+  default_region?: string;
+  auth_method?: string;
+  access_key_id?: string;
+  secret_access_key?: string;
+  session_token?: string;
+  profile?: string;
+  role_arn?: string;
+  external_id?: string;
+}): Promise<import("@/types").AwsTestConnectionResponse> {
+  const res = await appFetch(`${API_BASE_URL}/aws/connections/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse<import("@/types").AwsTestConnectionResponse>(res);
+}
+
+export async function getAwsAccount(): Promise<import("@/types").AwsAccountIdentity> {
+  const res = await appFetch(`${API_BASE_URL}/aws/account`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsAccountIdentity>(res);
+}
+
+export async function getAwsRegions(params?: {
+  all_regions?: boolean;
+}): Promise<{ account_id: string; total_regions: number; regions: { region_name: string; opt_in_status: string }[] }> {
+  const query = params?.all_regions ? "?all_regions=true" : "";
+  const res = await appFetch(`${API_BASE_URL}/aws/regions${query}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<{ account_id: string; total_regions: number; regions: { region_name: string; opt_in_status: string }[] }>(res);
+}
+
+export async function getAwsResources(params?: {
+  region?: string;
+  category?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<import("@/types").AwsDiscoveryResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.region) searchParams.append("region", params.region);
+  if (params?.category) searchParams.append("category", params.category);
+  if (params?.skip !== undefined) searchParams.append("skip", String(params.skip));
+  if (params?.limit !== undefined) searchParams.append("limit", String(params.limit));
+  const qs = searchParams.toString();
+  const url = `${API_BASE_URL}/aws/resources${qs ? `?${qs}` : ""}`;
+  const res = await appFetch(url, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsDiscoveryResponse>(res);
+}
+
+export async function getAwsServicesStatus(): Promise<{ account_id: string; services: import("@/types").AwsServiceStatus[] }> {
+  const res = await appFetch(`${API_BASE_URL}/aws/services/status`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<{ account_id: string; services: import("@/types").AwsServiceStatus[] }>(res);
+}
+
+export async function getAwsFindings(): Promise<{ account_id: string; total_findings: number; findings: import("@/types").AwsFindingItem[] }> {
+  const res = await appFetch(`${API_BASE_URL}/aws/findings`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<{ account_id: string; total_findings: number; findings: import("@/types").AwsFindingItem[] }>(res);
+}
+
+export async function getAwsCostSummary(
+  metric?: import("@/types").AwsCostMetricType,
+  connectionId?: string
+): Promise<import("@/types").AwsCostSummary> {
+  const sp = new URLSearchParams();
+  if (metric) sp.append("metric", metric);
+  if (connectionId) sp.append("connection_id", connectionId);
+  const qs = sp.toString();
+  const res = await appFetch(`${API_BASE_URL}/aws/cost/summary${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsCostSummary>(res);
+}
+
+export async function getAwsCostTrend(
+  startDate: string,
+  endDate: string,
+  metric?: import("@/types").AwsCostMetricType,
+  granularity: "DAILY" | "MONTHLY" = "DAILY"
+): Promise<import("@/types").AwsCostRecord[]> {
+  const sp = new URLSearchParams({ start_date: startDate, end_date: endDate, granularity });
+  if (metric) sp.append("metric", metric);
+  const res = await appFetch(`${API_BASE_URL}/aws/cost/trend?${sp.toString()}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsCostRecord[]>(res);
+}
+
+export async function getAwsCostBreakdown(
+  startDate: string,
+  endDate: string,
+  dimension: string = "SERVICE",
+  metric?: import("@/types").AwsCostMetricType
+): Promise<import("@/types").AwsCostBreakdownItem[]> {
+  const sp = new URLSearchParams({ start_date: startDate, end_date: endDate, dimension });
+  if (metric) sp.append("metric", metric);
+  const res = await appFetch(`${API_BASE_URL}/aws/cost/breakdown?${sp.toString()}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsCostBreakdownItem[]>(res);
+}
+
+export async function getAwsCostForecast(
+  startDate: string,
+  endDate: string,
+  metric?: import("@/types").AwsCostMetricType
+): Promise<import("@/types").AwsCostForecast | null> {
+  const sp = new URLSearchParams({ start_date: startDate, end_date: endDate });
+  if (metric) sp.append("metric", metric);
+  const res = await appFetch(`${API_BASE_URL}/aws/cost/forecast?${sp.toString()}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsCostForecast | null>(res);
+}
+
+export async function getAwsMetricsSummary(
+  lookbackHours: number = 24
+): Promise<import("@/types").AwsResourceUtilizationSummary> {
+  const res = await appFetch(`${API_BASE_URL}/aws/metrics/summary?lookback_hours=${lookbackHours}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsResourceUtilizationSummary>(res);
+}
+
+export async function getAwsIndividualResourceMetrics(
+  resourceId: string,
+  lookbackHours: number = 24,
+  region: string = "eu-north-1",
+  resourceType: string = "AWS::Lambda::Function"
+): Promise<import("@/types").AwsResourceMetricSeries[]> {
+  const sp = new URLSearchParams({
+    lookback_hours: String(lookbackHours),
+    region,
+    resource_type: resourceType,
+  });
+  const res = await appFetch(
+    `${API_BASE_URL}/aws/metrics/${encodeURIComponent(resourceId)}?${sp.toString()}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  return handleResponse<import("@/types").AwsResourceMetricSeries[]>(res);
+}
+
+export async function getAwsPricingEstimate(
+  resourceType: string = "AWS::EC2::Instance",
+  region: string = "eu-north-1",
+  resourceName: string = "default-resource"
+): Promise<import("@/types").AwsPricingEstimate> {
+  const sp = new URLSearchParams({ resource_type: resourceType, region, resource_name: resourceName });
+  const res = await appFetch(`${API_BASE_URL}/aws/pricing/estimate?${sp.toString()}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsPricingEstimate>(res);
+}
+
+export async function getAwsCurReadiness(
+  bucket: string = "finops-cost-reports-435305479688"
+): Promise<import("@/types").AwsCurReadiness> {
+  const sp = new URLSearchParams({ bucket });
+  const res = await appFetch(`${API_BASE_URL}/aws/cur/readiness?${sp.toString()}`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsCurReadiness>(res);
+}
+
+export async function getAwsSyncHealth(): Promise<import("@/types").AwsSyncHealthStatus> {
+  const res = await appFetch(`${API_BASE_URL}/aws/sync/health`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsSyncHealthStatus>(res);
+}
+
+export async function previewAwsSync(
+  request: import("@/types").AwsSyncPreviewRequest
+): Promise<import("@/types").AwsSyncPreviewResponse> {
+  const res = await appFetch(`${API_BASE_URL}/aws/sync/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  return handleResponse<import("@/types").AwsSyncPreviewResponse>(res);
+}
+
+export async function approveAndRunAwsSync(
+  token: import("@/types").AwsSyncApprovalToken
+): Promise<import("@/types").AwsSyncRunResult> {
+  const res = await appFetch(`${API_BASE_URL}/aws/sync/approve-and-run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(token),
+  });
+  return handleResponse<import("@/types").AwsSyncRunResult>(res);
+}
+
+export async function getAwsSyncHistory(): Promise<import("@/types").AwsSyncRunResult[]> {
+  const res = await appFetch(`${API_BASE_URL}/aws/sync/history`, {
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+  });
+  return handleResponse<import("@/types").AwsSyncRunResult[]>(res);
+}
+
+
 
 

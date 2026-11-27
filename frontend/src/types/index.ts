@@ -810,6 +810,299 @@ export interface CreateConnectionRequest {
   gcp_project_id?: string;
   gcp_service_account_json?: string;
   gcp_access_token?: string;
+  aws_account_id?: string;
+  aws_auth_method?: "access_keys" | "profile" | "assume_role" | "workload_identity";
+  aws_region?: string;
+  aws_profile?: string;
+  aws_role_arn?: string;
+  aws_external_id?: string;
+  aws_access_key_id?: string;
+  aws_secret_access_key?: string;
+  aws_session_token?: string;
+}
+
+export interface AwsServiceStatus {
+  service: string;
+  service_name: string;
+  status: "SUCCESS" | "PERMISSION_DENIED" | "SERVICE_UNAVAILABLE" | "AUTHENTICATION_FAILED";
+  api_endpoint: string;
+  required_role_or_permission: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export interface AwsAccountIdentity {
+  account_id: string;
+  arn: string;
+  user_id: string;
+  account_alias?: string | null;
+  default_region: string;
+  auth_method: string;
+}
+
+export interface AwsResourceItem {
+  resource_id: string;
+  resource_name: string;
+  resource_type: string;
+  category: string;
+  account_id: string;
+  region: string;
+  state?: string | null;
+  details?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export type AwsEvidenceClassification =
+  | "VERIFIED_LIVE"
+  | "VERIFIED_MOCK"
+  | "INFERRED"
+  | "NOT_VERIFIED";
+
+export interface AwsFindingItem {
+  finding_id?: string;
+  id?: string;
+  category: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFORMATIONAL";
+  title: string;
+  description: string;
+  affected_resource_id?: string;
+  resource_id?: string;
+  account_id?: string;
+  region?: string;
+  source_api?: string;
+  evidence: Record<string, unknown>;
+  relevant_source_fields?: Record<string, unknown>;
+  remediation_recommendation?: string;
+  remediation_guidance?: string;
+  detected_at?: string;
+  observed_at?: string;
+  verified_status?: string;
+  verification_status?: AwsEvidenceClassification | string;
+  evidence_classification?: AwsEvidenceClassification;
+}
+
+export type AwsCostMetricType =
+  | "UnblendedCost"
+  | "AmortizedCost"
+  | "NetUnblendedCost"
+  | "NetAmortizedCost";
+
+export interface AwsCostRecord {
+  start_date: string;
+  end_date: string;
+  amount: number;
+  currency: string;
+  metric_type?: AwsCostMetricType;
+  is_estimated?: boolean;
+}
+
+export interface AwsCostBreakdownItem {
+  key: string;
+  amount: number;
+  percentage: number;
+  unit: string;
+}
+
+export interface AwsCostForecast {
+  forecast_amount: number;
+  prediction_interval_lower_bound?: number | null;
+  prediction_interval_upper_bound?: number | null;
+  start_date: string;
+  end_date: string;
+  currency: string;
+  confidence_level?: number;
+  is_prediction_interval_symmetric?: boolean;
+}
+
+export interface AwsCostSummary {
+  account_id: string;
+  metric_type: AwsCostMetricType;
+  currency: string;
+  current_month_to_date_cost?: number | null;
+  previous_month_cost?: number | null;
+  comparable_previous_month_to_date_cost?: number | null;
+  month_over_month_percentage_change?: number | null;
+  forecast?: AwsCostForecast | null;
+  daily_trend: AwsCostRecord[];
+  monthly_trend: AwsCostRecord[];
+  top_services: AwsCostBreakdownItem[];
+  region_breakdown: AwsCostBreakdownItem[];
+  tag_breakdown: AwsCostBreakdownItem[];
+  data_availability: string;
+  is_estimated?: boolean;
+  is_partial?: boolean;
+  truncation_reason?: string | null;
+  actual_cost_period_start?: string | null;
+  actual_cost_period_end?: string | null;
+  forecast_period_start?: string | null;
+  forecast_period_end?: string | null;
+  notes: string[];
+  observed_at: string;
+}
+
+export interface AwsMetricDataPoint {
+  timestamp: string;
+  value: number;
+  unit: string;
+  statistic: string;
+}
+
+export interface AwsResourceMetricSeries {
+  resource_id: string;
+  resource_type: string;
+  metric_name: string;
+  namespace: string;
+  unit: string;
+  data_points: AwsMetricDataPoint[];
+  latest_value?: number | null;
+  average_value?: number | null;
+  peak_value?: number | null;
+  period_seconds?: number;
+  status: "AVAILABLE" | "NO_DATA" | "PERMISSION_REQUIRED" | "INSTRUMENTATION_REQUIRED" | string;
+  notes?: string | null;
+}
+
+export interface AwsResourceUtilizationSummary {
+  account_id: string;
+  region: string;
+  observed_at: string;
+  resources_metrics: AwsResourceMetricSeries[];
+  total_metrics_evaluated: number;
+  instrumentation_required_count: number;
+}
+
+export interface AwsPricingEstimate {
+  service: string;
+  resource_type: string;
+  sku?: string | null;
+  region: string;
+  pricing_location: string;
+  instance_type_or_tier?: string | null;
+  hourly_rate: number;
+  monthly_estimated_rate: number;
+  pricing_unit: string;
+  currency: string;
+  observation_timestamp: string;
+  is_list_price: boolean;
+  pricing_source: string;
+}
+
+export interface AwsSyncPreviewRequest {
+  connection_id?: string;
+  account_id?: string;
+  regions?: string[];
+  services?: string[];
+  start_date: string;
+  end_date: string;
+  estimated_lambda_count?: number;
+  estimated_ec2_count?: number;
+}
+
+export interface AwsSyncPreviewResponse {
+  account_id: string;
+  connection_id: string;
+  selected_regions: string[];
+  selected_services: string[];
+  approved_operations?: string[];
+  start_date: string;
+  end_date: string;
+  max_cost_explorer_requests: number;
+  max_cloudwatch_queries: number;
+  max_total_requests: number;
+  estimated_api_cost_usd: number;
+  recommended_budget_usd: number;
+  expected_data_coverage: string;
+  warning_notice: string;
+  pricing_verification_date?: string;
+  pricing_source?: string;
+}
+
+export interface AwsSyncApprovalToken {
+  token_id: string;
+  tenant_id: string;
+  user_id: string;
+  connection_id: string;
+  account_id: string;
+  operation?: string;
+  approved_budget_usd: number;
+  max_requests: number;
+  max_metric_queries?: number;
+  regions?: string[];
+  approved_regions?: string[];
+  approved_services?: string[];
+  approved_operations?: string[];
+  start_date: string;
+  end_date: string;
+  estimated_cost_usd?: number;
+  expires_at_epoch: number;
+  plan_hash?: string;
+  canonical_plan?: Record<string, unknown>;
+  signature: string;
+}
+
+export interface AwsSyncRunResult {
+  run_id: string;
+  token_id: string;
+  status: "COMPLETED" | "BUDGET_EXHAUSTED" | "FAILED" | string;
+  account_id: string;
+  executed_requests: number;
+  max_budget_requests: number;
+  actual_api_cost_usd: number;
+  started_at: string;
+  completed_at: string;
+  services_synced: string[];
+  error_message?: string | null;
+}
+
+export interface AwsCurReadiness {
+  account_id: string;
+  has_cur: boolean;
+  has_data_exports: boolean;
+  destination_bucket?: string | null;
+  bucket_region?: string | null;
+  bucket_accessible: boolean;
+  report_name?: string | null;
+  report_format?: string | null;
+  delivery_frequency?: string | null;
+  status: "CONFIGURED" | "NOT_CONFIGURED" | "PERMISSION_REQUIRED" | "DEFERRED" | string;
+  notes: string[];
+  bulk_ingestion_status: string;
+}
+
+export interface AwsSyncHealthStatus {
+  account_id: string;
+  last_sync_time?: string | null;
+  last_sync_attempt: string;
+  services_synced: string[];
+  services_skipped: string[];
+  services_failed: string[];
+  data_freshness_status: string;
+  data_coverage_percentage: number;
+  chargeable_api_calls_executed: number;
+}
+
+export interface AwsDiscoveryResponse {
+  account_id: string;
+  identity?: AwsAccountIdentity | null;
+  default_region: string;
+  scanned_regions: string[];
+  total_resources: number;
+  resources: AwsResourceItem[];
+  findings: AwsFindingItem[];
+  monitoring?: Record<string, unknown> | null;
+  services_status: AwsServiceStatus[];
+  discovered_at: string;
+}
+
+export interface AwsTestConnectionResponse {
+  success: boolean;
+  account_id: string;
+  arn?: string | null;
+  default_region: string;
+  overall_status: string;
+  billing_status: string;
+  services: AwsServiceStatus[];
+  tested_at: string;
 }
 
 export interface UpdateConnectionRequest {

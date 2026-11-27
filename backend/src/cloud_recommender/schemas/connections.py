@@ -171,6 +171,30 @@ class CreateConnectionRequest(BaseModel):
     gcp_access_token: str | None = Field(
         default=None, description="Short-lived GCP OAuth2 access token."
     )
+    # AWS specific fields
+    aws_account_id: str | None = Field(default=None, description="12-digit AWS Account ID.")
+    aws_auth_method: Literal["profile", "role_arn", "access_keys", "instance_role"] | None = Field(
+        default=None, description="AWS authentication mechanism."
+    )
+    aws_profile: str | None = Field(
+        default=None, description="AWS CLI profile name for local development."
+    )
+    aws_role_arn: str | None = Field(
+        default=None, description="Target IAM Role ARN for AssumeRole."
+    )
+    aws_external_id: str | None = Field(
+        default=None, description="External ID for IAM role assumption."
+    )
+    aws_region: str | None = Field(
+        default="eu-north-1", description="Configured default AWS region."
+    )
+    aws_access_key_id: str | None = Field(default=None, description="AWS Access Key ID.")
+    aws_secret_access_key: SecretStr | None = Field(
+        default=None, description="AWS Secret Access Key (never stored in plaintext)."
+    )
+    aws_session_token: SecretStr | None = Field(
+        default=None, description="Temporary AWS Session Token."
+    )
 
 
 class UpdateConnectionRequest(BaseModel):
@@ -185,3 +209,6 @@ class UpdateConnectionRequest(BaseModel):
     databricks_workspace_url: str | None = None
     databricks_workspace_id: str | None = None
     fabric_workspace_id: str | None = None
+    aws_role_arn: str | None = None
+    aws_secret_access_key: SecretStr | None = None
+    aws_session_token: SecretStr | None = None
